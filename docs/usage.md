@@ -582,12 +582,16 @@ warning: `pi` is assigned once, from a constant, and never modified; it could be
 
 The rules follow the xparam.py checker:
 
-- **Which variables:** scalar locals of intrinsic type in a main program or
+- **Which variables:** locals of intrinsic type in a main program or
   procedure, without attributes, that are not dummy arguments or function
-  results.
+  results. Arrays need a constant shape.
 - **One definition:** an initialization in the declaration, or one assignment
   at the top level of the executable part, outside IF, loops, SELECT and BLOCK,
-  before any other reference to the variable.
+  before any other reference to the variable. An array may instead be defined
+  by element and section assignments with constant subscripts, such as
+  `p(:,2) = [...]` or `m(1) = 5`, that together set every element once; the
+  suggestion gathers the values in array element order, with RESHAPE for rank
+  two or more.
 - **A constant value:** literals, named constants, intrinsic operators,
   intrinsics allowed in constant expressions such as `acos(-1.0)` or
   `kind(1d0)`, and other variables this check accepts, so `x2 = 2*x1` qualifies
@@ -601,7 +605,9 @@ The rules follow the xparam.py checker:
   - any statement the analysis does not recognize, such as DATA or NAMELIST.
 
 When the declaration also declares other variables, a note says to declare the
-variable in a separate statement. The warning is opt-in, outside both `-Wall`
+variable in a separate statement. When the value uses a named constant defined
+after the declaration, for example by a later PARAMETER statement, a note says
+to place the new declaration after that definition. The warning is opt-in, outside both `-Wall`
 and `-Wextra`, and accepts the usual `-Wno-...`, `-Werror=...`, and
 source-directive controls. It does not edit source files.
 

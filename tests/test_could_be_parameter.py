@@ -130,7 +130,7 @@ class CouldBeParameter(unittest.TestCase):
         }, err)
         self.assertIn('`pi` is initialized with a constant and never modified', err)
 
-    def test_entity_lengths_arrays_and_implied_do(self):
+    def test_entity_lengths_initialized_arrays_and_implied_do(self):
         source = '''program p
 implicit none
 character(2) :: a*3, b
@@ -145,8 +145,55 @@ end program p
         self.assertEqual(reports, {
             'a': "character(2), parameter :: a*3 = 'hello'",
             'b': "character(2), parameter :: b = 'world'",
+            'm': 'integer, parameter :: m(2,2) = 7',
             'k': 'integer, parameter :: k = 3',
         }, err)
+
+    def test_arrays(self):
+        source = """program p
+implicit none
+integer, parameter :: nb = 3
+real(8) :: pos(2,nb), w(3)
+integer :: table(2) = [4, 5], i
+pos(:,1) = [0d0, 0d0]
+pos(:,2) = [1.5d0, -2.5d0]
+pos(1:2,3) = 7d0
+w(1) = 1
+w(2:3) = [2, 3]
+i = 2
+print *, pos, w, table, i
+end program p
+"""
+        err = self.check(source, '-Wcould-be-parameter').stderr
+        self.assertIn('each element of `pos` is assigned once', err)
+        self.assertIn('suggestion: real(8), parameter :: pos(2,nb) = reshape([ &', err)
+        self.assertIn('0d0, 0d0, &', err)
+        self.assertIn('1.5d0, -2.5d0, &', err)
+        self.assertIn('7d0, 7d0], [2, nb])', err)
+        self.assertIn('suggestion: real(8), parameter :: w(3) = [1, 2, 3]', err)
+        self.assertIn('suggestion: integer, parameter :: table(2) = [4, 5]', err)
+        fixed = """program p
+implicit none
+integer, parameter :: nb = 3
+real(8), parameter :: pos(2,nb) = reshape([ &
+    0d0, 0d0, &
+    1.5d0, -2.5d0, &
+    7d0, 7d0], [2, nb])
+real(8), parameter :: w(3) = [1, 2, 3]
+integer, parameter :: table(2) = [4, 5], i = 2
+print *, pos, w, table, i
+end program p
+"""
+        with tempfile.TemporaryDirectory(prefix='param-') as tmp:
+            outputs = []
+            for name, text in (('before.f90', source), ('after.f90', fixed)):
+                path = Path(tmp) / name
+                path.write_text(text, encoding='utf-8')
+                result = subprocess.run([COMPILER, 'run', path], cwd=tmp, capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                outputs.append(result.stdout)
+            self.assertEqual(outputs[0], outputs[1])
+        self.assertNotIn('could-be-parameter', self.check(fixed, '-Wcould-be-parameter').stderr)
 
     def test_suggestions_compile(self):
         # xarea with the suggestion applied compiles without warnings.
