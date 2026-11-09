@@ -135,6 +135,7 @@ mod open_warnings;
 mod leak_warnings;
 mod allocation_warnings;
 mod action_warnings;
+mod use_warnings;
 mod do_variables;
 mod declaration_warnings;
 mod short_circuit_warnings;

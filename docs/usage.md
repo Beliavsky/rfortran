@@ -108,7 +108,7 @@ and lifetime diagnostics also identify the related declaration or assignment.
 
 `-Wextra` enables selected opt-in advice that `-Wall` leaves out (including
 `-Wmissing-intent` and `-Wfixed-unit`). `-Wconversion`, `-Wimplicit-interface`,
-and `-Wmodule-default-public` remain individually selectable. As in gfortran,
+`-Wmodule-default-public` and `-Wuse-without-only` remain individually selectable. As in gfortran,
 `-Wextra` does not imply `-Wall`; use
 `-Wall -Wextra` for both. An option naming a category overrides the group in
 either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
@@ -118,6 +118,7 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | --- | --- | --- | --- |
 | `-Wshadow` | No | Yes | Local data declarations hiding enclosing variables or named constants, including USE-associated names |
 | `-Wmodule-default-public` | No | No | User modules without a standalone default PRIVATE or PUBLIC statement; entity accessibility attributes and lists do not set a default |
+| `-Wuse-without-only` | No | No | USE statements without ONLY for modules in the program or loaded from `.rmod` files, with the suggested ONLY list; see [USE without ONLY](#use-without-only) |
 | `-Wshadow-dummy-argument` | No | Yes | The corresponding check for dummy arguments, separately selectable |
 | `-Wdead-store` | No | Yes | Straight-line assignments to local scalars overwritten before a read |
 | `-Winteger-division` | Yes | No | Constant integer divisions with a nonzero discarded remainder, including named constants |
@@ -514,6 +515,51 @@ outside both `-Wall` and `-Wextra`, and accepts the usual `-Wno-...`,
 `-Werror=...`, and source-directive controls. Neither option edits source files.
 
 Regression checks: `python tests/test_module_default_private.py`.
+
+## USE without ONLY
+
+`-Wuse-without-only` reports each USE statement without an ONLY list and
+suggests the list that the scope needs:
+
+```cmd
+rfort -Wuse-without-only check main.f90
+```
+
+```
+warning: USE of vectors without ONLY imports all 5 of its public entities [use-without-only]
+  = suggestion: use vectors, only: norm, vec, zero, operator(+), operator(.dot.)
+```
+
+A USE from which nothing is used is reported with the advice to remove it.
+
+How the list is worked out:
+
+- **What counts as used:** an entity is needed when its name appears in the
+  scope, including in procedures it contains, which inherit the USE by host
+  association. Kind parameters of literals such as `1.0_dp` count.
+- **Operators and assignment:** a defined operator is needed where it is
+  applied. An intrinsic operator such as `operator(+)` is needed wherever that
+  operator appears, `assignment(=)` wherever there is an assignment, and defined
+  input/output wherever there is input or output.
+- **Never too short:** a name that appears for another reason, such as a
+  component or keyword argument with the same spelling, is kept. The suggested
+  list can be longer than necessary but never omits a needed entity.
+- **Renames:** a renaming such as `use stats, average => mean` is kept in the
+  list as `average => mean`.
+- **Re-exports:** a module with a public default re-exports what it uses, so
+  the names its users in the program obtain through it are included. A note
+  says that users outside the program are not taken into account. A module
+  containing only USE and accessibility statements re-exports on purpose and is
+  not reported.
+- **Scope of the check:** modules defined in the source group or loaded from
+  `.rmod` files are checked. Intrinsic modules such as `iso_fortran_env` are
+  not.
+
+The warning is opt-in, outside both `-Wall` and `-Wextra`, and accepts the usual
+`-Wno-...`, `-Werror=...`, and source-directive controls. It does not edit
+source files; the suggested statement can replace the original line.
+
+Regression checks: `python tests/test_use_without_only.py`.
 
 ## Multiple source files and modules
 

@@ -131,6 +131,7 @@ pub fn print_help() {
     println!("  -Wimplicit-save     Warn about implicit SAVE from local declaration initialization");
     println!("  --default-private   Default user module entities to PRIVATE; explicit accessibility wins");
     println!("  -Wmodule-default-public  Warn about modules without an explicit default PRIVATE or PUBLIC (opt-in)");
+    println!("  -Wuse-without-only  Warn about USE without ONLY and suggest the ONLY list the scope needs (opt-in)");
     println!("  -Wmissing-intent    Warn about data dummy arguments without INTENT (opt-in)");
     println!("  -Wshadow            Warn about locals shadowing enclosing data declarations (opt-in)");
     println!("  -Wshadow-dummy-argument  Include dummy-argument shadowing (opt-in)");

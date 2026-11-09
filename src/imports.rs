@@ -354,49 +354,71 @@ pub fn validate(program: &Program) -> Result<()> {
     };
     for s in &program.body {
         if let Stmt::Module { name, body } = s {
-            let local = declared(body);
-            validator.module_names.extend(local.iter().cloned());
-            let mut symbols = imported(body, &validator.modules)?;
-            for n in local {
-                let generic = generic_declared(body, &n);
-                symbols.insert(
-                    n.clone(),
-                    format!("{}{name}::{n}", if generic { "generic:" } else { "" }),
-                );
-            }
-            let mut default_public = true;
-            let mut access = HashMap::new();
-            for s in body {
-                match s {
-                    Stmt::Accessibility { public, names } => {
-                        if names.is_empty() {
-                            default_public = *public;
-                        }
-                        for n in names {
-                            access.insert(n.clone(), *public);
-                        }
-                    }
-                    Stmt::InitializedDecl {
-                        attributes,
-                        entities,
-                        ..
-                    } => {
-                        for attr in attributes {
-                            if attr == "public" || attr == "private" {
-                                for (n, _) in entities {
-                                    access.insert(n.clone(), attr == "public");
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            symbols.retain(|n, _| access.get(n).copied().unwrap_or(default_public));
+            validator.module_names.extend(declared(body));
+            let symbols = public_symbols(name, body, &validator.modules)?;
             validator.modules.insert(name.clone(), symbols);
         }
     }
     validator.body(&program.body, &HashSet::new())
+}
+
+/// The public entities of a module, local spelling -> defining module/name,
+/// including those it obtains by USE from `modules` defined before it.
+fn public_symbols(name: &str, body: &[Stmt], modules: &Modules) -> Result<Symbols> {
+    let local = declared(body);
+    let mut symbols = imported(body, modules)?;
+    for n in local {
+        let generic = generic_declared(body, &n);
+        symbols.insert(
+            n.clone(),
+            format!("{}{name}::{n}", if generic { "generic:" } else { "" }),
+        );
+    }
+    let mut default_public = true;
+    let mut access = HashMap::new();
+    for s in body {
+        match s {
+            Stmt::Accessibility { public, names } => {
+                if names.is_empty() {
+                    default_public = *public;
+                }
+                for n in names {
+                    access.insert(n.clone(), *public);
+                }
+            }
+            Stmt::InitializedDecl {
+                attributes,
+                entities,
+                ..
+            } => {
+                for attr in attributes {
+                    if attr == "public" || attr == "private" {
+                        for (n, _) in entities {
+                            access.insert(n.clone(), attr == "public");
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    symbols.retain(|n, _| access.get(n).copied().unwrap_or(default_public));
+    Ok(symbols)
+}
+
+/// The public entity names of each module defined in the program, in source
+/// order. A module whose USE statements are invalid is left out; those
+/// errors are reported when the program is resolved.
+pub(crate) fn module_exports(program: &Program) -> HashMap<String, HashSet<String>> {
+    let mut modules = Modules::new();
+    for s in &program.body {
+        if let Stmt::Module { name, body } = s {
+            if let Ok(symbols) = public_symbols(name, body, &modules) {
+                modules.insert(name.clone(), symbols);
+            }
+        }
+    }
+    modules.into_iter().map(|(m, symbols)| (m, symbols.into_keys().collect())).collect()
 }
 
 #[cfg(test)]

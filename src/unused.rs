@@ -52,6 +52,7 @@ const CATEGORIES: &[&str] = &[
     "allocation-state",
     "action-mismatch",
     "module-default-public",
+    "use-without-only",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface, conversion, and module-default-public remain
