@@ -79,9 +79,10 @@ multiplication, division, exponentiation, negation, ABS, numeric INT conversions
 and narrowing assignments report overflow. Diagnostics include the source line;
 constant arithmetic overflow is a compilation error.
 
-An exponent does not widen an integer base. A wider destination does not widen
-the expression assigned to it either. To calculate large powers, write both the
-destination and the base with the intended kind:
+As for other operators, an integer power has the kind of the operand with the
+greater range, so `10**i` is INTEGER(8) when `i` is. A wider destination does
+not widen the expression assigned to it. To calculate large powers, write both
+the destination and the base with the intended kind:
 
 ```fortran
 use iso_fortran_env, only: int64

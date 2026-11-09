@@ -152,7 +152,9 @@ pub(crate) fn integer_literal_kind(expr: &Expr) -> Option<u8> {
         Expr::Un(UnOp::Neg, a) => integer_literal_kind(a),
         Expr::Bin(op, a, b) if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow) => {
             let (a,b) = (integer_literal_kind(a)?, integer_literal_kind(b)?);
-            Some(if matches!(op,BinOp::Pow) {a}else{a.max(b)})
+            // INTEGER ** INTEGER has the kind of the operand with the greater
+            // range, as other operators do.
+            Some(a.max(b))
         }
         _ => None,
     }

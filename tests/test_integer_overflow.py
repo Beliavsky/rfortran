@@ -56,8 +56,9 @@ end
     def test_destination_does_not_widen_expression(self):
         self.run_source('use iso_fortran_env,only:int64\nimplicit none\ninteger::i\ninteger(int64)::j\ni=10\nj=10**i\nprint *,j\nend\n',error='INTEGER(kind=4) overflow')
 
-    def test_exponent_does_not_widen_base(self):
-        self.run_source('use iso_fortran_env,only:int64\nimplicit none\ninteger(int64)::i,j\ni=10\nj=10**i\nprint *,j\nend\n',error='INTEGER(kind=4) overflow')
+    def test_wider_exponent_widens_the_result(self):
+        # INTEGER ** INTEGER has the kind of the operand with the greater range.
+        self.run_source('use iso_fortran_env,only:int64\nimplicit none\ninteger(int64)::i,j\ni=10\nj=10**i\nprint *,j\nend\n',expected='10000000000')
 
     def test_arithmetic_overflow_in_each_kind(self):
         for k in (1,2,4,8):

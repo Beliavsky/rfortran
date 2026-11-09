@@ -113,11 +113,9 @@ fn kind(e: &Expr, types: &Types) -> Option<u8> {
             ) =>
         {
             let (a, b) = (kind(a, types)?, kind(b, types)?);
-            return Some(if matches!(op, BinOp::Pow) {
-                a
-            } else {
-                a.max(b)
-            });
+            // INTEGER ** INTEGER has the kind of the operand with the greater
+            // range, as other operators do.
+            return Some(a.max(b));
         }
         Expr::Un(UnOp::Neg, a) => return kind(a, types),
         Expr::Call(n, _) if types.contains_key(n) => {
