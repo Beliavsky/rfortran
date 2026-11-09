@@ -51,10 +51,18 @@ write (*,*) (i, i=1,2), maxval(a(1,:)), dot_product(a(:,1), a(:,3))
 print *, (i, i=1,1), a(:,j), a(2,:)
 print *, (i, i=1,1), 2*a(:,j) + 1, sqrt(a(1,2:3)), v(2:4:2)
 print *, (i, i=1,1), size(a), product(a(2,:)), count(a(:,j) > 3.5)
+print *, (a(i,j), i=1,2), minloc(a(:,j)), maxloc(a), shape(a), findloc(a(1,:), 3.)
+print *, (i, i=1,1), matmul(a(:,1:2), [1., 1.]), transpose(a(:,1:2)), sum(a, dim=1)
+print *, (i, i=1,1), pack(a, a > 2.5)
+print *, (i, i=1,2), minloc(a(:,i))
 end
 """)
+        # Array results of functions that are not elemental, MINLOC(a(:,i))
+        # after the implied-DO has left i = 3, and PACK of a run-time length.
         expected = ("3.0 4.0 7.0\n1 2 5.0 17.0\n1 3.0 4.0 2.0 4.0 6.0\n"
-                    "1 7.0 9.0 1.7320508 2.236068 20.0 40.0\n1 6 48.0 1\n")
+                    "1 7.0 9.0 1.7320508 2.236068 20.0 40.0\n1 6 48.0 1\n"
+                    "3.0 4.0 1 2 3 2 3 2\n1 4.0 6.0 1.0 3.0 2.0 4.0 3.0 7.0 11.0\n"
+                    "1 3.0 4.0 5.0 6.0\n1 2 1\n")
         for cmd in build_commands(source, self.directory):
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stderr)

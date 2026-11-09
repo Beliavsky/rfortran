@@ -406,9 +406,13 @@ fn emit(
             }
         }
         let mut expanded = Vec::new();
-        // A reduction to a scalar, such as SUM(a(:,j)), gives one value;
-        // reduction lowering later handles the sections among its arguments.
-        let scalar_call = scalar_reduction(item, symbols) && crate::multidim::view_element(item, &int(1)).is_none();
+        // A reduction to a scalar, such as SUM(a(:,j)), gives one value, and
+        // an array result such as MINLOC(a(:,j)) is written element by element
+        // when reduction lowering materializes it; that lowering also handles
+        // the sections among their arguments.
+        let whole_call = matches!(item, Expr::Call(f, _) if !symbols.contains_key(f))
+            && (scalar_reduction(item, symbols) || crate::reductions::array_result(item));
+        let scalar_call = whole_call && crate::multidim::view_element(item, &int(1)).is_none();
         if scalar_call || matches!(item,Expr::Section {name,..} if matches!(symbols.get(name),Some((TypeSpec::Character(_),dims)) if dims.is_empty()))
         {
             expanded.push(item.clone());

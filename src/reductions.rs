@@ -1625,6 +1625,34 @@ fn formatted_items(handle:&str,items:&[Expr],symbols:&Symbols,serial:&mut usize)
     Ok(body)
 }
 
+/// Turn the `@format_item` writes of `formatted_items` into list-directed
+/// fragments: each element after the first is preceded by a blank, as the
+/// caller already wrote one before the item.
+fn list_directed_fragments(body: &mut Vec<Stmt>, serial: &mut usize) {
+    *serial += 1;
+    let first = format!("@list_directed_first_{serial}");
+    fn rewrite(body: &mut [Stmt], first: &str) {
+        for s in body.iter_mut() {
+            match s {
+                Stmt::CallSub { name, args } if name == "@format_item" && args.len() == 2 => {
+                    let value = args[1].clone();
+                    *s = Stmt::Block { body: vec![
+                        Stmt::If { cond: Expr::Un(UnOp::Not, Box::new(Expr::Ident(first.to_owned()))),
+                            then_body: vec![Stmt::CallSub { name: "@print_fragment".into(), args: vec![Expr::Str(" ".into())] }], else_body: None },
+                        Stmt::CallSub { name: "@print_fragment".into(), args: vec![value] },
+                        Stmt::Assign { name: first.to_owned(), value: Expr::Logical(false) },
+                    ] };
+                }
+                Stmt::Do { body, .. } | Stmt::Block { body } => rewrite(body, first),
+                _ => {}
+            }
+        }
+    }
+    rewrite(body, &first);
+    body.splice(0..0, [Stmt::VarDecl { kind: TypeSpec::Logical, names: vec![first.clone()] },
+        Stmt::Assign { name: first, value: Expr::Logical(true) }]);
+}
+
 fn formatted_capture(format:Expr,items:&[Expr],advance:Expr,symbols:&Symbols,serial:&mut usize)->Result<Vec<Stmt>> {
     *serial+=1;
     let handle=format!("@formatted_array_list_{serial}");
@@ -1713,6 +1741,23 @@ fn implicit_read_destinations(body: &[Stmt], symbols: &mut Symbols) {
     visit(body, &rules, symbols);
 }
 
+/// A call of an intrinsic that is not elemental and returns an array.
+pub(crate) fn array_result(e: &Expr) -> bool {
+    let Expr::Call(f, args) = e else { return false };
+    // A DIM argument, given by position or keyword; MASK and an omitted DIM do not count.
+    let dim = |position: usize| args.iter().any(|a| matches!(a, Expr::Call(k, _) if k == "@keyword:dim"))
+        || args.get(position).is_some_and(|a| !matches!(a, Expr::Call(k, _) if k.starts_with("@keyword:") || k == "@no_dim"));
+    match f.as_str() {
+        // Earlier passes give some of these internal names.
+        "minloc" | "maxloc" | "findloc" | "pack" | "unpack" | "matmul" | "transpose" | "reshape" | "spread"
+            | "cshift" | "eoshift" | "shape" | "@minloc" | "@maxloc" | "@findloc" | "@pack" | "@unpack" => true,
+        "lbound" | "ubound" => args.len() == 1,
+        "sum" | "product" | "maxval" | "minval" | "count" | "any" | "all" | "norm2"
+            | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction" => dim(1),
+        _ => false,
+    }
+}
+
 fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> Result<()> {
     let symbol_timer = crate::compile_profile::Work::new("reductions.symbols");
     let mut symbols = inherited.clone();
@@ -1788,6 +1833,16 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 let (mut captured,mut prefix,mut scratch)=(item.clone(),vec![],*serial);
                 argument_with_elementals(&mut captured,&symbols.variables,&mut prefix,&mut scratch,&symbols.elementals).is_ok_and(|(_,count,_)|count>=0)
             };
+            // An array-valued list-directed output fragment, such as the
+            // result of MINLOC or PACK beside an implied-DO, writes each
+            // element, separated by blanks.
+            if name=="@print_fragment" && args.len()==1 && array_result(&args[0]) && materializable(&args[0]) {
+                let mut expanded=formatted_items("@list_directed",&args[..1],&symbols,serial)?;
+                list_directed_fragments(&mut expanded,serial);
+                lower_body(&mut expanded,&symbols,serial)?;
+                output.push(Stmt::Block{body:expanded});
+                continue;
+            }
             if name=="@format_item" && args.len()==2 && (element(&args[1],&int(1),&symbols).is_ok_and(|(_,shape,_)|shape.is_some())
                 || materializable(&args[1])) {
                 let Expr::Ident(handle)=&args[0] else {bail!("invalid formatted output session");};
