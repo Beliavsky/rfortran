@@ -133,6 +133,7 @@ pub fn print_help() {
     println!("  -Wmodule-default-public  Warn about modules without an explicit default PRIVATE or PUBLIC (opt-in)");
     println!("  -Wuse-without-only  Warn about USE without ONLY and suggest the ONLY list the scope needs (opt-in)");
     println!("  -Wcould-be-parameter  Suggest named constants for locals set once from a constant and never modified (opt-in)");
+    println!("  -Wliteral-kind      Warn about kind numbers such as real(8), real*8 and 1.0_8, and suggest ISO_FORTRAN_ENV names (opt-in)");
     println!("  -Wmissing-intent    Warn about data dummy arguments without INTENT (opt-in)");
     println!("  -Wshadow            Warn about locals shadowing enclosing data declarations (opt-in)");
     println!("  -Wshadow-dummy-argument  Include dummy-argument shadowing (opt-in)");

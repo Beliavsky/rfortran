@@ -54,6 +54,7 @@ const CATEGORIES: &[&str] = &[
     "module-default-public",
     "use-without-only",
     "could-be-parameter",
+    "literal-kind",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface, conversion, and module-default-public remain

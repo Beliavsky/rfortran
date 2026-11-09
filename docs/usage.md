@@ -108,7 +108,7 @@ and lifetime diagnostics also identify the related declaration or assignment.
 
 `-Wextra` enables selected opt-in advice that `-Wall` leaves out (including
 `-Wmissing-intent` and `-Wfixed-unit`). `-Wconversion`, `-Wimplicit-interface`,
-`-Wmodule-default-public`, `-Wuse-without-only` and `-Wcould-be-parameter` remain individually selectable. As in gfortran,
+`-Wmodule-default-public`, `-Wuse-without-only`, `-Wcould-be-parameter` and `-Wliteral-kind` remain individually selectable. As in gfortran,
 `-Wextra` does not imply `-Wall`; use
 `-Wall -Wextra` for both. An option naming a category overrides the group in
 either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
@@ -120,6 +120,7 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wmodule-default-public` | No | No | User modules without a standalone default PRIVATE or PUBLIC statement; entity accessibility attributes and lists do not set a default |
 | `-Wuse-without-only` | No | No | USE statements without ONLY for modules in the program or loaded from `.rmod` files, with the suggested ONLY list; see [USE without ONLY](#use-without-only) |
 | `-Wcould-be-parameter` | No | No | Local scalars defined once from a constant expression and never modified, with the suggested PARAMETER declaration; see [Variables that could be named constants](#variables-that-could-be-named-constants) |
+| `-Wliteral-kind` | No | No | Kind numbers in type specifications, literal suffixes and conversion KIND arguments, such as `real(8)`, `real*8`, `1.0_8` and `int(n, 8)`, with ISO_FORTRAN_ENV names suggested; see [Kind numbers](#kind-numbers) |
 | `-Wshadow-dummy-argument` | No | Yes | The corresponding check for dummy arguments, separately selectable |
 | `-Wdead-store` | No | Yes | Straight-line assignments to local scalars overwritten before a read |
 | `-Winteger-division` | Yes | No | Constant integer divisions with a nonzero discarded remainder, including named constants |
@@ -604,6 +605,45 @@ and `-Wextra`, and accepts the usual `-Wno-...`, `-Werror=...`, and
 source-directive controls. It does not edit source files.
 
 Regression checks: `python tests/test_could_be_parameter.py`.
+
+## Kind numbers
+
+Kind numbers are processor-dependent: gfortran, ifx and rfort use sizes in
+bytes, so `real(8)` is double precision, but NAG by default numbers kinds 1, 2
+and 3. `-Wliteral-kind` reports kinds given by a number and suggests the
+ISO_FORTRAN_ENV name with the same meaning in rfort:
+
+```cmd
+rfort -Wliteral-kind check nbody.f90
+```
+
+```
+warning: kind number in `real(8)` is processor-dependent [literal-kind]
+12 │   real(8), parameter :: tstep = 0.01d0
+   │   ^^^^^^^ use real(real64)
+   = the names come from `use iso_fortran_env, only: real64`
+```
+
+| Written | Suggested |
+| --- | --- |
+| `real(4)`, `real(8)`, `real(16)`, `real(kind=8)`, `real*8` | `real(real32)`, `real(real64)`, `real(real128)` |
+| `complex(8)`, `complex*16` | `complex(real64)` |
+| `integer(1)` to `integer(8)`, `integer*4` | `integer(int8)` to `integer(int64)` |
+| `1.0_8`, `5_8` | `1.0_real64`, `5_int64` |
+| `real(n, 8)`, `int(x, kind=8)`, `cmplx(a, b, 8)` | `real64`, `int64` as the KIND argument |
+
+Kinds without an ISO_FORTRAN_ENV name, such as `logical(1)` or `integer(16)`,
+are reported with the advice to use a named kind. A named constant such as
+`integer, parameter :: dp = kind(1.0d0)`, or `selected_real_kind(15, 307)` for
+a minimum precision, is an alternative. `DOUBLE PRECISION`, named kinds and
+`real(8)` as a conversion of the value 8 are not reported. Each statement gets
+one warning listing its kind numbers.
+
+The warning is opt-in, outside both `-Wall` and `-Wextra`, and accepts the usual
+`-Wno-...`, `-Werror=...`, and source-directive controls. It does not edit
+source files.
+
+Regression checks: `python tests/test_literal_kind.py`.
 
 ## Multiple source files and modules
 
