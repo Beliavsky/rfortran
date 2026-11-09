@@ -253,15 +253,21 @@ impl Lower {
             mentions(&declarations, &mut excluded);
         }
         let allowed = |a: &str| matches!(a, "allocatable" | "pointer" | "target" | "save" | "contiguous" | "volatile" | "asynchronous");
+        // A named constant array moves too: parameter resolution substitutes
+        // scalar constants and constant subscripts, but not an element
+        // selected at run time, such as idx(k).
+        let constant_array = |n: &str| d.parameters.contains(n)
+            && d.statements[n].iter().any(|s| matches!(s, Stmt::ArrayDecl { .. }));
         let mut moved: Vec<String> = vec![];
         let mut names: Vec<&String> = d.statements.keys().collect();
         names.sort();
         for n in names {
-            if !used.contains(n) || params.contains(n) || Some(n.as_str()) == result || d.parameters.contains(n) || excluded.contains(n) || outer.contains(n) {
+            if !used.contains(n) || params.contains(n) || Some(n.as_str()) == result || d.parameters.contains(n) && !constant_array(n)
+                || excluded.contains(n) || outer.contains(n) {
                 continue;
             }
             let attributes = d.attributes.get(n).cloned().unwrap_or_default();
-            if !attributes.iter().all(|a| allowed(a)) {
+            if !attributes.iter().all(|a| allowed(a) || a == "parameter" && constant_array(n)) {
                 continue;
             }
             let statements = &d.statements[n];
@@ -304,6 +310,14 @@ impl Lower {
                 moved.push(n.clone());
             }
         }
+        // In declaration order, since a constant may be defined by another.
+        let position = |n: &String| body.iter().position(|s| match s {
+            Stmt::InitializedDecl { entities, .. } => entities.iter().any(|(e, _)| e == n),
+            Stmt::VarDecl { names, .. } | Stmt::DerivedDecl { names, .. } => names.contains(n),
+            Stmt::ArrayDecl { name, .. } => name == n,
+            _ => false,
+        });
+        moved.sort_by_key(position);
         if moved.is_empty() {
             return Ok(());
         }
@@ -314,14 +328,20 @@ impl Lower {
         contents.extend(body.iter().filter(|s| matches!(s, Stmt::Use { .. })).cloned());
         contents.push(Stmt::Implicit(crate::ast::Implicit::None));
         contents.extend(outer_constants);
+        let set: HashSet<&String> = moved.iter().collect();
+        // The host's other named constants; moved constant arrays follow.
         for s in body.iter() {
             match s {
-                Stmt::InitializedDecl { attributes, .. } if attributes.iter().any(|a| a == "parameter") => contents.push(s.clone()),
-                Stmt::DummyIntent { name, intent } if intent == "parameter" && d.parameters.contains(name) => contents.push(s.clone()),
+                Stmt::InitializedDecl { kind, attributes, entities } if attributes.iter().any(|a| a == "parameter") => {
+                    let entities: Vec<_> = entities.iter().filter(|(n, _)| !set.contains(n)).cloned().collect();
+                    if !entities.is_empty() {
+                        contents.push(Stmt::InitializedDecl { kind: kind.clone(), attributes: attributes.clone(), entities });
+                    }
+                }
+                Stmt::DummyIntent { name, intent } if intent == "parameter" && d.parameters.contains(name) && !set.contains(name) => contents.push(s.clone()),
                 _ => {}
             }
         }
-        let set: HashSet<&String> = moved.iter().collect();
         for n in &moved {
             for a in d.intents.get(n).into_iter().flatten() {
                 contents.push(Stmt::DummyIntent { name: n.clone(), intent: a.clone() });

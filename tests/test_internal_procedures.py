@@ -398,6 +398,57 @@ end program
 ''','55.0 2 T\n2 8 18 32 50 3.0\n')
 
 
+    def test_host_constant_arrays(self):
+        # A named constant array of the host, subscripted at run time in an
+        # internal function with an array argument and in a subroutine,
+        # with a shape given by another constant.
+        self.check('''program main
+implicit none
+integer, parameter :: n = 3
+integer, parameter :: idx(n) = [3,1,2], twice(n) = [6,2,4]
+real :: x(n) = [10.,20.,30.]
+print *, pick(x), idx(2)
+call show()
+contains
+real function pick(y)
+real, intent(in) :: y(n)
+integer :: k
+pick = 0
+do k = 1, n
+  pick = pick + twice(k)*y(idx(k))
+end do
+end function
+subroutine show()
+integer :: k
+do k = 1, n
+  print *, idx(k), twice(k)
+end do
+end subroutine
+end program
+''', '280.0 1\n3 6\n1 2\n2 4\n')
+        self.check('''module m
+contains
+real function outer(y)
+real, intent(in) :: y(3)
+integer, parameter :: idx(3) = [3,1,2]
+outer = inner(y)
+contains
+real function inner(z)
+real, intent(in) :: z(3)
+integer :: k
+inner = 0
+do k = 1, 3
+  inner = inner + k*z(idx(k))
+end do
+end function
+end function
+end module
+program p
+use m
+print *, outer([10.,20.,30.])
+end
+''', '110.0\n')
+
     def test_whole_arrays_sections_allocatables_and_characters_of_a_main_program(self):
         # The host variables live in module storage, with all its support.
         self.check('''program main
