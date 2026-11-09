@@ -108,7 +108,7 @@ and lifetime diagnostics also identify the related declaration or assignment.
 
 `-Wextra` enables selected opt-in advice that `-Wall` leaves out (including
 `-Wmissing-intent` and `-Wfixed-unit`). `-Wconversion`, `-Wimplicit-interface`,
-`-Wmodule-default-public` and `-Wuse-without-only` remain individually selectable. As in gfortran,
+`-Wmodule-default-public`, `-Wuse-without-only` and `-Wcould-be-parameter` remain individually selectable. As in gfortran,
 `-Wextra` does not imply `-Wall`; use
 `-Wall -Wextra` for both. An option naming a category overrides the group in
 either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
@@ -119,6 +119,7 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wshadow` | No | Yes | Local data declarations hiding enclosing variables or named constants, including USE-associated names |
 | `-Wmodule-default-public` | No | No | User modules without a standalone default PRIVATE or PUBLIC statement; entity accessibility attributes and lists do not set a default |
 | `-Wuse-without-only` | No | No | USE statements without ONLY for modules in the program or loaded from `.rmod` files, with the suggested ONLY list; see [USE without ONLY](#use-without-only) |
+| `-Wcould-be-parameter` | No | No | Local scalars defined once from a constant expression and never modified, with the suggested PARAMETER declaration; see [Variables that could be named constants](#variables-that-could-be-named-constants) |
 | `-Wshadow-dummy-argument` | No | Yes | The corresponding check for dummy arguments, separately selectable |
 | `-Wdead-store` | No | Yes | Straight-line assignments to local scalars overwritten before a read |
 | `-Winteger-division` | Yes | No | Constant integer divisions with a nonzero discarded remainder, including named constants |
@@ -560,6 +561,49 @@ The warning is opt-in, outside both `-Wall` and `-Wextra`, and accepts the usual
 source files; the suggested statement can replace the original line.
 
 Regression checks: `python tests/test_use_without_only.py`.
+
+## Variables that could be named constants
+
+`-Wcould-be-parameter` reports a local variable that is set once, from a
+constant expression, and never modified, and suggests the PARAMETER
+declaration:
+
+```cmd
+rfort -Wcould-be-parameter check xarea.f90
+```
+
+```
+warning: `pi` is assigned once, from a constant, and never modified; it could be a named constant [could-be-parameter]
+  = suggestion: real, parameter :: pi = 3.14
+  = and remove the assignment
+```
+
+The rules follow the xparam.py checker:
+
+- **Which variables:** scalar locals of intrinsic type in a main program or
+  procedure, without attributes, that are not dummy arguments or function
+  results.
+- **One definition:** an initialization in the declaration, or one assignment
+  at the top level of the executable part, outside IF, loops, SELECT and BLOCK,
+  before any other reference to the variable.
+- **A constant value:** literals, named constants, intrinsic operators,
+  intrinsics allowed in constant expressions such as `acos(-1.0)` or
+  `kind(1d0)`, and other variables this check accepts, so `x2 = 2*x1` qualifies
+  when `x1` does.
+- **Nothing else defines it.** These count as definitions:
+  - READ and DO variables;
+  - IOSTAT=, IOMSG= and SIZE=, ALLOCATE's STAT= and ERRMSG=, and an internal
+    file of a WRITE;
+  - an actual argument whose dummy is not known to be INTENT(IN) or VALUE;
+  - an assignment in an internal procedure;
+  - any statement the analysis does not recognize, such as DATA or NAMELIST.
+
+When the declaration also declares other variables, a note says to declare the
+variable in a separate statement. The warning is opt-in, outside both `-Wall`
+and `-Wextra`, and accepts the usual `-Wno-...`, `-Werror=...`, and
+source-directive controls. It does not edit source files.
+
+Regression checks: `python tests/test_could_be_parameter.py`.
 
 ## Multiple source files and modules
 
