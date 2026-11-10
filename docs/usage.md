@@ -662,6 +662,14 @@ warning: kind number in `real(8)` is processor-dependent [literal-kind]
 | `1.0_8`, `5_8` | `1.0_real64`, `5_int64` |
 | `real(n, 8)`, `int(x, kind=8)`, `cmplx(a, b, 8)` | `real64`, `int64` as the KIND argument |
 
+A named constant set to a kind number, as in `integer, parameter :: wp = 8`,
+is reported at its declaration when the file uses it as a kind, in a type
+specification, a literal suffix such as `1.0_wp`, or a conversion KIND
+argument. The suggestion depends on the use: `wp = real64` for REAL or COMPLEX
+kinds, `wp = int64` for INTEGER kinds; a constant used for both is advised to
+become separate constants. Portable values such as `kind(1.0d0)`,
+`selected_real_kind(15, 307)` or `real64` are not reported.
+
 Kinds without an ISO_FORTRAN_ENV name, such as `logical(1)` or `integer(16)`,
 are reported with the advice to use a named kind. A named constant such as
 `integer, parameter :: dp = kind(1.0d0)`, or `selected_real_kind(15, 307)` for

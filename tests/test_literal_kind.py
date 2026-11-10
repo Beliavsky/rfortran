@@ -102,6 +102,26 @@ class LiteralKind(unittest.TestCase):
                 result = subprocess.run([exe], capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.stdout.split(), before.stdout.split())
 
+    def test_constants_set_to_kind_numbers(self):
+        source = """implicit none
+integer, parameter :: wp = 8
+real(wp) :: x, y
+call random_number(x)
+y = 10*x
+print*,x,y
+end
+"""
+        err = self.run_compiler(source, '-Wliteral-kind', 'check').stderr
+        self.assertIn('`wp` is used as a REAL kind but is set to the kind number 8, which is processor-dependent [literal-kind]', err)
+        self.assertIn('suggestion: integer, parameter :: wp = real64', err)
+        self.assertIn('used as a kind here', err)
+        both = "integer, parameter :: k = 4\nreal(k) :: x\ninteger(kind=k) :: i\nx = 1\ni = 2\nprint *, x, i\nend\n"
+        err = self.run_compiler(both, '-Wliteral-kind', 'check').stderr
+        self.assertIn('`k` is used as a REAL kind and an INTEGER kind but is set to the kind number 4', err)
+        self.assertIn('define a separate constant for each type, such as `real32` and `int32`', err)
+        portable = "integer, parameter :: dp = kind(1.0d0), n = 8\nreal(dp) :: x(n)\nx = 1\nprint *, x\nend\n"
+        self.assertNotIn('literal-kind', self.run_compiler(portable, '-Wliteral-kind', 'check').stderr)
+
     def test_opt_in_and_controls(self):
         for options in ((), ('-Wall',), ('-Wall', '-Wextra')):
             self.assertNotIn('literal-kind', self.run_compiler(NUMBERED, *options, 'check').stderr, options)
