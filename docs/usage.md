@@ -155,6 +155,11 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wunchecked-status` | No | Yes | Local scalar IOSTAT, allocation STAT, and intrinsic status results not inspected or forwarded |
 | `-Wtarget-lifetime` | Yes | No | Pointer associations escaping a known automatic local target |
 | `-Winfinite-loop` | Yes | No | DO loops without loop control, or `DO WHILE (.true.)`, that nothing in their body can end |
+| `-Wloop-runs-once` | Yes | No | DO loops whose body cannot start a second iteration, because every path ends in EXIT, RETURN or STOP |
+| `-Wredundant-cycle` | No | Yes | CYCLE as the last statement of a loop body, directly or at the end of an IF or CASE branch that ends it |
+| `-Wmaybe-uninitialized` | No | Yes | Local scalars read where some path from the start of the procedure reaches the read without assigning them; see [Uninitialized variables](#uninitialized-variables) |
+| `-Wcould-be-intent-in` | No | Yes | INTENT(INOUT) dummy arguments that nothing in the procedure can modify; POINTER, TARGET and polymorphic dummies are not reported |
+| `-Wunused-only` | No | Yes | Names in a USE ONLY list that the scope never uses, with the shortened ONLY list suggested |
 | `-Waliasing` | Yes | No | Known overlapping actuals when a defined procedure's OUT dummy, or modified INOUT dummy, conflicts with another dummy's reads |
 | `-Wconversion` | No | No | Potential information loss in implicit numeric conversions and CMPLX calls without KIND |
 | `-Wcmplx-kind` | Yes | No | Wider REAL arguments to CMPLX without KIND; also enabled by `-Wconversion` |
@@ -871,6 +876,42 @@ Notes on individual checks:
   procedure is called and needs an explicit interface.
 
 Regression checks: `python tests/test_style_warnings.py`.
+
+## Uninitialized variables
+
+`-Wmaybe-uninitialized`, in `-Wextra`, reports a local scalar read where some
+path from the start of its procedure or main program reaches the read
+without assigning it:
+
+```
+warning: `x` may be used before it is assigned [maybe-uninitialized]
+11 │ if (n > 2) then
+12 │    x = 1.0
+13 │ end if
+14 │ print *, x
+   │          ^
+```
+
+A variable never assigned anywhere is reported as "used but never
+assigned". Each variable is reported once, at its first such read.
+
+The analysis is conservative, so that each report is a real path:
+
+- It considers local scalars of intrinsic type. Dummy arguments, function
+  results, named constants, and variables that are initialized, SAVE,
+  POINTER, TARGET, ALLOCATABLE, VOLATILE, ASYNCHRONOUS, in COMMON,
+  EQUIVALENCE, DATA or NAMELIST, or referenced by a contained procedure are
+  not checked.
+- A variable passed by name to a procedure, or named in READ, ALLOCATE,
+  INQUIRE, OPEN or another I/O statement other than PRINT, counts as
+  assigned there, since it may be an output.
+- After a DO loop, only what was assigned before the loop counts, since the
+  loop may run zero times. After a DO loop without loop control, what was
+  assigned on every path to its EXIT statements counts.
+- Procedures with GO TO, statement labels or I/O branches (ERR=, END=,
+  EOR=) are not analyzed.
+
+Regression checks: `python tests/test_flow_warnings.py`.
 
 ## Multiple source files and modules
 

@@ -161,6 +161,11 @@ pub fn print_help() {
     println!("  -Wcould-be-conditional Suggest Fortran 2023 conditional expressions for IF blocks that only assign one variable (opt-in)");
     println!("  -Wcould-be-one-line-if Suggest one-line IFs for IF blocks holding a single statement (opt-in)");
     println!("  -Wone-line-if       Warn about one-line IFs, suggesting the block form (opt-in)");
+    println!("  -Wloop-runs-once    Warn about DO loops whose body cannot start a second iteration (in -Wall)");
+    println!("  -Wredundant-cycle   Warn about CYCLE at the end of a loop body (in -Wextra)");
+    println!("  -Wmaybe-uninitialized Warn about local scalars that may be read before being assigned (in -Wextra)");
+    println!("  -Wcould-be-intent-in Warn about INTENT(INOUT) dummy arguments that are never modified (in -Wextra)");
+    println!("  -Wunused-only       Warn about USE ONLY names that are never used (in -Wextra)");
     println!("  -Winfinite-loop     Warn about DO loops without loop control that nothing in their body can end (enabled by -Wall)");
     println!("  -Wmissing-intent    Warn about data dummy arguments without INTENT (opt-in)");
     println!("  -Wshadow            Warn about locals shadowing enclosing data declarations (opt-in)");

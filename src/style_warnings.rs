@@ -33,6 +33,16 @@
 //!   -Wstyle: an IF block holding one action statement, which a logical
 //!   IF can express on one line, and a logical IF, which can be written as
 //!   a block.
+//! - `could-be-intent-in`, in -Wextra: an INTENT(INOUT) dummy argument
+//!   that nothing in the procedure can modify. Anything that might modify
+//!   it counts: assignment, READ, ALLOCATE and other statements naming it,
+//!   passing it to a procedure that is not intrinsic, and the control list
+//!   of a WRITE. POINTER and TARGET dummies are not reported, nor
+//!   polymorphic ones, since an interface the procedure must match may
+//!   require INOUT.
+//! - `unused-only`, in -Wextra: names in a USE ONLY list that the scope
+//!   never uses. Module-level USE is checked only in modules whose default
+//!   accessibility is PRIVATE, since a public module may re-export them.
 //! - `name-case`: a name written in a case different from its declaration,
 //!   or from its first appearance if it is not declared, within a scope.
 //!   Host-associated and USE-associated names are compared with their
@@ -50,6 +60,7 @@ pub(crate) const CATEGORIES: &[&str] = &[
     "old-relational", "logical-comparison", "missing-double-colon", "labeled-do", "double-precision", "bare-end",
     "keyword-case", "tabs", "line-length", "unnamed-exit", "goto", "obsolescent", "stop-in-procedure", "assumed-size",
     "redundant-implicit", "name-case", "function-result", "could-be-one-line-if", "one-line-if",
+    "could-be-intent-in", "unused-only",
 ];
 
 struct Warning {
@@ -95,7 +106,171 @@ struct Frame {
     /// For a function without RESULT: its name, and the warning that
     /// collects the uses of the name as the result variable.
     rename: Option<(String, usize)>,
+    usage: Usage,
 }
+
+/// For a program unit: its INTENT(INOUT) dummies, the names something may
+/// modify, its arrays, its USE ONLY names, and whether it is a module with
+/// default PRIVATE accessibility.
+#[derive(Default)]
+struct Usage {
+    inout: Vec<(String, Range<usize>)>,
+    modified: std::collections::HashSet<String>,
+    arrays: std::collections::HashSet<String>,
+    only: Vec<Imported>,
+    private: bool,
+}
+
+/// A name imported by USE ONLY.
+struct Imported {
+    name: String,
+    span: Range<usize>,
+    used: bool,
+    /// The USE statement: its location, its module, its text up to the ONLY
+    /// list, and its ONLY items as written.
+    statement: Range<usize>,
+    module: String,
+    prefix: String,
+    items: Vec<String>,
+}
+
+/// Statements that may define the variables they name.
+const DEFINING: &[&str] = &[
+    "call", "read", "allocate", "deallocate", "nullify", "open", "close", "inquire", "wait", "flush", "rewind",
+    "backspace", "endfile", "forall", "where", "associate", "select", "selecttype", "selectrank", "change",
+    "event", "lock", "unlock", "form", "sync", "namelist", "data", "equivalence", "common",
+];
+
+fn is_word(x: &str) -> bool {
+    x.bytes().next().is_some_and(|b| b.is_ascii_alphabetic())
+}
+
+/// The names `w` may modify, for -Wcould-be-intent-in; `arrays` are the
+/// unit's array names, whose subscripts are not arguments.
+fn modified_names(w: &[String], arrays: &std::collections::HashSet<String>, out: &mut std::collections::HashSet<String>) {
+    let a = action(w);
+    let first = a.first().map(String::as_str).unwrap_or("");
+    if declaration(w) || matches!(first, "use" | "implicit" | "import" | "intent" | "dimension" | "public" | "private") { return; }
+    if DEFINING.contains(&first) {
+        out.extend(a.iter().filter(|x| is_word(x)).cloned());
+        return;
+    }
+    // DO defines its loop variables, as in `do i = 1, n` and DO CONCURRENT.
+    if first == "do" {
+        for (k, x) in a.iter().enumerate() {
+            if x == "=" && k > 0 && is_word(&a[k - 1]) { out.insert(a[k - 1].clone()); }
+        }
+    }
+    // WRITE defines what its control list names, such as an internal file.
+    if first == "write" && a.get(1).is_some_and(|x| x == "(") {
+        if let Some(c) = closing_word(a, 1) { out.extend(a[2..c].iter().filter(|x| is_word(x)).cloned()); }
+    }
+    // An assignment, or a pointer assignment, defines the root of its target.
+    let mut depth = 0;
+    for x in a {
+        match x.as_str() {
+            "(" | "[" => depth += 1,
+            ")" | "]" => depth -= 1,
+            "=" | "=>" if depth == 0 && first != "do" => { if is_word(first) { out.insert(first.to_owned()); } break; }
+            _ => {}
+        }
+    }
+    // Arguments of procedures that are not intrinsic, and the object of a
+    // type-bound procedure.
+    for (i, x) in a.iter().enumerate() {
+        if x != "(" || i == 0 { continue; }
+        let callee = &a[i - 1];
+        if !is_word(callee) || arrays.contains(callee) || crate::intrinsics::purity(callee).is_some()
+            || matches!(callee.as_str(), "if" | "while" | "case" | "print" | "write" | "kind" | "len") { continue; }
+        if let Some(c) = closing_word(a, i) { out.extend(a[i + 1..c].iter().filter(|x| is_word(x)).cloned()); }
+        // `obj%method(...)`: the object is passed too.
+        let mut j = i - 1;
+        while j >= 2 && a[j - 1] == "%" { j -= 2; }
+        if j < i - 1 { out.insert(a[j].clone()); }
+    }
+}
+
+/// The INTENT(INOUT) dummies a declaration statement declares, and its arrays.
+fn intent_declarations(src: &str, ts: &[Token], w: &[String], args: &[String], usage: &mut Usage) {
+    let colon = ts.iter().position(|t| matches!(t.kind, TokenKind::DColon));
+    let typed = declaration(w);
+    let attributes = |name: &str| colon.is_some_and(|c| ts[..c].iter().any(|t| text(src, t).eq_ignore_ascii_case(name)));
+    let entities = match colon { Some(c) => c + 1, None if typed => spec_end(ts), None => return };
+    let shared_shape = attributes("dimension");
+    let inout = attributes("inout") || ts[..entities].iter().zip(ts[..entities].iter().skip(1)).any(|(a, b)|
+        text(src, a).eq_ignore_ascii_case("in") && text(src, b).eq_ignore_ascii_case("out"));
+    // A pointer to a TARGET dummy may modify it.
+    let excluded = attributes("pointer") || attributes("target") || w.first().is_some_and(|x| x == "class");
+    for e in top_level(&ts[entities.min(ts.len())..]) {
+        let Some(first) = e.first() else { continue };
+        let name = text(src, first).to_ascii_lowercase();
+        if typed && (shared_shape || matches!(e.get(1).map(|t| &t.kind), Some(TokenKind::LParen))) { usage.arrays.insert(name.clone()); }
+        if inout && !excluded && args.contains(&name) { usage.inout.push((name, first.span.clone())); }
+    }
+}
+
+/// Record a USE ONLY statement's names in `usage`.
+fn only_names(src: &str, ts: &[Token], w: &[String], span: Range<usize>, usage: &mut Usage) {
+    if !w.iter().any(|x| x == "only") { return; }
+    let Some(colon) = ts.iter().position(|t| matches!(t.kind, TokenKind::Colon)) else { return };
+    let module = ts.iter().skip(1).find(|t| matches!(t.kind, TokenKind::Ident(_)) && !text(src, t).eq_ignore_ascii_case("intrinsic"))
+        .map(|t| text(src, t).to_owned()).unwrap_or_default();
+    let items: Vec<&[Token]> = top_level(&ts[colon + 1..]).into_iter().filter(|i| !i.is_empty()).collect();
+    let prefix = src[ts[0].span.start..ts[colon].span.end].split_whitespace().collect::<Vec<_>>().join(" ").replace("& ", "");
+    let written: Vec<String> = items.iter().map(|i| src[i[0].span.start..i[i.len() - 1].span.end].split_whitespace().collect::<Vec<_>>().join(" ")).collect();
+    for item in &items {
+        // Operators and assignment cannot be checked by name.
+        if item.iter().any(|t| matches!(text(src, t).to_ascii_lowercase().as_str(), "operator" | "assignment")) { continue; }
+        let Some(local) = item.first().filter(|t| matches!(t.kind, TokenKind::Ident(_))) else { continue };
+        usage.only.push(Imported {
+            name: text(src, local).to_ascii_lowercase(), span: local.span.clone(), used: false,
+            statement: span.clone(), module: module.clone(), prefix: prefix.clone(), items: written.clone(),
+        });
+    }
+}
+
+/// Report a closed unit's INOUT dummies that nothing modifies and its
+/// unused USE ONLY names.
+fn usage_warnings(f: &Frame, out: &mut Vec<Warning>) {
+    let Some(unit) = &f.unit else { return };
+    for (name, span) in &f.usage.inout {
+        if f.usage.modified.contains(name) { continue; }
+        out.push(Warning::new("could-be-intent-in",
+            format!("dummy argument `{name}` of {} `{}` is INTENT(INOUT) but is never modified [could-be-intent-in]", unit.kind, unit.name),
+            span.clone(), "could be INTENT(IN)")
+            .note("INTENT(IN) documents that the procedure only reads it, and lets the compiler check that")
+            .note("keep INOUT if an interface the procedure must match requires it"));
+    }
+    if unit.kind == "module" && !f.usage.private { return; }
+    let mut statements: Vec<Range<usize>> = f.usage.only.iter().map(|i| i.statement.clone()).collect();
+    statements.dedup();
+    for statement in statements {
+        let items: Vec<&Imported> = f.usage.only.iter().filter(|i| i.statement == statement).collect();
+        let unused: Vec<&&Imported> = items.iter().filter(|i| !i.used).collect();
+        if unused.is_empty() { continue; }
+        let names: Vec<String> = unused.iter().map(|i| format!("`{}`", i.name)).collect();
+        let module = &items[0].module;
+        let message = if names.len() == 1 {
+            format!("{} is imported from `{module}` but never used [unused-only]", names[0])
+        } else {
+            format!("{} are imported from `{module}` but never used [unused-only]", names.join(", "))
+        };
+        let mut w = Warning { category: "unused-only", message,
+            labels: unused.iter().map(|i| (i.span.clone(), "never used".to_owned())).collect(), related: vec![], notes: vec![] };
+        let kept: Vec<&String> = items[0].items.iter().filter(|text| {
+            let local = text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).next().unwrap_or("").to_ascii_lowercase();
+            !unused.iter().any(|i| i.name == local)
+        }).collect();
+        w = w.note(if kept.is_empty() {
+            "suggestion: remove this USE statement".to_owned()
+        } else {
+            format!("suggestion: {} {}", items[0].prefix, kept.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "))
+        });
+        out.push(w);
+    }
+}
+
+/// The IMPLICIT NONE rules a statement gives
 
 /// A name's spelling where it is declared, or first appears.
 struct Entry {
@@ -960,6 +1135,28 @@ fn analyze(src: &str, tokens: &[Token], own_len: usize, fixed_form: bool, line_l
         });
         statement_checks(src, &ts, &w, span.clone(), &mut stack, &mut out);
         let opens_scope = matches!(role, Role::Open(Kind::Unit | Kind::Type, _));
+        // Dummies, arrays and USE ONLY names of the innermost unit; what may
+        // be modified and what is used, for it and the units enclosing it.
+        if !matches!(role, Role::Open(Kind::Unit, _)) && !stack.iter().any(|f| f.kind == Kind::Interface) {
+            if let Some(f) = stack.iter_mut().rev().find(|f| f.kind == Kind::Unit) {
+                let args = f.unit.as_ref().map(|u| u.args.clone()).unwrap_or_default();
+                intent_declarations(src, &ts, &w, &args, &mut f.usage);
+                if w.first().is_some_and(|x| x == "use") { only_names(src, &ts, &w, span.clone(), &mut f.usage); }
+                if w == ["private"] { f.usage.private = true; }
+            }
+            let arrays: std::collections::HashSet<String> = stack.iter().filter(|f| f.kind == Kind::Unit)
+                .flat_map(|f| f.usage.arrays.iter().cloned()).collect();
+            let mut modified = std::collections::HashSet::new();
+            modified_names(&w, &arrays, &mut modified);
+            if w.first().is_some_and(|x| x != "use") {
+                for f in stack.iter_mut().filter(|f| f.kind == Kind::Unit) {
+                    f.usage.modified.extend(modified.iter().cloned());
+                    for i in f.usage.only.iter_mut() {
+                        if w.contains(&i.name) { i.used = true; }
+                    }
+                }
+            }
+        }
         // Uses of a function's name as its result variable, to be renamed.
         if !matches!(role, Role::Close(_) | Role::Open(Kind::Unit, _)) {
             if let Some((name, index)) = stack.iter().rev().find(|f| f.kind == Kind::Unit).and_then(|f| f.rename.clone()) {
@@ -1029,7 +1226,7 @@ fn analyze(src: &str, tokens: &[Token], own_len: usize, fixed_form: bool, line_l
                     .map(|name| (name, out.len() - 1));
                 stack.push(Frame {
                     kind, label: do_label, span: span.clone(), name: construct_name(&w), unit, bare: vec![],
-                    implicit, scope, uses, inherits, rename,
+                    implicit, scope, uses, inherits, rename, usage: Usage::default(),
                 });
                 if opens_scope { header_names(src, &ts, &mut stack, &mut names); }
             }
@@ -1041,6 +1238,7 @@ fn analyze(src: &str, tokens: &[Token], own_len: usize, fixed_form: bool, line_l
                         if f.kind == wanted {
                             if let Some(u) = &f.unit { bare_end(src, &ts, &w, u, &mut out); }
                         }
+                        if f.kind == wanted && f.kind == Kind::Unit { usage_warnings(f, &mut out); }
                         if let (Some(u), Some(scope)) = (f.unit.as_ref().filter(|u| u.kind == "module"), f.scope) {
                             names.modules.insert(u.name.clone(), (scope, f.implicit.clone()));
                         }
@@ -1146,7 +1344,7 @@ mod tests {
 
     #[test]
     fn modern_code_is_not_reported() {
-        let src = "module m\nimplicit none\ncontains\nsubroutine s(x, n, ok)\nreal, intent(inout) :: x(:)\n\
+        let src = "module m\nimplicit none\ncontains\nsubroutine s(x, n, ok)\nreal, intent(in) :: x(:)\n\
             integer, intent(in) :: n\nlogical, intent(in) :: ok\ninteger :: i\ncharacter(len=*), parameter :: c = 'a.lt.b'\n\
             outer: do i = 1, n\n   if (x(i) < 0 .and. ok) exit outer\n   if (x(i) == 0) cycle outer\nend do outer\nend subroutine s\n\
             end module m\n";
@@ -1230,6 +1428,32 @@ mod tests {
         assert_eq!(w, [("could-be-one-line-if", 4), ("one-line-if", 17)]);
         assert!(all.iter().any(|w| w.notes.iter().any(|n| n == "suggestion: if (x > 0) x = sqrt(x)")));
         assert!(all.iter().any(|w| w.notes.iter().any(|n| n == "suggestion:\nif (x < 0) then\n   print *, x\nend if")));
+    }
+
+    #[test]
+    fn intent_in_candidates() {
+        let src = "module m\nimplicit none\ncontains\nsubroutine s(a, b, c, d, e, f, g)\nreal, intent(inout) :: a, b, c, d, e\n\
+            real, intent(inout) :: f(:)\ncharacter(len=*), intent(inout) :: g\ninteger :: i\nb = a\ncall t(c)\nread (*, *) d\n\
+            do i = 1, size(f)\n   print *, f(i), e\nend do\nwrite (g, '(a)') 'x'\nend subroutine s\nsubroutine t(x)\nreal, intent(inout) :: x\n\
+            x = 1\nend subroutine t\nend module m\n";
+        let mut got: Vec<String> = warnings(src).into_iter().filter(|w| w.0 == "could-be-intent-in").map(|w| w.2).collect();
+        got.sort();
+        assert_eq!(got, ["dummy argument `a` of subroutine `s` is INTENT(INOUT) but is never modified",
+            "dummy argument `e` of subroutine `s` is INTENT(INOUT) but is never modified",
+            "dummy argument `f` of subroutine `s` is INTENT(INOUT) but is never modified"]);
+    }
+
+    #[test]
+    fn unused_only_names() {
+        let src = "module a\nimplicit none\ninteger :: x = 1, y = 2, z = 3\nend module a\nmodule b\nuse a, only: x, y\nimplicit none\nend module b\n\
+            module c\nuse a, only: x, y\nimplicit none\nprivate\npublic :: x\nend module c\n\
+            program p\nuse a, only: x, y, w => z\nimplicit none\nprint *, x\nend program p\n";
+        let w: Vec<String> = warnings(src).into_iter().filter(|w| w.0 == "unused-only").map(|w| w.2).collect();
+        // Not module b, which may re-export; module c's `y`; the program's `y` and `w`.
+        assert_eq!(w, ["`y` is imported from `a` but never used", "`y`, `w` are imported from `a` but never used"]);
+        let tokens = crate::lexer::lex_source(src);
+        let all = super::analyze(src, &tokens, src.len(), false, None, false);
+        assert!(all.iter().any(|w| w.notes.iter().any(|n| n == "suggestion: use a, only: x")));
     }
 
     #[test]

@@ -14,6 +14,10 @@ pub(crate) struct Analysis {
     modules: HashMap<String, Vec<Stmt>>,
     /// DO loops without loop control that nothing can end, for -Winfinite-loop.
     pub loops: Vec<usize>,
+    /// DO loops whose body cannot start a second iteration, for -Wloop-runs-once.
+    pub once: Vec<usize>,
+    /// CYCLE statements that end a loop's body, for -Wredundant-cycle.
+    pub cycles: Vec<usize>,
     /// Each procedure's body, or None when several procedures share the name.
     procedures: HashMap<String, Option<Vec<Stmt>>>,
     /// The location of the statement being analyzed, for statements nested
@@ -33,6 +37,77 @@ struct Ways {
 
 fn merge(a: Ways, b: Ways) -> Ways {
     Ways { leaves: a.leaves || b.leaves, stops: a.stops || b.stops, returns: a.returns || b.returns }
+}
+
+/// Whether a loop body can start another iteration: by reaching its end,
+/// or by a CYCLE of this loop (`level`: directly in it). Returns whether
+/// the end is reached and whether a CYCLE may be. GO TO, labels, named
+/// CYCLE and I/O branches count as possibly continuing.
+fn iterates(body: &[Stmt], level: bool) -> (bool, bool) {
+    let (mut reachable, mut cycles) = (true, false);
+    for s in body {
+        if matches!(s, Stmt::CallSub { name, .. } if matches!(name.as_str(), "@goto" | "@statement_label" | "@named_cycle"))
+            || crate::action_warnings::branches(std::slice::from_ref(s)) {
+            return (true, true);
+        }
+        if !reachable { continue; }
+        match s {
+            Stmt::Exit | Stmt::Return(_) => reachable = false,
+            Stmt::Cycle => { cycles |= level; reachable = false; }
+            Stmt::CallSub { name, .. } if matches!(name.as_str(), "@stop" | "@error_stop" | "@named_exit") => reachable = false,
+            Stmt::If { then_body, else_body, .. } => {
+                let (a, b) = iterates(then_body, level);
+                let (c, d) = else_body.as_ref().map_or((true, false), |e| iterates(e, level));
+                reachable = a || c;
+                cycles |= b || d;
+            }
+            Stmt::Block { body } => {
+                let (a, b) = iterates(body, level);
+                reachable = a;
+                cycles |= b;
+            }
+            Stmt::SelectCase { cases, default, .. } => {
+                let mut any = default.is_none();
+                for b in cases.iter().map(|c| &c.body).chain(default) {
+                    let (a, c) = iterates(b, level);
+                    any |= a;
+                    cycles |= c;
+                }
+                reachable = any;
+            }
+            // A nested loop may end; a CYCLE in it is its own.
+            Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => {
+                let (_, c) = iterates(body, false);
+                cycles |= c;
+            }
+            _ => {}
+        }
+    }
+    (reachable, cycles)
+}
+
+/// The locations of CYCLE statements of a loop that end its body, directly
+/// or as the last statement of an IF or SELECT branch that ends it.
+fn trailing_cycles(body: &[Stmt], out: &mut Vec<usize>) {
+    let mut location = None;
+    let mut last = None;
+    for s in body {
+        match s {
+            Stmt::SourceLocation(p) => location = Some(*p),
+            _ => last = Some((s, location)),
+        }
+    }
+    match last {
+        Some((Stmt::Cycle, Some(p))) => out.push(p),
+        Some((Stmt::If { then_body, else_body, .. }, _)) => {
+            trailing_cycles(then_body, out);
+            if let Some(b) = else_body { trailing_cycles(b, out); }
+        }
+        Some((Stmt::SelectCase { cases, default, .. }, _)) => {
+            for b in cases.iter().map(|c| &c.body).chain(default) { trailing_cycles(b, out); }
+        }
+        _ => {}
+    }
 }
 
 fn specification(s: &Stmt) -> bool {
@@ -119,6 +194,15 @@ impl Analysis {
             }
         }
         w
+    }
+    /// -Wloop-runs-once and -Wredundant-cycle for the loop at `at`.
+    fn iteration_checks(&mut self, body: &[Stmt], at: Option<usize>) {
+        let Some(at) = at else { return };
+        let executable = body.iter().any(|s| !specification(s));
+        if executable && iterates(body, true) == (false, false) {
+            self.once.push(at);
+        }
+        trailing_cycles(body, &mut self.cycles);
     }
     fn constants(
         &self,
@@ -385,11 +469,15 @@ impl Analysis {
                 }
                 Stmt::Do { body, .. } => {
                     self.body(body, constants, true, None);
+                    self.iteration_checks(body, offset);
                     true
                 }
                 Stmt::DoWhile { cond, body } => {
                     let always = self.condition(cond, constants) == Some(true);
                     let at = offset;
+                    if self.condition(cond, constants) != Some(false) {
+                        self.iteration_checks(body, offset);
+                    }
                     self.body(
                         body,
                         constants,
@@ -442,6 +530,8 @@ pub(crate) fn analyze(program: &Program) -> Analysis {
         dead: HashSet::new(),
         warnings: vec![],
         loops: vec![],
+        once: vec![],
+        cycles: vec![],
         procedures: HashMap::new(),
         location: None,
         modules: program
@@ -478,6 +568,38 @@ pub(crate) fn analyze(program: &Program) -> Analysis {
     a
 }
 /// Report DO loops without loop control that nothing in their body can end.
+/// Report statements at `positions` under `category`.
+#[allow(clippy::too_many_arguments)]
+fn statements(positions: &[usize], src: &str, own_len: usize, filename: &str, origins: &[crate::source_diagnostics::SourceOrigin],
+              category: &str, message: &str, label: &str, notes: &[&str], error: bool) -> Result<()> {
+    let mut positions: Vec<usize> = positions.iter().copied().filter(|p| *p < own_len).collect();
+    positions.sort();
+    positions.dedup();
+    if positions.is_empty() { return Ok(()); }
+    use codespan_reporting::{diagnostic::{Diagnostic, Label}, files::SimpleFile,
+        term::{emit_to_io_write, termcolor::{ColorChoice, StandardStream}, Config}};
+    let tokens = crate::lexer::lex(src);
+    for pos in positions {
+        let statement = crate::declaration_warnings::statement_tokens(&tokens, pos, usize::MAX, src);
+        let span = match (statement.first(), statement.last()) {
+            (Some(a), Some(b)) => a.span.start..b.span.end,
+            _ => pos..pos,
+        };
+        let (name, source, span) = match origins.iter().find(|o| o.range.contains(&pos)) {
+            Some(o) => (o.name.as_str(), o.source(src), o.span(span)),
+            None => (filename, src, span),
+        };
+        let diagnostic = if error { Diagnostic::error() } else { Diagnostic::warning() }
+            .with_message(format!("{message} [{category}]"))
+            .with_labels(vec![Label::primary((), span).with_message(label)])
+            .with_notes(notes.iter().map(|n| n.to_string()).chain([format!("-Wno-{category} disables this warning")]).collect());
+        emit_to_io_write(&mut StandardStream::stderr(ColorChoice::Auto), &Config::default(),
+            &SimpleFile::new(name, source), &diagnostic)?;
+    }
+    if error { bail!("{category} warnings treated as errors"); }
+    Ok(())
+}
+
 fn infinite_loops(loops: &[usize], src: &str, own_len: usize, filename: &str,
                   origins: &[crate::source_diagnostics::SourceOrigin], error: bool) -> Result<()> {
     let mut loops: Vec<usize> = loops.iter().copied().filter(|p| *p < own_len).collect();
@@ -524,7 +646,12 @@ pub(crate) fn check(
 ) -> Result<()> {
     let (enabled, error) = crate::unused::selected("unreachable-code", false, settings, options);
     let (loops_enabled, loops_error) = crate::unused::selected("infinite-loop", false, settings, options);
-    if !enabled && !loops_enabled {
+    let (once_enabled, once_error) = crate::unused::selected("loop-runs-once", false, settings, options);
+    // In -Wextra, not -Wall.
+    let mut extra = settings.clone();
+    extra.wall = false;
+    let (cycles_enabled, cycles_error) = crate::unused::selected("redundant-cycle", false, &extra, options);
+    if !enabled && !loops_enabled && !once_enabled && !cycles_enabled {
         return Ok(());
     }
     let mut analysis = analyze(program);
@@ -533,6 +660,18 @@ pub(crate) fn check(
     }
     if loops_enabled {
         infinite_loops(&analysis.loops, src, own_len, filename, origins, loops_error)?;
+    }
+    if once_enabled {
+        statements(&analysis.once, src, own_len, filename, origins, "loop-runs-once",
+            "this DO loop runs at most once: every path through its body leaves the loop", "the loop begins here",
+            &["check for a misplaced END IF or an EXIT, RETURN or STOP that should be conditional",
+              "if the loop only provides a block to leave with EXIT, a named BLOCK construct with `exit name` says so directly"],
+            once_error)?;
+    }
+    if cycles_enabled {
+        statements(&analysis.cycles, src, own_len, filename, origins, "redundant-cycle",
+            "CYCLE at the end of the loop body has no effect", "the next iteration starts here anyway",
+            &["remove the CYCLE"], cycles_error)?;
     }
     analysis.warnings.sort_by_key(|(p, _)| *p);
     analysis.warnings.dedup();
@@ -594,6 +733,29 @@ mod tests {
         let program = crate::parser::parse_with_src(src, &crate::lexer::lex(src), "t.f90").unwrap_or_else(|_| panic!("{src}"));
         let a = super::analyze(&program);
         (a.loops.len(), a.warnings.len())
+    }
+
+    /// The lines of loops that run at most once, and of redundant CYCLEs.
+    fn iteration(src: &str) -> (Vec<usize>, Vec<usize>) {
+        let program = crate::parser::parse_with_src(src, &crate::lexer::lex(src), "t.f90").unwrap_or_else(|_| panic!("{src}"));
+        let a = super::analyze(&program);
+        let line = |p: &usize| src[..*p].matches('\n').count() + 1;
+        let (mut once, mut cycles): (Vec<usize>, Vec<usize>) = (a.once.iter().map(line).collect(), a.cycles.iter().map(line).collect());
+        once.sort();
+        cycles.sort();
+        (once, cycles)
+    }
+
+    #[test]
+    fn loops_that_run_once_and_redundant_cycles() {
+        let src = "integer :: i, n\nn = 3\ndo i = 1, n\n   print *, i\n   exit\nend do\n\
+            do i = 1, n\n   if (i > 1) then\n      exit\n   else\n      return\n   end if\nend do\n\
+            do i = 1, n\n   if (i > 1) cycle\n   exit\nend do\n\
+            do i = 1, n\n   if (i > 1) exit\n   print *, i\nend do\n\
+            do i = 1, n\n   print *, i\n   cycle\nend do\n\
+            do i = 1, n\n   if (i > 1) then\n      print *, i\n      cycle\n   end if\nend do\nend\n";
+        // Lines 3 and 7 run once; 14 iterates through its CYCLE, 18 normally.
+        assert_eq!(iteration(src), (vec![3, 7], vec![24, 29]));
     }
 
     #[test]

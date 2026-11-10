@@ -82,11 +82,20 @@ const CATEGORIES: &[&str] = &[
     "function-result",
     "could-be-one-line-if",
     "one-line-if",
+    "maybe-uninitialized",
+    "could-be-intent-in",
+    "unused-only",
+    "loop-runs-once",
+    "redundant-cycle",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface, conversion, and module-default-public remain
 /// individually selectable rather than members of this group.
 const EXTRA: &[&str] = &[
+    "maybe-uninitialized",
+    "could-be-intent-in",
+    "unused-only",
+    "redundant-cycle",
     "compare-reals",
     "logical-comparison",
     "dimension-override",

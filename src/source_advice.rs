@@ -13,6 +13,8 @@ use std::ops::Range;
 mod call_label_warnings;
 #[path = "value_warnings.rs"]
 mod value_warnings;
+#[path = "uninitialized.rs"]
+mod uninitialized;
 
 type Names = HashSet<String>;
 #[derive(Clone, Copy, PartialEq)]
@@ -1282,6 +1284,7 @@ pub fn check(
         "integer-division-all",
         "compare-reals",
         "could-be-conditional",
+        "maybe-uninitialized",
         "unchecked-status",
         "target-lifetime",
         "aliasing",
@@ -1314,6 +1317,7 @@ pub fn check(
                 | "integer-division-all"
                 | "compare-reals"
                 | "could-be-conditional"
+                | "maybe-uninitialized"
                 | "implicit-interface"
                 | "intrinsic-shadow"
                 | "keyword-name"
@@ -1382,6 +1386,9 @@ pub fn check(
             a.real_literal_checks(&program.body,scope,literal_style,literal_digits);
         }
         a.unused_labels(&program.body, 0);
+        if controls["maybe-uninitialized"].0 {
+            a.uninitialized(&program.body, scope, Some(&program.contains));
+        }
         a.intrinsic_shadows();
         if controls.get("keyword-name").is_some_and(|c| c.0) {
             a.keyword_names();
