@@ -676,7 +676,7 @@ impl<'a> Analysis<'a> {
                             span,
                             message: format!("CMPLX without KIND converts {} arguments to default-kind COMPLEX(4), which may lose precision", from.label()),
                             related: None,
-                            note: "supply the KIND argument to CMPLX to choose the intended precision; assigning its result to a wider complex variable cannot restore lost precision",
+                            suggestion:None,note: "supply the KIND argument to CMPLX to choose the intended precision; assigning its result to a wider complex variable cannot restore lost precision",
                         });
                     }
                 }
@@ -719,11 +719,11 @@ impl<'a> Analysis<'a> {
                         } else if real {
                             self.warnings.push(Advice{category:"integer-division",span:span.clone(),
                                 message:"integer division truncates its quotient before conversion to REAL".into(),related:None,
-                                note:"convert an operand, as in real(n)/m, for a fractional result, or write real(n/m) if truncation is intended; Fortran truncates toward zero, as C does, while Python's // rounds down"});
+                                suggestion:None,note:"convert an operand, as in real(n)/m, for a fractional result, or write real(n/m) if truncation is intended; Fortran truncates toward zero, as C does, while Python's // rounds down"});
                         } else {
                             self.warnings.push(Advice{category:"integer-division-all",span,
                                 message:"integer division truncates its quotient toward zero".into(),related:None,
-                                note:"-7/2 is -3 in Fortran and C but -7//2 is -4 in Python; use real operands for a fractional result"});
+                                suggestion:None,note:"-7/2 is -3 in Fortran and C but -7//2 is -4 in Python; use real operands for a fractional result"});
                         }
                     }
                 }
@@ -736,6 +736,128 @@ impl<'a> Analysis<'a> {
             }
             _ => for x in expressions(e) { self.integer_quotients(x, scope, offset, false, cursor); },
         }
+    }
+    /// The source text of tokens, with whitespace collapsed.
+    fn token_text(&self, ts: &[Token]) -> String {
+        match (ts.first(), ts.last()) {
+            (Some(a), Some(b)) => self.src[a.span.start..b.span.end].split_whitespace().collect::<Vec<_>>().join(" ")
+                .replace("& ", ""),
+            _ => String::new(),
+        }
+    }
+    /// The parenthesized condition of the IF or ELSE IF statement at `offset`.
+    fn condition_text(&self, offset: usize) -> Option<String> {
+        let ts = self.statement_tokens(offset);
+        let open = ts.iter().position(|t| matches!(t.kind, TokenKind::LParen))?;
+        let mut depth = 0;
+        for (i, t) in ts.iter().enumerate().skip(open) {
+            match t.kind {
+                TokenKind::LParen => depth += 1,
+                TokenKind::RParen => { depth -= 1; if depth == 0 { return Some(self.token_text(&ts[open + 1..i])); } }
+                _ => {}
+            }
+        }
+        None
+    }
+    /// `-Wcould-be-conditional`, opt-in: an IF block whose branches each
+    /// assign one value to the same variable, which a Fortran 2023
+    /// conditional expression can express, as in `y = (x > 0 ? sqrt(x) : -1.0)`.
+    /// The block needs an ELSE and at most three branches. The alternatives
+    /// must have one type and kind, as a conditional expression requires;
+    /// integer and REAL literals are rewritten to match REAL alternatives.
+    fn conditional_assignment(&mut self, s: &Stmt, scope: usize, offset: usize) {
+        /// The one assignment of a branch, with the location of its statement.
+        fn single(body: &[Stmt]) -> Option<(usize, &Expr)> {
+            let mut at = None;
+            let mut found = None;
+            for s in body {
+                match s {
+                    Stmt::SourceLocation(p) => at = Some(*p),
+                    Stmt::Assign { value, .. } | Stmt::AssignIndex { value, .. } if found.is_none() => found = Some((at?, value)),
+                    _ => return None,
+                }
+            }
+            found
+        }
+        // An ELSE IF is considered with the IF that begins its chain.
+        if self.chained.contains(&(s as *const Stmt as usize)) { return; }
+        let mut branches: Vec<(Option<String>, usize, &Expr)> = vec![];
+        let (mut current, mut at) = (s, offset);
+        loop {
+            let Stmt::If { then_body, else_body, .. } = current else { return };
+            let (assignment, value) = match single(then_body) { Some(b) => b, None => return };
+            branches.push((Some(match self.condition_text(at) { Some(c) => c, None => return }), assignment, value));
+            let Some(tail) = else_body else { return };
+            let real: Vec<&Stmt> = tail.iter().filter(|t| !matches!(t, Stmt::SourceLocation(_))).collect();
+            match (real.as_slice(), tail.first()) {
+                ([next @ Stmt::If { .. }], Some(Stmt::SourceLocation(p))) => {
+                    self.chained.insert(*next as *const Stmt as usize);
+                    current = next;
+                    at = *p;
+                }
+                _ => {
+                    let Some((assignment, value)) = single(tail) else { return };
+                    branches.push((None, assignment, value));
+                    break;
+                }
+            }
+            if branches.len() > 3 { return; }
+        }
+        if branches.len() > 3 { return; }
+        // The same target in every branch.
+        let mut targets = vec![];
+        let mut values = vec![];
+        for (_, assignment, _) in &branches {
+            let ts = self.statement_tokens(*assignment);
+            let Some(eq) = ts.iter().position(|t| matches!(t.kind, TokenKind::Eq)) else { return };
+            targets.push(self.token_text(&ts[..eq]));
+            values.push(self.token_text(&ts[eq + 1..]));
+        }
+        if targets.iter().any(|t| !t.eq_ignore_ascii_case(&targets[0])) { return; }
+        // One type and kind for the alternatives, rewriting literals to REAL.
+        let literal = |e: &Expr| match e {
+            Expr::IntLit(_) | Expr::RealLit(_) => true,
+            Expr::Un(UnOp::Neg, x) => matches!(**x, Expr::IntLit(_) | Expr::RealLit(_)),
+            _ => false,
+        };
+        let types: Vec<Option<Number>> = branches.iter().map(|(_, _, v)| self.numeric_type(v, scope)).collect();
+        if types.iter().all(|t| t.is_none()) {
+            let same = branches.iter().all(|(_, _, v)| matches!(v, Expr::Str(_)))
+                || branches.iter().all(|(_, _, v)| matches!(v, Expr::Logical(_)));
+            if !same { return; }
+        } else {
+            let Some(main) = branches.iter().zip(&types).find(|((_, _, v), _)| !literal(v)).and_then(|(_, t)| *t)
+                .or(types[0]) else { return };
+            for (i, ((_, _, v), t)) in branches.iter().zip(&types).enumerate() {
+                let Some(t) = t else { return };
+                if t.class == main.class && t.bytes == main.bytes { continue; }
+                if main.class != 1 || !literal(v) { return; }
+                // An integer or REAL literal for a REAL(4) or REAL(8) alternative.
+                let text = values[i].clone();
+                let digits = text.trim_start_matches('-');
+                let rewritten = if digits.bytes().all(|b| b.is_ascii_digit()) {
+                    format!("{text}.0")
+                } else if digits.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+                    text.clone()
+                } else {
+                    return;
+                };
+                values[i] = match main.bytes { 4 => rewritten, 8 => format!("{rewritten}d0"), _ => return };
+            }
+        }
+        let mut expression = String::new();
+        for ((cond, _, _), value) in branches.iter().zip(&values) {
+            match cond {
+                Some(c) => expression.push_str(&format!("{c} ? {value} : ")),
+                None => expression.push_str(value),
+            }
+        }
+        let ts = self.statement_tokens(offset);
+        let span = match (ts.first(), ts.last()) { (Some(a), Some(b)) => a.span.start..b.span.end, _ => offset..offset };
+        self.warnings.push(Advice{category:"could-be-conditional",span,
+            message:format!("IF block that only assigns `{}` could be a conditional expression", targets[0]),related:None,
+            suggestion:Some(format!("{} = ({expression})", targets[0])),
+            note:"a Fortran 2023 conditional expression evaluates only the chosen alternative, unlike MERGE, which may evaluate both; not all compilers support it yet"});
     }
     /// `-Wcompare-reals`: `==` and `/=` with a REAL or COMPLEX operand,
     /// except comparisons with an exact zero. `cursor` counts the equality
@@ -764,7 +886,7 @@ impl<'a> Analysis<'a> {
                         let what = if matches!(op, BinOp::Eq) { "equality" } else { "inequality" };
                         self.warnings.push(Advice{category:"compare-reals",span,
                             message:format!("exact {what} comparison of floating-point values"),related:None,
-                            note:"rounding makes computed values differ in the last bits; compare with a tolerance, as in abs(x - y) <= tol*max(abs(x), abs(y)); comparisons with an exact zero are not reported"});
+                            suggestion:None,note:"rounding makes computed values differ in the last bits; compare with a tolerance, as in abs(x - y) <= tol*max(abs(x), abs(y)); comparisons with an exact zero are not reported"});
                     }
                 }
             }
@@ -791,7 +913,7 @@ impl<'a> Analysis<'a> {
         if risky && !self.safe_conversion(e, scope, from, to) {
             self.warnings.push(Advice{category:"conversion",span:self.rhs_span(offset),
                 message:format!("implicit conversion from {} to {} in assignment to `{name}` may lose information",from.label(),to.label()),related:None,
-                note:"use an explicit conversion when the loss is intentional, or choose a destination type and kind that preserve the value"});
+                suggestion:None,note:"use an explicit conversion when the loss is intentional, or choose a destination type and kind that preserve the value"});
         }
         if to.class > 0 {
             if let Some(low) = self
@@ -800,7 +922,7 @@ impl<'a> Analysis<'a> {
             {
                 self.warnings.push(Advice{category:"precision-loss",span:self.rhs_span(offset),
                     message:format!("expression assigned to `{name}` uses {} precision before widening to {}",low.label(),to.label()),related:None,
-                    note:"give literals and computations the intended kind; conversion after a calculation cannot restore lost precision"});
+                    suggestion:None,note:"give literals and computations the intended kind; conversion after a calculation cannot restore lost precision"});
             }
         }
     }
@@ -858,7 +980,7 @@ impl<'a> Analysis<'a> {
         if from > to {
             self.warnings.push(Advice{category:"character-truncation",span:self.rhs_span(offset),
                 message:format!("CHARACTER value of length {from} is truncated to length {to} in {context} `{name}`"),related:None,
-                note:"shorten the value, lengthen the destination, or take an explicit substring when the truncation is intended"});
+                suggestion:None,note:"shorten the value, lengthen the destination, or take an explicit substring when the truncation is intended"});
         }
     }
     pub(super) fn pointer_initializers(&mut self) {
@@ -918,7 +1040,7 @@ impl<'a> Analysis<'a> {
                 }
                 self.warnings.push(Advice{category:"pointer-init",span:self.span(offset,&name),
                     message:format!("pointer component `{}%{name}` has no default initialization",t.name),related:None,
-                    note:"consider => NULL(); without initialization its association status is undefined, so ASSOCIATED is not a safe first test"});
+                    suggestion:None,note:"consider => NULL(); without initialization its association status is undefined, so ASSOCIATED is not a safe first test"});
             }
         }
     }
@@ -1049,7 +1171,7 @@ impl<'a> Analysis<'a> {
         if !missing.is_empty() {
             self.warnings.push(Advice{category:"enum-exhaustive",span:offset..offset,
             message:format!("SELECT CASE for enumeration `{}` does not cover {}",t.name,missing.join(", ")),related:None,
-            note:"add cases for the missing values, or CASE DEFAULT to handle the remaining values deliberately"});
+            suggestion:None,note:"add cases for the missing values, or CASE DEFAULT to handle the remaining values deliberately"});
         }
     }
     fn dimensions(&self, name: &str, scope: usize) -> Option<Vec<(i64, i64)>> {
@@ -1288,7 +1410,7 @@ impl<'a> Analysis<'a> {
                 self.warnings.push(Advice{category:"do-subscript",span:self.span(offset,root(name)),
                 message:format!("loop-derived subscript range {l}:{u} for `{name}` dimension {} may exceed bounds {lower}:{upper}",axis+1),
                 related:self.resolve(scope,name).map(|id|(self.decls[id].span.clone(),"array declared here".into())),
-                note:"check the loop bounds, offsets, and guards; the range describes possible values, not proof that every value is accessed"});
+                suggestion:None,note:"check the loop bounds, offsets, and guards; the range describes possible values, not proof that every value is accessed"});
             }
         }
     }
@@ -1450,6 +1572,7 @@ impl<'a> Analysis<'a> {
                     }
                 }
                 Stmt::SelectCase { .. } => self.enum_selection(s, scope, offset),
+                Stmt::If { .. } => self.conditional_assignment(s, scope, offset),
                 Stmt::DerivedType { components, .. } => {
                     self.value_walk(components, scope, offset, &Intervals::new());
                     continue;

@@ -72,7 +72,7 @@ pub(super) fn check<'a>(a: &mut Analysis<'a>, body: &'a [Stmt], scope: usize, st
                 if style && !text.contains('_') && !text.contains(['d','D']) {
                     a.warnings.push(Advice{category:"real-literal-kind",span:span.clone(),
                         message:format!("real literal `{text}` has no explicit kind (default REAL(4))"),related:None,
-                        note:"use an explicit kind suffix such as _wp, with wp declared as the intended real kind; a D exponent also specifies double precision"});
+                        suggestion:None,note:"use an explicit kind suffix such as _wp, with wp declared as the intended real kind; a D exponent also specifies double precision"});
                 }
                 if !excess {continue;}
                 let Some(kind)=a.numeric_type(&Expr::RealLit(text.clone()),scope) else {continue;};
@@ -82,7 +82,7 @@ pub(super) fn check<'a>(a: &mut Analysis<'a>, body: &'a [Stmt], scope: usize, st
                 if digits<=precision || exact(&text,kind.bytes,&written) {continue;}
                 a.warnings.push(Advice{category:"excess-real-digits",span,
                     message:format!("real literal `{text}` supplies {digits} significant decimal digits; REAL({}) guarantees {precision}",kind.bytes),related:None,
-                    note:"check the literal's intended kind; a suffix such as _wp selects a declared kind, but a wider destination or later conversion cannot restore precision already lost in the literal; exactly representable values are exempt"});
+                    suggestion:None,note:"check the literal's intended kind; a suffix such as _wp selects a declared kind, but a wider destination or later conversion cannot restore precision already lost in the literal; exactly representable values are exempt"});
             }
             match s {
                 Stmt::Function{body,..}|Stmt::Subroutine{body,..}|Stmt::Module{body,..}

@@ -10,7 +10,7 @@
 //! statements and by other branches of the constructs it is in. Code after
 //! an unconditional RETURN is also reported by -Wunreachable-code.
 use crate::indentation_warnings::{classify, words, Kind, Role};
-use crate::lexer::{lex, Token, TokenKind};
+use crate::lexer::{Token, TokenKind};
 use crate::sema::SemaSettings;
 use anyhow::{bail, Result};
 use std::ops::Range;
@@ -156,7 +156,7 @@ pub(crate) fn check(
     opt_in.wall = false;
     let (enabled, error) = crate::unused::selected(CATEGORY, false, &opt_in, options);
     if !enabled { return Ok(()); }
-    let tokens: Vec<Token> = lex(src);
+    let tokens: Vec<Token> = crate::lexer::lex_source(src);
     let warnings = analyze(src, &tokens, own_len);
     if warnings.is_empty() { return Ok(()); }
     use codespan_reporting::{diagnostic::{Diagnostic, Label}, files::SimpleFiles,
@@ -188,7 +188,7 @@ pub(crate) fn check(
 mod tests {
     /// The lines of the reported RETURNs, and whether each is in a loop.
     fn reported(src: &str) -> Vec<(usize, bool)> {
-        let tokens = crate::lexer::lex(src);
+        let tokens = crate::lexer::lex_source(src);
         super::analyze(src, &tokens, src.len()).into_iter()
             .map(|w| (src[..w.span.start].matches('\n').count() + 1, w.in_loop)).collect()
     }

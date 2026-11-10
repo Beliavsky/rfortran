@@ -76,6 +76,12 @@ const CATEGORIES: &[&str] = &[
     "obsolescent",
     "stop-in-procedure",
     "assumed-size",
+    "redundant-implicit",
+    "name-case",
+    "could-be-conditional",
+    "function-result",
+    "could-be-one-line-if",
+    "one-line-if",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface, conversion, and module-default-public remain
@@ -110,6 +116,9 @@ const STYLE: &[&str] = &[
     "obsolescent",
     "stop-in-procedure",
     "assumed-size",
+    "redundant-implicit",
+    "name-case",
+    "function-result",
     "indentation",
     "use-without-only",
     "module-default-public",

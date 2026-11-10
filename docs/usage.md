@@ -146,6 +146,12 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wobsolescent` | No | No | Obsolescent and deleted features: computed and assigned GO TO, arithmetic IF, ASSIGN, COMMON, EQUIVALENCE, ENTRY, BLOCK DATA, FORALL, PAUSE, CHARACTER*length and alternate returns |
 | `-Wstop-in-procedure` | No | No | STOP in a function or subroutine; ERROR STOP is not reported |
 | `-Wassumed-size` | No | No | Assumed-size dummy arrays, such as `x(*)` or `y(n,*)`, outside BIND(C) procedures |
+| `-Wredundant-implicit` | No | No | IMPLICIT NONE in a module or internal procedure, or a submodule, whose host's IMPLICIT NONE already applies; interface bodies, which do not inherit, are not reported |
+| `-Wname-case` | No | No | A name written in a case different from its declaration, or from its first appearance, such as `X` for a variable declared `x`; in one warning per name |
+| `-Wfunction-result` | No | No | FUNCTION statements with the result type in the prefix, such as `real function f(x)`, or without a RESULT clause, with the preferred `function f(x) result(y)` form suggested |
+| `-Wcould-be-conditional` | No | No | IF blocks whose two or three branches each assign one value to the same variable, with a Fortran 2023 conditional expression suggested, such as `y = (x > 0 ? sqrt(x) : -1.0)` |
+| `-Wcould-be-one-line-if` | No | No | IF blocks holding a single action statement, with the one-line IF suggested when it fits the line length, such as `if (x > 0) x = sqrt(x)` |
+| `-Wone-line-if` | No | No | The reverse: one-line IFs, with the block form suggested, for projects that always use block IFs |
 | `-Wunchecked-status` | No | Yes | Local scalar IOSTAT, allocation STAT, and intrinsic status results not inspected or forwarded |
 | `-Wtarget-lifetime` | Yes | No | Pointer associations escaping a known automatic local target |
 | `-Winfinite-loop` | Yes | No | DO loops without loop control, or `DO WHILE (.true.)`, that nothing in their body can end |
@@ -800,8 +806,9 @@ Fortran: Style and Usage*. Each is opt-in and can also be selected alone, and
 - the new style checks `-Wold-relational`, `-Wlogical-comparison`,
   `-Wmissing-double-colon`, `-Wlabeled-do`, `-Wdouble-precision`,
   `-Wbare-end`, `-Wkeyword-case`, `-Wtabs`, `-Wline-length`,
-  `-Wunnamed-exit`, `-Wgoto`, `-Wobsolescent`, `-Wstop-in-procedure` and
-  `-Wassumed-size`;
+  `-Wunnamed-exit`, `-Wgoto`, `-Wobsolescent`, `-Wstop-in-procedure`,
+  `-Wassumed-size`, `-Wredundant-implicit`, `-Wname-case` and
+  `-Wfunction-result`;
 - the existing checks `-Windentation`, `-Wuse-without-only`,
   `-Wmodule-default-public`, `-Wliteral-kind`, `-Wdefault-real`,
   `-Wcould-be-parameter`, `-Wmissing-intent` and `-Wimplicit-typing`.
@@ -835,6 +842,31 @@ Notes on individual checks:
 - `-Wobsolescent` reports plain GO TO under `-Wgoto` instead, since GO TO
   itself is not obsolescent, and labeled DO loops under `-Wlabeled-do`,
   which notes when shared or action-statement termination is obsolescent.
+- `-Wredundant-implicit` reports IMPLICIT NONE that changes nothing because
+  the host's applies. `implicit none (type, external)` under a host's plain
+  `implicit none` adds the EXTERNAL rule and is not reported.
+- `-Wname-case` compares each use with the declaration in the scope that
+  owns the name: the procedure, its host, or the module it was USE'd from,
+  with components compared with their declarations in types. Names that
+  are not declared are compared with their first appearance. Keyword
+  arguments and I/O specifiers are not checked.
+- `-Wfunction-result` prefers `function f(x) result(y)` with `y` declared
+  in the body: a prefix type cannot carry attributes such as ALLOCATABLE,
+  and RESULT keeps the function's name for calls. Without RESULT, the
+  suggestion uses `f_result` and labels the uses of `f` to rename.
+  Separate module procedures (`module function`) and assumed-length
+  `character(len=*)` functions are not reported.
+- `-Wcould-be-conditional` is not part of `-Wstyle`, since conditional
+  expressions are new in Fortran 2023. It needs an ELSE branch and at most
+  three branches, each a single assignment to the same variable, with
+  alternatives of one type and kind; integer and REAL literals are rewritten
+  to match REAL alternatives, as in `-1` becoming `-1.0`. Unlike MERGE, a
+  conditional expression evaluates only the chosen alternative.
+- `-Wcould-be-one-line-if` and `-Wone-line-if` express opposite
+  preferences, so neither is in `-Wstyle`. A block is suggested as a one-line
+  IF only when it has no ELSE, construct name, labels, comments or `;`, its
+  statement fits on one line and can be a logical IF action, and the result
+  fits in 132 characters, or the `-Wline-length=N` limit.
 - `-Wassumed-size` is advice: an assumed-shape dummy changes how the
   procedure is called and needs an explicit interface.
 

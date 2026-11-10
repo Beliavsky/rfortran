@@ -149,6 +149,118 @@ class StyleWarnings(unittest.TestCase):
         self.assertNotEqual(compile_with(OLD, '-Werror=goto').returncode, 0)
         self.assertIn('unknown warning option', compile_with(OLD, '-Wline-length=x').stderr)
 
+    def test_redundant_implicit(self):
+        source = '''module m
+implicit none
+interface
+   subroutine ext(x)
+      implicit none
+      real :: x
+   end subroutine ext
+end interface
+contains
+subroutine sub(x)
+implicit none
+real, intent(in) :: x
+print *, "x =", x
+end subroutine sub
+end module m
+program main
+use m
+implicit none
+call sub(3.4)
+end program main
+'''
+        err = compile_with(source, '-Wredundant-implicit').stderr
+        # The module procedure's, not the interface body's or the program's.
+        self.assertEqual(found(err), [('redundant-implicit', 11)], err)
+        self.assertIn('interface bodies do not', err)
+
+    def test_name_case(self):
+        source = 'implicit none\nreal :: x\nX = 2.3\nprint *, x\nend\n'
+        err = compile_with(source, '-Wname-case').stderr
+        self.assertEqual(found(err), [('name-case', 3)], err)
+        self.assertIn('`X` is declared as `x` [name-case]', err)
+        self.assertIn('write `x`', err)
+        # Different entities in different procedures may differ in case.
+        other = '''module m
+implicit none
+contains
+subroutine a(n)
+integer :: n
+print *, n
+end subroutine a
+subroutine b(N)
+integer :: N
+print *, N
+end subroutine b
+end module m
+'''
+        self.assertEqual(found(compile_with(other, '-Wname-case').stderr), [])
+
+    def test_function_result(self):
+        source = '''module m
+implicit none
+contains
+function a(x) result(y)
+real, intent(in) :: x
+real :: y
+y = x
+end function a
+real function b(x)
+real, intent(in) :: x
+b = 2*x
+end function b
+end module m
+'''
+        err = compile_with(source, '-Wfunction-result').stderr
+        self.assertEqual(found(err), [('function-result', 9)], err)
+        self.assertIn('suggestion: function b(x) result(b_result)', err)
+        self.assertIn('then declare `real :: b_result` with the arguments', err)
+        self.assertIn('rename to `b_result`', err)
+
+    def test_could_be_conditional(self):
+        first = 'if (x > 0) then\n   y = sqrt(x)\nelse\n   y = -1\nend if\n'
+        second = 'if (x > 9) then\n   k = 1\nelse if (x < 0) then\n   k = -1\nelse\n   k = 0\nend if\n'
+        third = 'if (x > 0) then\n   y = 1.0\n   k = 2\nelse\n   y = 0.0\nend if\n'
+        source = 'implicit none\nreal :: x, y\ninteger :: k\nx = 4\n' + first + second + third + 'print *, y, k\nend\n'
+        err = compile_with(source, '-Wcould-be-conditional').stderr
+        # Not the third block, which has two statements in a branch.
+        self.assertEqual(found(err), [('could-be-conditional', 5), ('could-be-conditional', 10)], err)
+        self.assertIn('suggestion: y = (x > 0 ? sqrt(x) : -1.0)', err)
+        self.assertIn('suggestion: k = (x > 9 ? 1 : x < 0 ? -1 : 0)', err)
+        self.assertIn('unlike MERGE', err)
+        self.assertNotIn('could-be-conditional', compile_with(source, '-Wstyle', '-Wall', '-Wextra').stderr)
+        # The suggestions compile and give the same results.
+        fixed = source.replace(first, 'y = (x > 0 ? sqrt(x) : -1.0)\n').replace(second, 'k = (x > 9 ? 1 : x < 0 ? -1 : 0)\n')
+        self.assertEqual(*self.outputs(source, fixed))
+
+    def test_one_line_ifs(self):
+        block = 'if (x > 0) then\n   x = sqrt(x)\nend if\n'
+        source = ('implicit none\nreal :: x\nx = 4\n' + block
+                  + 'if (x > 1) then ! keep\n   x = 1\nend if\nif (x < 0) print *, x\nprint *, x\nend\n')
+        err = compile_with(source, '-Wcould-be-one-line-if').stderr
+        self.assertEqual(found(err), [('could-be-one-line-if', 4)], err)
+        self.assertIn('suggestion: if (x > 0) x = sqrt(x)', err)
+        err = compile_with(source, '-Wone-line-if').stderr
+        self.assertEqual(found(err), [('one-line-if', 10)], err)
+        self.assertIn('if (x < 0) then', err)
+        self.assertNotIn('one-line-if', compile_with(source, '-Wstyle').stderr)
+        # The suggestion compiles and gives the same result.
+        self.assertEqual(*self.outputs(source, source.replace(block, 'if (x > 0) x = sqrt(x)\n')))
+
+    def outputs(self, *sources):
+        """The output of running each source."""
+        out = []
+        with tempfile.TemporaryDirectory(prefix='style-') as tmp:
+            for i, text in enumerate(sources):
+                path = Path(tmp) / f'v{i}.f90'
+                path.write_text(text, encoding='utf-8')
+                run = subprocess.run([COMPILER, 'run', path], cwd=tmp, capture_output=True, text=True, timeout=120)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                out.append(run.stdout)
+        return out
+
 
 if __name__ == '__main__':
     unittest.main()

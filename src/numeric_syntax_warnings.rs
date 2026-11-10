@@ -258,7 +258,7 @@ impl<'a> Analysis<'a> {
                 if m.sign != 0 && m.log2 < threshold - 1e-6 {
                     self.warnings.push(Advice{category:"underflow",span:self.rhs_span(offset),
                         message:format!("nonzero constant rounds to zero in {}",Number{class:1,bytes:k.bytes}.label()),related:None,
-                        note:"choose a kind with greater exponent range or rescale the calculation; a subnormal value that remains nonzero is not diagnosed"});
+                        suggestion:None,note:"choose a kind with greater exponent range or rescale the calculation; a subnormal value that remains nonzero is not diagnosed"});
                     return true;
                 }
             }
@@ -400,7 +400,7 @@ impl<'a> Analysis<'a> {
                 };
                 self.warnings.push(Advice{category:"empty-case",span:heads.get(i).cloned().unwrap_or(offset..offset),
                 message:format!("CASE range {description} is empty and cannot match any selector value"),related:None,
-                note:"check whether the lower and upper bounds were reversed; an empty CASE range is legal but its branch cannot be selected"});
+                suggestion:None,note:"check whether the lower and upper bounds were reversed; an empty CASE range is legal but its branch cannot be selected"});
             }
         }
     }

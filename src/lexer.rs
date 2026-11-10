@@ -883,6 +883,17 @@ fn format_statements(tokens: &mut Vec<Token>, input: &str) {
 }
 
 pub fn lex(input: &str) -> Vec<Token> {
+    lex_with(input, true)
+}
+
+/// The tokens of `input` with interface blocks and PROCEDURE declarations
+/// kept as written, for checks of source layout and style that look inside
+/// them.
+pub(crate) fn lex_source(input: &str) -> Vec<Token> {
+    lex_with(input, false)
+}
+
+fn lex_with(input: &str, collapse: bool) -> Vec<Token> {
     let mut tokens = Vec::new();
     let mut offset = 0;
     'restart: loop {
@@ -1635,7 +1646,7 @@ pub fn lex(input: &str) -> Vec<Token> {
     crate::select_type::tokens(&mut tokens, input);
     crate::namelists::tokens(&mut tokens, input);
     crate::c_interop::binding_tokens(&mut tokens, input);
-    procedure_declarations(&mut tokens, input);
+    if collapse { procedure_declarations(&mut tokens, input); }
     // Distinct name tokens keep optional END DO names and named transfers from
     // consuming an identifier on the following logical statement.
     let mut named_index=0;

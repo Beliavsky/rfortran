@@ -22,11 +22,26 @@
 //!   GO TO, arithmetic IF, COMMON, EQUIVALENCE, ENTRY and alternate returns.
 //! - `stop-in-procedure`: STOP in a function or subroutine.
 //! - `assumed-size`: assumed-size dummy arrays.
+//! - `redundant-implicit`: IMPLICIT NONE in a procedure or submodule whose
+//!   host's IMPLICIT NONE already applies. Interface bodies do not inherit
+//!   the host's implicit rules and are not reported.
+//! - `function-result`: a FUNCTION statement with the result type in its
+//!   prefix, as in `real function f(x)`, or without a RESULT clause; the
+//!   preferred form is `function f(x) result(y)` with `y` declared in the
+//!   body.
+//! - `could-be-one-line-if` and its reverse, `one-line-if`, neither in
+//!   -Wstyle: an IF block holding one action statement, which a logical
+//!   IF can express on one line, and a logical IF, which can be written as
+//!   a block.
+//! - `name-case`: a name written in a case different from its declaration,
+//!   or from its first appearance if it is not declared, within a scope.
+//!   Host-associated and USE-associated names are compared with their
+//!   declarations, and components with their declarations in types.
 //!
 //! The checks read the tokens of each statement and a stack of open
 //! constructs shared with -Windentation.
 use crate::indentation_warnings::{classify, words, Kind, Role};
-use crate::lexer::{lex, Token, TokenKind};
+use crate::lexer::{Token, TokenKind};
 use crate::sema::SemaSettings;
 use anyhow::{bail, Result};
 use std::ops::Range;
@@ -34,6 +49,7 @@ use std::ops::Range;
 pub(crate) const CATEGORIES: &[&str] = &[
     "old-relational", "logical-comparison", "missing-double-colon", "labeled-do", "double-precision", "bare-end",
     "keyword-case", "tabs", "line-length", "unnamed-exit", "goto", "obsolescent", "stop-in-procedure", "assumed-size",
+    "redundant-implicit", "name-case", "function-result", "could-be-one-line-if", "one-line-if",
 ];
 
 struct Warning {
@@ -68,7 +84,390 @@ struct Frame {
     unit: Option<Unit>,
     /// EXIT and CYCLE statements without a construct name.
     bare: Vec<(Range<usize>, String)>,
+    /// For a program unit: the IMPLICIT NONE rules in effect (TYPE and
+    /// EXTERNAL bits) with the statement giving them, the scope of its
+    /// names, the scopes of modules it uses without ONLY, and whether it
+    /// inherits from the unit enclosing it.
+    implicit: (u8, Option<Range<usize>>),
+    scope: Option<usize>,
+    uses: Vec<usize>,
+    inherits: bool,
+    /// For a function without RESULT: its name, and the warning that
+    /// collects the uses of the name as the result variable.
+    rename: Option<(String, usize)>,
 }
+
+/// A name's spelling where it is declared, or first appears.
+struct Entry {
+    spelling: String,
+    span: Range<usize>,
+    declared: bool,
+    /// Other spellings, where they appear.
+    others: Vec<(Range<usize>, String)>,
+}
+
+/// Words that the lexer can leave as names but are keywords, attribute
+/// names or specifiers; their case is -Wkeyword-case's concern.
+const KEYWORD_NAMES: &[&str] = &[
+    "in", "out", "inout", "intent", "allocatable", "pointer", "target", "optional", "value", "save", "parameter",
+    "public", "private", "protected", "volatile", "asynchronous", "contiguous", "external", "intrinsic", "bind", "c",
+    "name", "len", "kind", "only", "none", "result", "recursive", "pure", "elemental", "impure", "simple", "then",
+    "else", "elseif", "end", "do", "while", "concurrent", "if", "select", "case", "default", "where", "forall",
+    "associate", "block", "critical", "exit", "cycle", "stop", "error", "return", "call", "go", "to", "goto",
+    "continue", "format", "open", "close", "read", "write", "print", "inquire", "rewind", "backspace", "endfile",
+    "flush", "wait", "deferred", "nopass", "pass", "non_overridable", "abstract", "extends", "sequence", "import",
+    "implicit", "use", "contains", "module", "procedure", "function", "subroutine", "program", "submodule",
+    "interface", "operator", "assignment", "generic", "final", "enum", "enumerator", "type", "class", "is", "real",
+    "integer", "complex", "logical", "character", "double", "precision", "allocate", "deallocate", "nullify", "data",
+    "common", "equivalence", "namelist", "entry", "sync", "all", "images", "memory", "lock", "unlock", "event",
+    "post", "team", "change", "rank", "local", "local_init", "shared", "reduce", "dimension", "codimension",
+    "non_intrinsic", "doubleprecision", "doublecomplex", "selectcase", "selecttype", "enddo", "endif",
+];
+
+/// Scopes of names: 0 holds components, 1 module and program names, 2 names
+/// outside any program unit; then one per program unit.
+struct Names {
+    scopes: Vec<std::collections::HashMap<String, Entry>>,
+    /// Each module's scope and IMPLICIT NONE rules, for USE and submodules.
+    modules: std::collections::HashMap<String, (usize, (u8, Option<Range<usize>>))>,
+    ambiguous: std::collections::HashSet<String>,
+}
+
+const COMPONENTS: usize = 0;
+const UNITS: usize = 1;
+const OUTSIDE: usize = 2;
+
+impl Names {
+    fn new() -> Self {
+        Names { scopes: (0..3).map(|_| Default::default()).collect(), modules: Default::default(), ambiguous: Default::default() }
+    }
+    fn scope(&mut self) -> usize {
+        self.scopes.push(Default::default());
+        self.scopes.len() - 1
+    }
+    /// Record `spelling` of a name in `scope`: its reference spelling if
+    /// it is new there, otherwise compared with that.
+    fn note(&mut self, scope: usize, spelling: &str, span: Range<usize>, declared: bool) {
+        let key = spelling.to_ascii_lowercase();
+        if scope == COMPONENTS && self.ambiguous.contains(&key) { return; }
+        match self.scopes[scope].get_mut(&key) {
+            Some(e) if e.spelling != spelling => {
+                if scope == COMPONENTS && declared && e.declared {
+                    // Components of different types may be spelled differently.
+                    self.ambiguous.insert(key.clone());
+                    self.scopes[scope].remove(&key);
+                } else if declared && !e.declared && e.others.is_empty() {
+                    // A declaration after uses becomes the reference.
+                    let old = std::mem::replace(e, Entry { spelling: spelling.to_owned(), span, declared, others: vec![] });
+                    e.others.push((old.span, old.spelling));
+                } else {
+                    e.others.push((span, spelling.to_owned()));
+                }
+            }
+            Some(e) => {
+                if declared && !e.declared { e.declared = true; e.span = span; }
+            }
+            None => { self.scopes[scope].insert(key, Entry { spelling: spelling.to_owned(), span, declared, others: vec![] }); }
+        }
+    }
+    /// The scopes a name in the innermost unit can come from, innermost first.
+    fn chain(stack: &[Frame]) -> Vec<usize> {
+        let mut out = vec![];
+        for f in stack.iter().rev() {
+            let Some(scope) = f.scope else { continue };
+            out.push(scope);
+            out.extend(f.uses.iter().copied());
+            if !f.inherits { return out; }
+        }
+        out.push(OUTSIDE);
+        out
+    }
+    /// A use of a name: compared in the scope that has it, or recorded in
+    /// the innermost scope.
+    fn resolve(&mut self, stack: &[Frame], spelling: &str, span: Range<usize>) {
+        let key = spelling.to_ascii_lowercase();
+        let chain = Names::chain(stack);
+        let scope = chain.iter().copied().find(|s| self.scopes[*s].contains_key(&key)).unwrap_or(chain[0]);
+        self.note(scope, spelling, span, false);
+    }
+}
+
+fn name_of(src: &str, t: &Token) -> Option<String> {
+    match &t.kind {
+        TokenKind::Ident(_) => {
+            let written = text(src, t);
+            (!KEYWORD_NAMES.contains(&written.to_ascii_lowercase().as_str())).then(|| written.to_owned())
+        }
+        _ => None,
+    }
+}
+
+/// The names in a statement: declarations define names in the innermost
+/// scope, or in the components for a type; other names are uses. Keyword
+/// arguments and specifiers are skipped.
+fn statement_names(src: &str, ts: &[Token], w: &[String], stack: &mut [Frame], names: &mut Names) {
+    let mut declared = vec![false; ts.len()];
+    if declaration(w) {
+        let entities = match ts.iter().position(|t| matches!(t.kind, TokenKind::DColon)) { Some(c) => c + 1, None => spec_end(ts) };
+        let mut at = entities;
+        for e in top_level(&ts[entities.min(ts.len())..]) {
+            if !e.is_empty() && at < ts.len() { declared[at] = true; }
+            at += e.len() + 1;
+        }
+    }
+    let in_type = stack.last().is_some_and(|f| f.kind == Kind::Type);
+    // USE: the module, and the names imported from it.
+    if w.first().is_some_and(|x| x == "use") {
+        let module = ts.iter().skip(1).find_map(|t| name_of(src, t).map(|n| (n, t.span.clone())));
+        let Some((module, module_span)) = module else { return };
+        names.note(UNITS, &module, module_span, false);
+        let source = names.modules.get(&module.to_ascii_lowercase()).map(|m| m.0);
+        let Some(colon) = ts.iter().position(|t| matches!(t.kind, TokenKind::Colon)) else {
+            if let (Some(source), Some(f)) = (source, stack.iter_mut().rev().find(|f| f.scope.is_some())) { f.uses.push(source); }
+            return;
+        };
+        let target = Names::chain(stack)[0];
+        for item in top_level(&ts[colon + 1..]) {
+            let idents: Vec<(String, Range<usize>)> = item.iter().filter_map(|t| name_of(src, t).map(|n| (n, t.span.clone()))).collect();
+            let renamed = item.iter().any(|t| matches!(t.kind, TokenKind::Arrow));
+            match (renamed, idents.as_slice()) {
+                (true, [(local, l), (remote, r)]) => {
+                    if let Some(source) = source { names.note(source, remote, r.clone(), false); }
+                    names.note(target, local, l.clone(), true);
+                }
+                (false, [(name, span)]) => {
+                    // Later uses compare with the module's spelling.
+                    let found = source.and_then(|s| names.scopes[s].get(&name.to_ascii_lowercase()).map(|e| (s, e.spelling.clone(), e.span.clone())));
+                    match found {
+                        Some((source, spelling, at)) => {
+                            names.note(source, name, span.clone(), false);
+                            names.note(target, &spelling, at, true);
+                        }
+                        None => names.note(target, name, span.clone(), true),
+                    }
+                }
+                _ => {}
+            }
+        }
+        return;
+    }
+    let mut depth = 0i32;
+    for (k, t) in ts.iter().enumerate() {
+        match t.kind {
+            TokenKind::LParen | TokenKind::LBracket => depth += 1,
+            TokenKind::RParen | TokenKind::RBracket => depth -= 1,
+            _ => {}
+        }
+        let Some(spelling) = name_of(src, t) else { continue };
+        if depth > 0 && matches!(ts.get(k + 1).map(|n| &n.kind), Some(TokenKind::Eq)) { continue; }
+        if k > 0 && matches!(ts[k - 1].kind, TokenKind::Percent) {
+            names.note(COMPONENTS, &spelling, t.span.clone(), false);
+        } else if declared[k] {
+            let scope = if in_type { COMPONENTS } else { Names::chain(stack)[0] };
+            names.note(scope, &spelling, t.span.clone(), true);
+        } else {
+            names.resolve(stack, &spelling, t.span.clone());
+        }
+    }
+}
+
+/// The names in the first statement of a program unit or derived type,
+/// after its frame is pushed: the unit's own name in the enclosing scope (or
+/// with the module and program names), and its dummy arguments and result
+/// in its own scope.
+fn header_names(src: &str, ts: &[Token], stack: &mut [Frame], names: &mut Names) {
+    let Some(top) = stack.last() else { return };
+    let Some(unit) = &top.unit else { return };
+    let (kind, own, name, unit_kind) = (top.kind, top.scope, unit.name.clone(), unit.kind.clone());
+    let outer = &stack[..stack.len() - 1];
+    let parent = Names::chain(outer)[0];
+    let Some(at) = ts.iter().position(|t| name_of(src, t).is_some_and(|n| n.eq_ignore_ascii_case(&name))) else { return };
+    let mut depth = 0i32;
+    for (k, t) in ts.iter().enumerate() {
+        match t.kind {
+            TokenKind::LParen => depth += 1,
+            TokenKind::RParen => depth -= 1,
+            _ => {}
+        }
+        let Some(spelling) = name_of(src, t) else { continue };
+        if depth > 0 && matches!(ts.get(k + 1).map(|n| &n.kind), Some(TokenKind::Eq)) { continue; }
+        if k < at {
+            // A submodule's parent, or the type of a function result.
+            if unit_kind == "submodule" { names.note(UNITS, &spelling, t.span.clone(), false); }
+            else { names.resolve(outer, &spelling, t.span.clone()); }
+        } else if k == at {
+            match (kind, unit_kind.as_str()) {
+                (Kind::Unit, "module" | "program" | "submodule" | "block data") => names.note(UNITS, &spelling, t.span.clone(), true),
+                _ => {
+                    names.note(parent, &spelling, t.span.clone(), true);
+                    if let Some(own) = own { names.note(own, &spelling, t.span.clone(), true); }
+                }
+            }
+        } else if kind == Kind::Type {
+            names.resolve(outer, &spelling, t.span.clone());
+        } else if let Some(own) = own {
+            names.note(own, &spelling, t.span.clone(), true);
+        }
+    }
+}
+
+fn name_warnings(names: &Names, out: &mut Vec<Warning>) {
+    for (scope, map) in names.scopes.iter().enumerate() {
+        for e in map.values().filter(|e| !e.others.is_empty()) {
+            let first = &e.others[0].1;
+            let what = if scope == COMPONENTS { "component " } else { "" };
+            let (verb, where_) = if e.declared { ("is declared as", "declared here") } else { ("is first written", "first written here") };
+            let mut w = Warning {
+                category: "name-case",
+                message: format!("{what}`{first}` {verb} `{}` [name-case]", e.spelling),
+                labels: e.others.iter().take(5).map(|(s, _)| (s.clone(), format!("write `{}`", e.spelling))).collect(),
+                related: vec![(e.span.clone(), where_.to_owned())],
+                notes: vec![],
+            };
+            if e.others.len() > 5 { w = w.note(format!("{} more uses are spelled differently", e.others.len() - 5)); }
+            out.push(w.note("Fortran ignores case, but different spellings of one name read as different names"));
+        }
+    }
+}
+
+/// A FUNCTION statement with the result type in the prefix or without a
+/// RESULT clause. Returns the function's name when RESULT is missing, so
+/// that uses of the name as the result variable can be labeled.
+fn function_result(src: &str, ts: &[Token], w: &[String], out: &mut Vec<Warning>) -> Option<String> {
+    let at = w.iter().position(|x| x == "function")?;
+    // A separate module procedure takes its characteristics from its interface.
+    if w[..at].iter().any(|x| x == "module") { return None; }
+    let name = w.get(at + 1)?.clone();
+    let has_result = w[at..].iter().any(|x| x == "result");
+    let types = ["integer", "real", "complex", "logical", "character", "double", "doubleprecision", "doublecomplex", "type", "class"];
+    let function = ts.iter().position(|t| text(src, t).eq_ignore_ascii_case("function"))?;
+    let spec = ts[..function].iter().position(|t| types.contains(&text(src, t).to_ascii_lowercase().as_str()));
+    let spec_range = spec.map(|i| (i, i + spec_end(&ts[i..function])));
+    if spec_range.is_none() && has_result { return None; }
+    let spec_text = spec_range.map(|(a, b)| src[ts[a].span.start..ts[b - 1].span.end].to_owned());
+    // Assumed length (character(len=*)) is obsolescent and has no RESULT form.
+    if spec_text.as_deref().is_some_and(|t| t.replace(' ', "").contains('*')) && spec_text.as_deref().is_some_and(|t| t.to_ascii_lowercase().starts_with("character")) {
+        return None;
+    }
+    let last = ts[ts.len() - 1].span.end;
+    let header = first_line(src, ts[0].span.start, last);
+    let result_name = if has_result {
+        let r = w.iter().position(|x| x == "result")?;
+        w.get(r + 2)?.clone()
+    } else {
+        format!("{name}_result")
+    };
+    let message = match (spec_text.is_some(), has_result) {
+        (true, false) => format!("function `{name}` gives its result type in the FUNCTION statement and has no RESULT clause [function-result]"),
+        (true, true) => format!("function `{name}` gives its result type in the FUNCTION statement [function-result]"),
+        _ => format!("function `{name}` has no RESULT clause [function-result]"),
+    };
+    let mut warning = Warning::new("function-result", message, header.clone(), "here");
+    if !src[ts[0].span.start..last].contains('\n') {
+        let mut rewritten = match spec_range {
+            Some((a, b)) => format!("{}{}", &src[ts[0].span.start..ts[a].span.start], &src[ts[b.min(ts.len() - 1)].span.start..last]),
+            None => src[ts[0].span.start..last].to_owned(),
+        };
+        if !has_result { rewritten.push_str(&format!(" result({result_name})")); }
+        warning = warning.note(format!("suggestion: {}", rewritten.trim()));
+    }
+    if let Some(t) = &spec_text { warning = warning.note(format!("then declare `{t} :: {result_name}` with the arguments")); }
+    if !has_result { warning = warning.note(format!("and rename `{name}` to `{result_name}` where the body uses it as the result")); }
+    out.push(warning.note("declaring the result in the body allows attributes such as ALLOCATABLE and DIMENSION, and RESULT keeps the function's name for calls"));
+    (!has_result).then_some(name)
+}
+
+/// A statement, for checks of statement sequences.
+struct Seen {
+    role: Role,
+    words: Vec<String>,
+    labeled: bool,
+    /// The source from the first token after any label to the last token.
+    range: Range<usize>,
+    /// For an IF ... THEN statement, where THEN begins.
+    then: Option<usize>,
+}
+
+/// Whether a statement can be the action of a logical IF.
+fn action_statement(s: &Seen) -> bool {
+    let first = s.words.first().map(String::as_str).unwrap_or("");
+    matches!(s.role, Role::Plain) && !s.labeled
+        && !matches!(first, "if" | "format" | "entry" | "data" | "implicit" | "use" | "import" | "contains" | "end")
+        && !declaration(&s.words)
+}
+
+/// Whether the source lines holding `range` contain a comment or `;`.
+fn commented(src: &str, range: Range<usize>) -> bool {
+    let start = src[..range.start].rfind('\n').map_or(0, |p| p + 1);
+    let end = src[range.end..].find('\n').map_or(src.len(), |p| range.end + p);
+    src[start..end].split('\n').any(|line| {
+        let code = code_part(line.trim_end_matches('\r'));
+        code.len() < line.trim_end_matches('\r').len() || code.contains(';')
+    })
+}
+
+/// IF blocks holding one action statement, and logical IFs.
+fn one_line_ifs(src: &str, seen: &[Seen], limit: usize, out: &mut Vec<Warning>) {
+    for (i, s) in seen.iter().enumerate() {
+        // `if (c) then`, one action statement, `end if`.
+        if let (Role::Open(Kind::If, _), Some(then), Some(body), Some(end)) = (&s.role, s.then, seen.get(i + 1), seen.get(i + 2)) {
+            let closes = matches!(end.role, Role::Close(Some(Kind::If))) && !end.labeled;
+            if closes && construct_name(&s.words).is_none() && action_statement(body)
+                && !src[body.range.clone()].contains('\n') && !commented(src, s.range.start..end.range.end) {
+                let head = src[s.range.start..then].trim_end();
+                let line = format!("{head} {}", &src[body.range.clone()]);
+                let indent = column(src, s.range.start) - 1;
+                if indent + line.chars().count() <= limit {
+                    out.push(Warning::new("could-be-one-line-if",
+                        "IF block with a single statement could be a one-line IF [could-be-one-line-if]".to_owned(),
+                        s.range.start..then + 4, "here").note(format!("suggestion: {line}")));
+                }
+            }
+        }
+        // A logical IF: `if (c) action`, not an arithmetic IF.
+        if s.words.first().is_some_and(|x| x == "if") && s.words.get(1).is_some_and(|x| x == "(") && matches!(s.role, Role::Plain) {
+            let Some(c) = closing_word(&s.words, 1) else { continue };
+            let Some(next) = s.words.get(c + 1) else { continue };
+            if next.bytes().all(|b| b.is_ascii_digit()) && s.words.get(c + 2).is_some_and(|x| x == ",") { continue; }
+            // The parenthesized condition ends at the matching `)` in the source.
+            let text = &src[s.range.clone()];
+            let mut depth = 0;
+            let mut close = None;
+            for (k, ch) in text.char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => { depth -= 1; if depth == 0 { close = Some(k); break; } }
+                    _ => {}
+                }
+            }
+            let Some(close) = close else { continue };
+            let head = &text[..=close];
+            let action = text[close + 1..].trim();
+            if head.contains(['\'', '"']) || head.contains('\n') { continue; }
+            let pad = " ".repeat(column(src, s.range.start) - 1);
+            out.push(Warning::new("one-line-if", "one-line IF [one-line-if]".to_owned(), s.range.start..s.range.start + close + 1, "here")
+                .note(format!("suggestion:\n{head} then\n{pad}   {action}\n{pad}end if"))
+                .note("a block IF leaves room for more statements, and for a breakpoint on the action"));
+        }
+    }
+}
+
+/// The 1-based column of byte `at`.
+fn column(src: &str, at: usize) -> usize {
+    let start = src[..at].rfind('\n').map_or(0, |i| i + 1);
+    src[start..at].chars().count() + 1
+}
+
+/// The IMPLICIT NONE rules a statement gives: TYPE (1) and EXTERNAL (2).
+fn implicit_none(w: &[String]) -> Option<u8> {
+    if !(w.first().is_some_and(|x| x == "implicit") && w.get(1).is_some_and(|x| x == "none")) { return None; }
+    let mut bits = 0;
+    for x in &w[2..] {
+        match x.as_str() { "type" => bits |= 1, "external" => bits |= 2, _ => {} }
+    }
+    Some(if bits == 0 { 1 } else { bits })
+}
+
 
 fn text<'a>(src: &'a str, t: &Token) -> &'a str { &src[t.span.clone()] }
 
@@ -538,6 +937,8 @@ fn analyze(src: &str, tokens: &[Token], own_len: usize, fixed_form: bool, line_l
     let mut out = vec![];
     let mut stack: Vec<Frame> = vec![];
     let mut keywords = vec![];
+    let mut names = Names::new();
+    let mut seen: Vec<Seen> = vec![];
     let mut i = 0;
     while i < tokens.len() && tokens[i].span.start < own_len {
         let all = crate::declaration_warnings::statement_tokens(tokens, tokens[i].span.start, usize::MAX, src);
@@ -552,7 +953,39 @@ fn analyze(src: &str, tokens: &[Token], own_len: usize, fixed_form: bool, line_l
         let w = words(&src[ts[0].span.start..ts[ts.len() - 1].span.end]);
         let span = first_line(src, ts[0].span.start, ts[ts.len() - 1].span.end);
         let role = classify(&w, stack.last().map(|f| f.kind));
+        seen.push(Seen {
+            role: classify(&w, stack.last().map(|f| f.kind)), words: w.clone(), labeled: label.is_some(),
+            range: ts[0].span.start..ts[ts.len() - 1].span.end,
+            then: matches!(role, Role::Open(Kind::If, _)).then(|| ts[ts.len() - 1].span.start),
+        });
         statement_checks(src, &ts, &w, span.clone(), &mut stack, &mut out);
+        let opens_scope = matches!(role, Role::Open(Kind::Unit | Kind::Type, _));
+        // Uses of a function's name as its result variable, to be renamed.
+        if !matches!(role, Role::Close(_) | Role::Open(Kind::Unit, _)) {
+            if let Some((name, index)) = stack.iter().rev().find(|f| f.kind == Kind::Unit).and_then(|f| f.rename.clone()) {
+                for t in ts.iter().filter(|t| matches!(t.kind, TokenKind::Ident(_)) && text(src, t).eq_ignore_ascii_case(&name)) {
+                    if out[index].labels.len() < 8 {
+                        out[index].labels.push((t.span.clone(), format!("rename to `{name}_result`")));
+                    }
+                }
+            }
+        }
+        if !opens_scope { statement_names(src, &ts, &w, &mut stack, &mut names); }
+        // IMPLICIT NONE that the host's already gives.
+        if let Some(bits) = implicit_none(&w) {
+            if let Some(f) = stack.iter_mut().rev().find(|f| f.kind == Kind::Unit) {
+                if let (true, Some(host)) = (f.implicit.0 & bits == bits, f.implicit.1.clone()) {
+                    out.push(Warning {
+                        category: "redundant-implicit",
+                        message: "IMPLICIT NONE is already in effect from the host [redundant-implicit]".to_owned(),
+                        labels: vec![(span.clone(), "redundant".to_owned())],
+                        related: vec![(host, "the host's IMPLICIT NONE applies here too".to_owned())],
+                        notes: vec!["module and internal procedures inherit the implicit rules of their host; interface bodies do not, so IMPLICIT NONE is needed in those".to_owned()],
+                    });
+                }
+                f.implicit = (f.implicit.0 | bits, Some(span.clone()));
+            }
+        }
         // Loops ended by this labeled statement.
         if let Some(outermost) = label.and_then(|l| stack.iter().position(|f| f.kind == Kind::Do && f.label == Some(l))) {
             let ended = stack.split_off(outermost);
@@ -577,11 +1010,29 @@ fn analyze(src: &str, tokens: &[Token], own_len: usize, fixed_form: bool, line_l
             continue;
         }
         match role {
-            Role::Open(kind, do_label) => stack.push(Frame {
-                kind, label: do_label, span: span.clone(), name: construct_name(&w),
-                unit: matches!(kind, Kind::Unit | Kind::Type).then(|| unit(&w, kind)).flatten(),
-                bare: vec![],
-            }),
+            Role::Open(kind, do_label) => {
+                let unit = matches!(kind, Kind::Unit | Kind::Type).then(|| unit(&w, kind)).flatten();
+                // A procedure inherits from the unit enclosing it, unless it
+                // is an interface body; a submodule from its parent module.
+                let host = stack.iter().rposition(|f| matches!(f.kind, Kind::Unit | Kind::Interface))
+                    .filter(|&p| stack[p].kind == Kind::Unit);
+                let submodule = unit.as_ref().filter(|u| u.kind == "submodule")
+                    .and_then(|_| w.get(2)).and_then(|parent| names.modules.get(parent).cloned());
+                let (inherits, implicit, uses) = match (kind, host, submodule) {
+                    (Kind::Unit, _, Some((scope, implicit))) => (false, implicit, vec![scope]),
+                    (Kind::Unit, Some(p), None) => (true, stack[p].implicit.clone(), vec![]),
+                    (Kind::Type, ..) => (true, (0, None), vec![]),
+                    _ => (false, (0, None), vec![]),
+                };
+                let scope = (kind == Kind::Unit).then(|| names.scope());
+                let rename = (kind == Kind::Unit).then(|| function_result(src, &ts, &w, &mut out)).flatten()
+                    .map(|name| (name, out.len() - 1));
+                stack.push(Frame {
+                    kind, label: do_label, span: span.clone(), name: construct_name(&w), unit, bare: vec![],
+                    implicit, scope, uses, inherits, rename,
+                });
+                if opens_scope { header_names(src, &ts, &mut stack, &mut names); }
+            }
             Role::Close(kind) => {
                 let wanted = kind.unwrap_or(Kind::Unit);
                 if let Some(p) = stack.iter().rposition(|f| f.kind == wanted) {
@@ -590,12 +1041,17 @@ fn analyze(src: &str, tokens: &[Token], own_len: usize, fixed_form: bool, line_l
                         if f.kind == wanted {
                             if let Some(u) = &f.unit { bare_end(src, &ts, &w, u, &mut out); }
                         }
+                        if let (Some(u), Some(scope)) = (f.unit.as_ref().filter(|u| u.kind == "module"), f.scope) {
+                            names.modules.insert(u.name.clone(), (scope, f.implicit.clone()));
+                        }
                     }
                 }
             }
             _ => {}
         }
     }
+    name_warnings(&names, &mut out);
+    one_line_ifs(src, &seen, line_limit.unwrap_or(132), &mut out);
     keywords.dedup_by(|a, b| a.span == b.span);
     keyword_case(src, &keywords, &mut out);
     if !fixed_form { layout(src, own_len, tabs, line_limit, &mut out); }
@@ -637,7 +1093,7 @@ pub(crate) fn check(
     let enabled = |c: &str| if c == "line-length" { limit.is_some() } else { controls.iter().any(|(n, (on, _))| *n == c && *on) };
     let as_error = |c: &str| if c == "line-length" { limit_error } else { controls.iter().any(|(n, (_, e))| *n == c && *e) };
     if !CATEGORIES.iter().any(|c| enabled(c)) { return Ok(()); }
-    let tokens: Vec<Token> = lex(src);
+    let tokens: Vec<Token> = crate::lexer::lex_source(src);
     let mut warnings = analyze(src, &tokens, own_len, fixed_form, limit, enabled("tabs"));
     warnings.retain(|w| enabled(w.category));
     if warnings.is_empty() { return Ok(()); }
@@ -676,8 +1132,9 @@ pub(crate) fn check(
 mod tests {
     /// Each warning as (category, line, message without the category).
     fn warnings(src: &str) -> Vec<(&'static str, usize, String)> {
-        let tokens = crate::lexer::lex(src);
-        super::analyze(src, &tokens, src.len(), false, Some(132), true).into_iter().map(|w| {
+        let tokens = crate::lexer::lex_source(src);
+        // `one-line-if` reports every logical IF; its test reads it directly.
+        super::analyze(src, &tokens, src.len(), false, Some(132), true).into_iter().filter(|w| w.category != "one-line-if").map(|w| {
             let at = w.labels.first().map_or(0, |l| l.0.start);
             let message = w.message.rsplit_once(" [").map_or(w.message.clone(), |(m, _)| m.to_owned());
             (w.category, src[..at].matches('\n').count() + 1, message)
@@ -717,6 +1174,62 @@ mod tests {
         let w: Vec<String> = warnings(src).into_iter().filter(|x| x.0 == "obsolescent").map(|x| x.2).collect();
         assert_eq!(w, ["alternate return is obsolescent", "COMMON is obsolescent", "EQUIVALENCE is obsolescent",
             "computed GO TO is obsolescent", "arithmetic IF is obsolescent", "alternate return is obsolescent"]);
+    }
+
+    #[test]
+    fn redundant_implicit_none() {
+        let src = "module m\nimplicit none\ninterface\n   subroutine ext(x)\n      implicit none\n      real :: x\n   end subroutine ext\nend interface\n\
+            contains\nsubroutine sub(x)\nimplicit none\nreal, intent(in) :: x\nprint *, x\ncontains\nsubroutine inner()\nimplicit none (type, external)\n\
+            end subroutine inner\nend subroutine sub\nend module m\nsubmodule (m) sm\nimplicit none\nend submodule sm\n\
+            program p\nuse m\nimplicit none\nend program p\n";
+        let lines: Vec<usize> = warnings(src).into_iter().filter(|w| w.0 == "redundant-implicit").map(|w| w.1).collect();
+        // Not the interface body (line 5), nor `(type, external)`, which adds EXTERNAL (line 16).
+        assert_eq!(lines, [11, 21]);
+    }
+
+    #[test]
+    fn name_case() {
+        let src = "module m\nimplicit none\ntype :: point\n   real :: xVal\nend type point\ninteger :: nMax = 3\n\
+            contains\nsubroutine sub(Arg)\nreal :: arg\ntype(Point) :: p\np%XVAL = arg + NMAX\ncall sub2(ARG)\nend subroutine sub\n\
+            subroutine sub2(y)\nreal :: Y\nend subroutine sub2\nend module m\nprogram main\nuse m, only: Sub\nimplicit none\n\
+            real :: x\nX = 2.3\nopen(Unit=10, file='a')\ncall sub(x)\nend program main\n";
+        let mut got: Vec<String> = warnings(src).into_iter().filter(|w| w.0 == "name-case").map(|w| w.2).collect();
+        got.sort();
+        assert_eq!(got, ["`NMAX` is declared as `nMax`", "`Point` is declared as `point`", "`Sub` is declared as `sub`",
+            "`X` is declared as `x`", "`Y` is declared as `y`", "`arg` is declared as `Arg`", "component `XVAL` is declared as `xVal`"]);
+    }
+
+    #[test]
+    fn function_result_forms() {
+        let src = "module m\nimplicit none\ncontains\nfunction a(x) result(y)\nreal, intent(in) :: x\nreal :: y\ny = x\nend function a\n\
+            real function b(x) result(y)\nreal, intent(in) :: x\ny = x\nend function b\n\
+            pure real(kind=8) function c(x)\nreal(kind=8), intent(in) :: x\nc = 2*x\nend function c\n\
+            function d(x)\nreal, intent(in) :: x\nreal :: d\nd = x\nend function d\nend module m\n";
+        let w: Vec<(usize, String)> = warnings(src).into_iter().filter(|w| w.0 == "function-result").map(|w| (w.1, w.2)).collect();
+        assert_eq!(w, [(9, "function `b` gives its result type in the FUNCTION statement".to_owned()),
+            (13, "function `c` gives its result type in the FUNCTION statement and has no RESULT clause".to_owned()),
+            (17, "function `d` has no RESULT clause".to_owned())]);
+        let tokens = crate::lexer::lex_source(src);
+        let all = super::analyze(src, &tokens, src.len(), false, None, false);
+        let c = all.iter().find(|w| w.message.contains("`c`")).expect("c");
+        assert!(c.notes.iter().any(|n| n == "suggestion: pure function c(x) result(c_result)"), "{:?}", c.notes);
+        assert!(c.notes.iter().any(|n| n == "then declare `real(kind=8) :: c_result` with the arguments"), "{:?}", c.notes);
+        // The header, then `c = 2*x` in the body.
+        assert_eq!(c.labels.len(), 2);
+    }
+
+    #[test]
+    fn one_line_ifs() {
+        let src = "program p\nreal :: x\nx = 4\nif (x > 0) then\n   x = sqrt(x)\nend if\nif (x > 1) then ! note\n   x = 1\nend if\n\
+            if (x > 2) then\n   x = 2\n   x = 3\nend if\ncheck: if (x > 3) then\n   x = 4\nend if check\nif (x < 0) print *, x\n\
+            if (x) 10, 10, 10\n10 continue\nend program p\n";
+        let tokens = crate::lexer::lex_source(src);
+        let all = super::analyze(src, &tokens, src.len(), false, None, false);
+        let w: Vec<(&str, usize)> = all.iter().filter(|w| w.category.contains("one-line-if"))
+            .map(|w| (w.category, src[..w.labels[0].0.start].matches('\n').count() + 1)).collect();
+        assert_eq!(w, [("could-be-one-line-if", 4), ("one-line-if", 17)]);
+        assert!(all.iter().any(|w| w.notes.iter().any(|n| n == "suggestion: if (x > 0) x = sqrt(x)")));
+        assert!(all.iter().any(|w| w.notes.iter().any(|n| n == "suggestion:\nif (x < 0) then\n   print *, x\nend if")));
     }
 
     #[test]

@@ -57,6 +57,8 @@ struct Advice {
     message: String,
     related: Option<(Range<usize>, String)>,
     note: &'static str,
+    /// A rewritten statement, shown as a note.
+    suggestion: Option<String>,
 }
 struct Analysis<'a> {
     src: &'a str,
@@ -68,6 +70,8 @@ struct Analysis<'a> {
     bodies: HashMap<usize, usize>,
     dead: HashSet<usize>,
     warnings: Vec<Advice>,
+    /// ELSE IF statements already considered as part of an IF chain.
+    chained: HashSet<usize>,
     types: Vec<value_warnings::TypeInfo<'a>>,
     inference: Option<crate::operators::ExpressionTypes>,
     interface_errors: Vec<Advice>,
@@ -373,7 +377,7 @@ impl<'a> Analysis<'a> {
                     d.name
                 ),
                 related: Some((original.span.clone(), "original declaration".into())),
-                note:
+                suggestion:None,note:
                     "use distinct names when both entities are needed; shadowing is legal Fortran",
             });
         }
@@ -684,7 +688,7 @@ impl<'a> Analysis<'a> {
                 ) {
                     if y != 0 && x.checked_rem(y).is_some_and(|r| r != 0) {
                         self.warnings.push(Advice {category:"integer-division",span,message:format!("integer division {x}/{y} truncates its result to {}",x/y),
-                        related:None,note:"use a real operand when a fractional result is intended; integer division truncates toward zero"});
+                        related:None,suggestion:None,note:"use a real operand when a fractional result is intended; integer division truncates toward zero"});
                     }
                 }
             }
@@ -1084,7 +1088,7 @@ impl<'a> Analysis<'a> {
                 self.warnings.push(Advice{category:"aliasing",span:self.span(offset,name),
                 message:format!("overlapping actual arguments for `{}` and `{}` of `{name}` may conflict with INTENT(OUT/INOUT)",p.params[i],p.params[j]),
                 related:Some((self.decls[if writes(a){a}else{b}].span.clone(),"dummy argument that may be defined".into())),
-                note:"use separate storage or a temporary when one dummy argument is defined and another reads overlapping storage"});
+                suggestion:None,note:"use separate storage or a temporary when one dummy argument is defined and another reads overlapping storage"});
             }
         }
     }
@@ -1148,7 +1152,7 @@ impl<'a> Analysis<'a> {
             self.warnings.push(Advice{category:"target-lifetime",span:self.span(offset,p),
             message:format!("pointer `{p}` may outlive automatic target `{}`",t.name),
             related:Some((t.span.clone(),"target ceases to exist when its scope ends".into())),
-            note:"associate an escaping pointer with storage whose lifetime extends beyond the call or block"});
+            suggestion:None,note:"associate an escaping pointer with storage whose lifetime extends beyond the call or block"});
         }
     }
     fn walk(
@@ -1194,7 +1198,7 @@ impl<'a> Analysis<'a> {
                 {
                     self.warnings.push(Advice{category:"unchecked-status",span,
                         message:format!("{key} result `{}` is not inspected or forwarded before it is overwritten or leaves scope",self.decls[id].name),
-                        related:None,note:"check or forward the status to handle a failed operation; this check recognizes uses, not the correctness of error handling"});
+                        related:None,suggestion:None,note:"check or forward the status to handle a failed operation; this check recognizes uses, not the correctness of error handling"});
                 }
             }
             let mut copy = s.clone();
@@ -1225,7 +1229,7 @@ impl<'a> Analysis<'a> {
                     if let Some(old) = stores.insert(id, span.clone()) {
                         self.warnings.push(Advice{category:"dead-store",span:old,
                         message:format!("value assigned to `{name}` is overwritten before it is read"),
-                        related:Some((span,"overwriting assignment".into())),note:"remove the earlier assignment if its value and evaluation are unnecessary"});
+                        related:Some((span,"overwriting assignment".into())),suggestion:None,note:"remove the earlier assignment if its value and evaluation are unnecessary"});
                     }
                     if opaque {
                         stores.remove(&id);
@@ -1277,6 +1281,7 @@ pub fn check(
         "integer-division",
         "integer-division-all",
         "compare-reals",
+        "could-be-conditional",
         "unchecked-status",
         "target-lifetime",
         "aliasing",
@@ -1308,6 +1313,7 @@ pub fn check(
                 | "real-literal-kind"
                 | "integer-division-all"
                 | "compare-reals"
+                | "could-be-conditional"
                 | "implicit-interface"
                 | "intrinsic-shadow"
                 | "keyword-name"
@@ -1330,6 +1336,7 @@ pub fn check(
         bodies: HashMap::new(),
         dead: crate::reachability::analyze(program).dead,
         warnings: vec![],
+        chained: HashSet::new(),
         types: vec![],
         inference: advice_enabled
             .then(|| crate::operators::ExpressionTypes::new(program).ok())
@@ -1441,7 +1448,7 @@ pub fn check(
         }
         .with_message(format!("{} [{}]", w.message, w.category))
         .with_labels(labels)
-        .with_notes(vec![w.note.into()]);
+        .with_notes(std::iter::once(w.note.to_owned()).chain(w.suggestion.map(|s| format!("suggestion: {s}"))).collect());
         emit_to_io_write(
             &mut StandardStream::stderr(ColorChoice::Auto),
             &Config::default(),

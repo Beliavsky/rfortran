@@ -155,6 +155,12 @@ pub fn print_help() {
     println!("  -Wobsolescent       Warn about obsolescent and deleted features such as COMMON and computed GO TO (in -Wstyle)");
     println!("  -Wstop-in-procedure Warn about STOP in functions and subroutines (in -Wstyle)");
     println!("  -Wassumed-size      Warn about assumed-size dummy arrays (in -Wstyle)");
+    println!("  -Wredundant-implicit Warn about IMPLICIT NONE already in effect from the host (in -Wstyle)");
+    println!("  -Wname-case         Warn about names written in a case different from their declaration (in -Wstyle)");
+    println!("  -Wfunction-result   Warn about FUNCTION statements with a prefix type or without RESULT (in -Wstyle)");
+    println!("  -Wcould-be-conditional Suggest Fortran 2023 conditional expressions for IF blocks that only assign one variable (opt-in)");
+    println!("  -Wcould-be-one-line-if Suggest one-line IFs for IF blocks holding a single statement (opt-in)");
+    println!("  -Wone-line-if       Warn about one-line IFs, suggesting the block form (opt-in)");
     println!("  -Winfinite-loop     Warn about DO loops without loop control that nothing in their body can end (enabled by -Wall)");
     println!("  -Wmissing-intent    Warn about data dummy arguments without INTENT (opt-in)");
     println!("  -Wshadow            Warn about locals shadowing enclosing data declarations (opt-in)");

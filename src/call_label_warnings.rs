@@ -237,11 +237,11 @@ impl<'a> Analysis<'a> {
             self.interface_errors.push(Advice{category:"implicit-interface",span,
                 message:format!("call to `{name}` requires an explicit interface because {reason}"),
                 related:self.called_procedure(scope,name).and_then(|p|self.procedure_span(p)).map(|span|(span,"procedure defined here".into())),
-                note:"make the procedure internal or module-associated, or provide a matching explicit interface; this is a language requirement, not an optional warning"});
+                suggestion:None,note:"make the procedure internal or module-associated, or provide a matching explicit interface; this is a language requirement, not an optional warning"});
         } else {
             self.warnings.push(Advice{category:"implicit-interface",span,
                 message:format!("call to `{name}` has no explicit interface available at this call site"),related:None,
-                note:"an implicit interface limits argument checking; use a module/internal procedure or supply a matching interface block"});
+                suggestion:None,note:"an implicit interface limits argument checking; use a module/internal procedure or supply a matching interface block"});
         }
     }
     fn call_exprs(&mut self, e: &Expr, scope: usize, offset: usize) {
@@ -305,7 +305,7 @@ impl<'a> Analysis<'a> {
                 .unwrap_or_else(|| d.span.clone());
             self.warnings.push(Advice{category:"intrinsic-shadow",span,
                 message:format!("user procedure `{}` shadows a known intrinsic procedure",d.name),related:None,
-                note:"use a distinct procedure name when intrinsic access is intended; shadowing may be deliberate and is legal"});
+                suggestion:None,note:"use a distinct procedure name when intrinsic access is intended; shadowing may be deliberate and is legal"});
         }
     }
     /// Variables, dummy arguments and procedures named like Fortran
@@ -336,7 +336,7 @@ impl<'a> Analysis<'a> {
             let what = if d.procedure.is_some() { "procedure" } else if d.dummy { "dummy argument" } else { "variable" };
             self.warnings.push(Advice{category:"keyword-name",span,
                 message:format!("{what} `{}` is named like the Fortran keyword {}",d.name,name.to_ascii_uppercase()),related:None,
-                note:"Fortran has no reserved words, so this is legal, but a distinct name is clearer"});
+                suggestion:None,note:"Fortran has no reserved words, so this is legal, but a distinct name is clearer"});
         }
     }
     pub(super) fn unused_labels(&mut self, body: &'a [Stmt], offset: usize) {
@@ -489,7 +489,7 @@ impl<'a> Analysis<'a> {
                 continue;
             }
             self.warnings.push(Advice{category:"unused-label",span,message:format!("statement label {n} is never referenced in this program unit"),related:None,
-                note:"remove the label if it is unnecessary; ordinary execution of a labeled statement is not a reference to its label"});
+                suggestion:None,note:"remove the label if it is unnecessary; ordinary execution of a labeled statement is not a reference to its label"});
         }
     }
 }

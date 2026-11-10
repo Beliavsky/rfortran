@@ -21,7 +21,7 @@
 //! keyword after any label; statements after `;` on a line, statements
 //! ending labeled DO loops and fixed-form source are not checked. Tabs
 //! advance to the next multiple of 8 columns.
-use crate::lexer::{lex, Token, TokenKind};
+use crate::lexer::{Token, TokenKind};
 use crate::sema::SemaSettings;
 use anyhow::{bail, Result};
 use std::ops::Range;
@@ -423,7 +423,7 @@ pub(crate) fn check(
     opt_in.wall = false;
     let (enabled, error) = crate::unused::selected(CATEGORY, false, &opt_in, options);
     if !enabled || fixed_form { return Ok(()); }
-    let tokens: Vec<Token> = lex(src);
+    let tokens: Vec<Token> = crate::lexer::lex_source(src);
     let warnings = analyze(src, &tokens, own_len);
     if warnings.is_empty() { return Ok(()); }
     use codespan_reporting::{diagnostic::{Diagnostic, Label}, files::SimpleFiles,
@@ -455,7 +455,7 @@ pub(crate) fn check(
 mod tests {
     /// Each warning as (line, message without the category).
     fn warnings(src: &str) -> Vec<(usize, String)> {
-        let tokens = crate::lexer::lex(src);
+        let tokens = crate::lexer::lex_source(src);
         super::analyze(src, &tokens, src.len()).into_iter().map(|w| {
             let line = src[..w.span.start].matches('\n').count() + 1;
             (line, w.message.trim_end_matches(" [indentation]").to_owned())
