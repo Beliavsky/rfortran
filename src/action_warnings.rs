@@ -70,7 +70,7 @@ fn transfer(s: &Stmt) -> Option<(&Expr, bool, bool)> {
 
 /// Whether a statement may branch on an I/O condition: ERR= or END= on a
 /// transfer, OPEN or CLOSE.
-fn branches(body: &[Stmt]) -> bool {
+pub(crate) fn branches(body: &[Stmt]) -> bool {
     body.iter().any(|s| {
         let label = |k: &str| k == "err" || k == "end" || k == "eor";
         let direct = match s {

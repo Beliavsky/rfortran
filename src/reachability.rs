@@ -12,6 +12,27 @@ pub(crate) struct Analysis {
     pub dead: HashSet<usize>,
     warnings: Vec<(usize, &'static str)>,
     modules: HashMap<String, Vec<Stmt>>,
+    /// DO loops without loop control that nothing can end, for -Winfinite-loop.
+    pub loops: Vec<usize>,
+    /// Each procedure's body, or None when several procedures share the name.
+    procedures: HashMap<String, Option<Vec<Stmt>>>,
+    /// The location of the statement being analyzed, for statements nested
+    /// in constructs that carry no location of their own.
+    location: Option<usize>,
+}
+
+/// The ways a loop body can end the loop. `leaves`: control may continue
+/// after the loop, by EXIT, a named EXIT, GO TO or an I/O branch. `stops`:
+/// STOP, ERROR STOP, or a call that may stop the program. `returns`: RETURN.
+#[derive(Default, Clone, Copy)]
+struct Ways {
+    leaves: bool,
+    stops: bool,
+    returns: bool,
+}
+
+fn merge(a: Ways, b: Ways) -> Ways {
+    Ways { leaves: a.leaves || b.leaves, stops: a.stops || b.stops, returns: a.returns || b.returns }
 }
 
 fn specification(s: &Stmt) -> bool {
@@ -32,6 +53,73 @@ fn specification(s: &Stmt) -> bool {
     )
 }
 impl Analysis {
+    /// Whether a procedure may stop the program, directly or through the
+    /// procedures it calls. A procedure outside the program might.
+    fn may_stop(&self, name: &str, visiting: &mut HashSet<String>) -> bool {
+        match self.procedures.get(name) {
+            Some(Some(body)) => visiting.insert(name.to_owned()) && self.ways(body, false, visiting).stops,
+            Some(None) => true,
+            None => !(crate::intrinsics::purity(name).is_some() || crate::leak_warnings::INTRINSICS.contains(&name)),
+        }
+    }
+    /// How statements can end the loop whose body they are in; `level`
+    /// whether they are directly in that loop rather than in a nested one.
+    fn ways(&self, body: &[Stmt], level: bool, visiting: &mut HashSet<String>) -> Ways {
+        let mut w = Ways::default();
+        for s in body {
+            match s {
+                Stmt::Exit => w.leaves |= level,
+                Stmt::Return(_) => w.returns = true,
+                Stmt::CallSub { name, .. } if matches!(name.as_str(), "@named_exit" | "@goto") => w.leaves = true,
+                Stmt::CallSub { name, .. } if matches!(name.as_str(), "@stop" | "@error_stop") => w.stops = true,
+                // The GNU extensions EXIT and ABORT end the program.
+                Stmt::CallSub { name, .. } if matches!(name.as_str(), "exit" | "abort") => w.stops = true,
+                Stmt::CallSub { name, .. } if !name.starts_with('@') => w.stops |= self.may_stop(name, visiting),
+                Stmt::If { then_body, else_body, .. } => {
+                    for b in std::iter::once(then_body).chain(else_body) {
+                        let inner = self.ways(b, level, visiting);
+                        w = merge(w, inner);
+                    }
+                }
+                Stmt::Block { body } => {
+                    let inner = self.ways(body, level, visiting);
+                    w = merge(w, inner);
+                }
+                Stmt::SelectCase { cases, default, .. } => {
+                    for b in cases.iter().map(|c| &c.body).chain(default) {
+                        let inner = self.ways(b, level, visiting);
+                        w = merge(w, inner);
+                    }
+                }
+                // EXIT in a nested loop leaves only that loop.
+                Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => {
+                    let inner = self.ways(body, false, visiting);
+                    w = merge(w, inner);
+                }
+                _ => {}
+            }
+            // An I/O statement with ERR=, END= or EOR= may branch out.
+            if crate::action_warnings::branches(std::slice::from_ref(s)) {
+                w.leaves = true;
+            }
+            // A function reference to a procedure of the program that may stop.
+            if !matches!(s, Stmt::If { .. } | Stmt::Block { .. } | Stmt::SelectCase { .. } | Stmt::Do { .. } | Stmt::DoWhile { .. }) {
+                let mut names = vec![];
+                let mut copy = s.clone();
+                for e in crate::procedure_arguments::expressions(&mut copy) {
+                    crate::procedure_arguments::visit_expr(e, &mut |e| {
+                        if let Expr::Call(n, _) = e { names.push(n.clone()); }
+                    });
+                }
+                for n in names {
+                    if self.procedures.contains_key(&n) && self.may_stop(&n, &mut visiting.clone()) {
+                        w.stops = true;
+                    }
+                }
+            }
+        }
+        w
+    }
     fn constants(
         &self,
         body: &[Stmt],
@@ -220,7 +308,7 @@ impl Analysis {
         mut reachable: bool,
         reason: Option<&'static str>,
     ) -> bool {
-        let mut offset = None;
+        let mut offset = self.location;
         let mut located = false;
         let mut reported = false;
         let mut reason =
@@ -245,6 +333,9 @@ impl Analysis {
                 reported = false;
                 continue;
             }
+            // Statements nested in a construct take its location.
+            self.location = offset;
+            let mut endless = false;
             if !reachable {
                 self.dead.insert(s as *const Stmt as usize);
                 if !reported && located {
@@ -297,13 +388,30 @@ impl Analysis {
                     true
                 }
                 Stmt::DoWhile { cond, body } => {
+                    let always = self.condition(cond, constants) == Some(true);
+                    let at = offset;
                     self.body(
                         body,
                         constants,
                         self.condition(cond, constants) != Some(false),
                         Some("unreachable loop body: condition is always false"),
                     );
-                    true
+                    // A DO without loop control, or DO WHILE (.true.), ends
+                    // only by a transfer out of its body.
+                    if always {
+                        let w = self.ways(body, true, &mut HashSet::new());
+                        if !(w.leaves || w.stops || w.returns) {
+                            if let Some(p) = at {
+                                self.loops.push(p);
+                            }
+                        }
+                        if !w.leaves {
+                            endless = true;
+                        }
+                        w.leaves
+                    } else {
+                        true
+                    }
                 }
                 Stmt::SelectCase { cases, default, .. } => {
                     let mut falls_through = default
@@ -317,7 +425,11 @@ impl Analysis {
                 _ => true,
             };
             if !reachable {
-                reason = "unreachable statement after an unconditional transfer of control";
+                reason = if endless {
+                    "unreachable statement after a loop that does not end"
+                } else {
+                    "unreachable statement after an unconditional transfer of control"
+                };
                 reported = false;
             }
             located = false;
@@ -329,6 +441,9 @@ pub(crate) fn analyze(program: &Program) -> Analysis {
     let mut a = Analysis {
         dead: HashSet::new(),
         warnings: vec![],
+        loops: vec![],
+        procedures: HashMap::new(),
+        location: None,
         modules: program
             .body
             .iter()
@@ -341,6 +456,19 @@ pub(crate) fn analyze(program: &Program) -> Analysis {
             })
             .collect(),
     };
+    fn procedures(body: &[Stmt], out: &mut HashMap<String, Option<Vec<Stmt>>>) {
+        for s in body {
+            match s {
+                Stmt::Function { name, body, .. } | Stmt::Subroutine { name, body, .. } => {
+                    out.entry(name.clone()).and_modify(|e| *e = None).or_insert_with(|| Some(body.clone()));
+                    procedures(body, out);
+                }
+                Stmt::Module { body, .. } => procedures(body, out),
+                _ => {}
+            }
+        }
+    }
+    procedures(&program.body, &mut a.procedures);
     a.scope(
         &program.body,
         &Constants::new(),
@@ -349,6 +477,42 @@ pub(crate) fn analyze(program: &Program) -> Analysis {
     );
     a
 }
+/// Report DO loops without loop control that nothing in their body can end.
+fn infinite_loops(loops: &[usize], src: &str, own_len: usize, filename: &str,
+                  origins: &[crate::source_diagnostics::SourceOrigin], error: bool) -> Result<()> {
+    let mut loops: Vec<usize> = loops.iter().copied().filter(|p| *p < own_len).collect();
+    loops.sort();
+    loops.dedup();
+    if loops.is_empty() {
+        return Ok(());
+    }
+    use codespan_reporting::{diagnostic::{Diagnostic, Label}, files::SimpleFile,
+        term::{emit_to_io_write, termcolor::{ColorChoice, StandardStream}, Config}};
+    let tokens = crate::lexer::lex(src);
+    for pos in loops {
+        let statement = crate::declaration_warnings::statement_tokens(&tokens, pos, usize::MAX, src);
+        let span = match (statement.first(), statement.last()) {
+            (Some(a), Some(b)) => a.span.start..b.span.end,
+            _ => pos..pos,
+        };
+        let (name, source, span) = match origins.iter().find(|o| o.range.contains(&pos)) {
+            Some(o) => (o.name.as_str(), o.source(src), o.span(span)),
+            None => (filename, src, span),
+        };
+        let diagnostic = if error { Diagnostic::error() } else { Diagnostic::warning() }
+            .with_message("this DO loop has no EXIT, RETURN, STOP or branch out of it, so it never ends [infinite-loop]")
+            .with_labels(vec![Label::primary((), span).with_message("the loop begins here")])
+            .with_notes(vec!["add an EXIT condition, or use `!#allow(infinite-loop)` if the program is meant to run until stopped".to_owned(),
+                "-Wno-infinite-loop disables this warning".to_owned()]);
+        emit_to_io_write(&mut StandardStream::stderr(ColorChoice::Auto), &Config::default(),
+            &SimpleFile::new(name, source), &diagnostic)?;
+    }
+    if error {
+        bail!("infinite-loop warnings treated as errors");
+    }
+    Ok(())
+}
+
 pub(crate) fn check(
     program: &Program,
     src: &str,
@@ -359,10 +523,17 @@ pub(crate) fn check(
     options: &[String],
 ) -> Result<()> {
     let (enabled, error) = crate::unused::selected("unreachable-code", false, settings, options);
-    if !enabled {
+    let (loops_enabled, loops_error) = crate::unused::selected("infinite-loop", false, settings, options);
+    if !enabled && !loops_enabled {
         return Ok(());
     }
     let mut analysis = analyze(program);
+    if !enabled {
+        analysis.warnings.clear();
+    }
+    if loops_enabled {
+        infinite_loops(&analysis.loops, src, own_len, filename, origins, loops_error)?;
+    }
     analysis.warnings.sort_by_key(|(p, _)| *p);
     analysis.warnings.dedup();
     let tokens = crate::lexer::lex(src);
@@ -414,4 +585,47 @@ pub(crate) fn check(
         bail!("unreachable code warnings treated as errors");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    /// The number of loops reported as never ending, and of unreachable-code warnings.
+    fn counts(src: &str) -> (usize, usize) {
+        let program = crate::parser::parse_with_src(src, &crate::lexer::lex(src), "t.f90").unwrap_or_else(|_| panic!("{src}"));
+        let a = super::analyze(&program);
+        (a.loops.len(), a.warnings.len())
+    }
+
+    #[test]
+    fn loops_that_never_end() {
+        // The xloop_no_exit.f90 example, DO WHILE (.true.), and EXIT of an inner loop only.
+        assert_eq!(counts("real :: x\ndo\ncall random_number(x)\nprint *, x\nend do\nend\n"), (1, 0));
+        assert_eq!(counts("integer :: i\ni = 0\ndo while (.true.)\ni = i + 1\nend do\nprint *, i\nend\n"), (1, 1));
+        assert_eq!(counts("integer :: i\ndo\ndo\nexit\nend do\nend do\nend\n"), (1, 0));
+    }
+
+    #[test]
+    fn loops_that_can_end() {
+        for src in [
+            "integer :: i\ni = 0\ndo\ni = i + 1\nif (i > 3) exit\nend do\nprint *, i\nend\n",
+            "integer :: i\nouter: do\ndo\nexit outer\nend do\nend do outer\nend\n",
+            "integer :: i\ndo\nread (*, *, end=10) i\nend do\n10 continue\nend\n",
+            "integer :: i\ndo\ngo to 10\nend do\n10 continue\nend\n",
+            "integer :: i\ndo i = 1, 3\nprint *, i\nend do\nend\n",
+            // A procedure of the program that may stop, and one outside it.
+            "do\ncall finish()\nend do\ncontains\nsubroutine finish()\nstop\nend subroutine\nend\n",
+            "do\ncall elsewhere()\nend do\nend\n",
+            "subroutine s()\ndo\nreturn\nend do\nend subroutine\n",
+        ] {
+            assert_eq!(counts(src).0, 0, "{src}");
+        }
+    }
+
+    #[test]
+    fn code_after_a_loop_that_only_stops_is_unreachable() {
+        // STOP ends the program, so the PRINT after the loop never runs; a
+        // procedure that does not stop does not end the loop.
+        assert_eq!(counts("integer :: i\ni = 0\ndo\ni = i + 1\nif (i > 3) stop\nend do\nprint *, i\nend\n"), (0, 1));
+        assert_eq!(counts("do\ncall show()\nend do\ncontains\nsubroutine show()\nprint *, 1\nend subroutine\nend\n"), (1, 0));
+    }
 }

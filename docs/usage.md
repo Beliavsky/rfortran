@@ -127,6 +127,7 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Winteger-division` | Yes | No | Constant integer divisions with a nonzero discarded remainder, including named constants |
 | `-Wunchecked-status` | No | Yes | Local scalar IOSTAT, allocation STAT, and intrinsic status results not inspected or forwarded |
 | `-Wtarget-lifetime` | Yes | No | Pointer associations escaping a known automatic local target |
+| `-Winfinite-loop` | Yes | No | DO loops without loop control, or `DO WHILE (.true.)`, that nothing in their body can end |
 | `-Waliasing` | Yes | No | Known overlapping actuals when a defined procedure's OUT dummy, or modified INOUT dummy, conflicts with another dummy's reads |
 | `-Wconversion` | No | No | Potential information loss in implicit numeric conversions and CMPLX calls without KIND |
 | `-Wcmplx-kind` | Yes | No | Wider REAL arguments to CMPLX without KIND; also enabled by `-Wconversion` |
@@ -356,6 +357,28 @@ Disable with `-Wno-unreachable-code`, promote with `-Werror=unreachable-code`,
 or use `!#allow(unreachable-code)` / `!#deny(unreachable-code)`.
 Unused-entity checks ignore references from these unreachable statements.
 Run `python tests/test_reachability_warnings.py` for regression checks.
+
+`-Winfinite-loop`, enabled by `-Wall`, warns about a DO loop without loop
+control, or `DO WHILE (.true.)`, that nothing in its body can end:
+
+```
+warning: this DO loop has no EXIT, RETURN, STOP or branch out of it, so it never ends [infinite-loop]
+  = add an EXIT condition, or use `!#allow(infinite-loop)` if the program is meant to run until stopped
+```
+
+These end such a loop:
+- an EXIT of the loop, including from an IF, SELECT CASE or BLOCK inside it, but
+  not an EXIT of a nested loop;
+- a named EXIT, GO TO, or I/O with `ERR=`, `END=` or `EOR=`;
+- RETURN, STOP or ERROR STOP;
+- a call of a procedure that may stop the program, directly or through the
+  procedures it calls, or of a procedure outside the program.
+
+Intrinsic procedures such as `RANDOM_NUMBER` never stop it. When control
+cannot continue after the loop, for example because its body ends only by
+STOP, the statements after it are reported by `-Wunreachable-code`. Disable
+with `-Wno-infinite-loop`, or use `!#allow(infinite-loop)` for a program meant
+to run until it is stopped. Run `python tests/test_infinite_loop.py`.
 
 `-Wimplicit-typing` warns once per implicitly typed variable at its first use,
 including loop indices and dummy arguments without explicit types. For example,
