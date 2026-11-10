@@ -122,9 +122,12 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wuse-without-only` | No | No | USE statements without ONLY for modules in the program or loaded from `.rmod` files, with the suggested ONLY list; see [USE without ONLY](#use-without-only) |
 | `-Wcould-be-parameter` | No | No | Local scalars defined once from a constant expression and never modified, with the suggested PARAMETER declaration; see [Variables that could be named constants](#variables-that-could-be-named-constants) |
 | `-Wliteral-kind` | No | No | Kind numbers in type specifications, literal suffixes and conversion KIND arguments, such as `real(8)`, `real*8`, `1.0_8` and `int(n, 8)`, with ISO_FORTRAN_ENV names suggested; see [Kind numbers](#kind-numbers) |
+| `-Wdefault-real` | No | No | REAL and COMPLEX declarations without a kind; see [Default REAL declarations](#default-real-declarations) |
 | `-Wshadow-dummy-argument` | No | Yes | The corresponding check for dummy arguments, separately selectable |
 | `-Wdead-store` | No | Yes | Straight-line assignments to local scalars overwritten before a read |
-| `-Winteger-division` | Yes | No | Constant integer divisions with a nonzero discarded remainder, including named constants |
+| `-Winteger-division` | Yes | No | Constant integer divisions with a nonzero discarded remainder, including named constants, and integer quotients converted to REAL or COMPLEX, such as `x = n/m` with REAL `x` or `1/n*x`; `real(n/m)` marks truncation as intended |
+| `-Winteger-division-all` | No | No | Every other integer division, including `real(n/m)`, which truncates toward zero (`-7/2` is `-3`, while Python's `-7//2` is `-4`); for code ported from or to Python |
+| `-Wdimension-override` | No | Yes | An entity's own shape or length overriding DIMENSION(...) or the CHARACTER length of its declaration, as `y` in `real, dimension(2) :: x, y(3)`, with the statement rewritten as a suggestion |
 | `-Wunchecked-status` | No | Yes | Local scalar IOSTAT, allocation STAT, and intrinsic status results not inspected or forwarded |
 | `-Wtarget-lifetime` | Yes | No | Pointer associations escaping a known automatic local target |
 | `-Winfinite-loop` | Yes | No | DO loops without loop control, or `DO WHILE (.true.)`, that nothing in their body can end |
@@ -682,6 +685,33 @@ The warning is opt-in, outside both `-Wall` and `-Wextra`, and accepts the usual
 source files.
 
 Regression checks: `python tests/test_literal_kind.py`.
+
+## Default REAL declarations
+
+`-Wdefault-real` reports REAL and COMPLEX declarations without a kind:
+variables, dummy arguments, function results, derived-type components,
+`IMPLICIT REAL (a-h)`, and typed ALLOCATE and constructors.
+
+```
+warning: `x`, `y` declared as default REAL [default-real]
+2 │ real :: x, y(3)
+  │ ^^^^ use real(real32)
+```
+
+The suggestion uses the REAL kind constant the file uses most often, such as
+`dp` in `real(dp)`; otherwise `real32` from ISO_FORTRAN_ENV, which keeps the
+current precision (use `real64` if double precision was intended). Changing a
+kind changes results, and literals such as `0.1` need the kind too, which
+`-Wreal-literal-kind` finds. INTEGER, LOGICAL and CHARACTER declarations,
+`DOUBLE PRECISION`, `REAL*8` (reported by `-Wliteral-kind`) and conversions
+such as `real(n)` are not reported. Each declaration statement gets one
+warning.
+
+The warning is opt-in, outside both `-Wall` and `-Wextra`. Use
+`!#allow(default-real)` for code that needs default REAL, such as interfaces
+to single-precision libraries.
+
+Regression checks: `python tests/test_default_real.py`.
 
 ## Multiple source files and modules
 

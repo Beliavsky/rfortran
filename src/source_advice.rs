@@ -1275,6 +1275,7 @@ pub fn check(
         "shadow-dummy-argument",
         "dead-store",
         "integer-division",
+        "integer-division-all",
         "unchecked-status",
         "target-lifetime",
         "aliasing",
@@ -1304,6 +1305,7 @@ pub fn check(
                 | "unchecked-status"
                 | "conversion"
                 | "real-literal-kind"
+                | "integer-division-all"
                 | "implicit-interface"
                 | "intrinsic-shadow"
                 | "keyword-name"

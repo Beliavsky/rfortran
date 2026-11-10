@@ -56,11 +56,15 @@ const CATEGORIES: &[&str] = &[
     "could-be-parameter",
     "literal-kind",
     "infinite-loop",
+    "default-real",
+    "integer-division-all",
+    "dimension-override",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface, conversion, and module-default-public remain
 /// individually selectable rather than members of this group.
 const EXTRA: &[&str] = &[
+    "dimension-override",
     "missing-intent",
     "shadow",
     "shadow-dummy-argument",

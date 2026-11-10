@@ -134,6 +134,9 @@ pub fn print_help() {
     println!("  -Wuse-without-only  Warn about USE without ONLY and suggest the ONLY list the scope needs (opt-in)");
     println!("  -Wcould-be-parameter  Suggest named constants for locals set once from a constant and never modified (opt-in)");
     println!("  -Wliteral-kind      Warn about kind numbers such as real(8), real*8 and 1.0_8, and suggest ISO_FORTRAN_ENV names (opt-in)");
+    println!("  -Wdefault-real      Warn about REAL and COMPLEX declarations without a kind (opt-in)");
+    println!("  -Wdimension-override Warn about entity shapes or lengths overriding DIMENSION or the type length (in -Wextra)");
+    println!("  -Winteger-division-all Warn about every integer division whose quotient is truncated (opt-in)");
     println!("  -Winfinite-loop     Warn about DO loops without loop control that nothing in their body can end (enabled by -Wall)");
     println!("  -Wmissing-intent    Warn about data dummy arguments without INTENT (opt-in)");
     println!("  -Wshadow            Warn about locals shadowing enclosing data declarations (opt-in)");

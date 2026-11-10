@@ -19,6 +19,103 @@ use crate::sema::SemaSettings;
 use anyhow::{bail, Result};
 
 const CATEGORY: &str = "literal-kind";
+/// `-Wdefault-real`, opt-in: REAL and COMPLEX declarations without a kind.
+const DEFAULT_REAL: &str = "default-real";
+/// `-Wdimension-override`, in -Wextra: an entity's own shape or length that
+/// overrides the DIMENSION attribute or type length of its declaration.
+const DIMENSION_OVERRIDE: &str = "dimension-override";
+
+/// Entities whose own array shape overrides DIMENSION(...), or whose own
+/// length overrides the CHARACTER length, of their declaration.
+struct Override {
+    entities: Vec<(String, std::ops::Range<usize>)>,
+    /// The overridden shape or length, as written.
+    overridden: String,
+    length: bool,
+    suggestion: Option<String>,
+}
+
+/// The source text of `tokens`, with whitespace collapsed.
+fn joined(src: &str, tokens: &[Token]) -> String {
+    match (tokens.first(), tokens.last()) {
+        (Some(a), Some(b)) => src[a.span.start..b.span.end].split_whitespace().collect::<Vec<_>>().join(" ").replace("& ", ""),
+        _ => String::new(),
+    }
+}
+
+/// Split tokens at commas outside parentheses and brackets.
+fn top_level(tokens: &[Token]) -> Vec<&[Token]> {
+    let (mut out, mut depth, mut begin) = (vec![], 0i32, 0);
+    for (i, t) in tokens.iter().enumerate() {
+        match t.kind {
+            TokenKind::LParen | TokenKind::LBracket => depth += 1,
+            TokenKind::RParen | TokenKind::RBracket => depth -= 1,
+            TokenKind::Comma if depth == 0 => { out.push(&tokens[begin..i]); begin = i + 1; }
+            _ => {}
+        }
+    }
+    out.push(&tokens[begin..]);
+    out
+}
+
+fn overrides(src: &str, ts: &[Token], out: &mut Vec<Override>) {
+    let start = ts.iter().position(|t| !matches!(t.kind, TokenKind::StatementLabel(_))).unwrap_or(ts.len());
+    let Some(first) = ts.get(start) else { return };
+    let declaration = matches!(first.kind, TokenKind::KwReal | TokenKind::KwInteger | TokenKind::KwComplex | TokenKind::KwLogical
+        | TokenKind::KwCharacter | TokenKind::KwDouble | TokenKind::KwType) || word(first) == "class";
+    if !declaration { return; }
+    let Some(colon) = ts.iter().position(|t| matches!(t.kind, TokenKind::DColon)) else { return };
+    let head = &ts[start..colon];
+    let entities = top_level(&ts[colon + 1..]);
+    // DIMENSION(...) among the attributes.
+    let parts = top_level(head);
+    let dimension = parts.iter().enumerate().find(|(_, p)| p.first().is_some_and(|t| word(t) == "dimension")
+        && matches!(p.get(1).map(|t| &t.kind), Some(TokenKind::LParen)));
+    if let Some((index, part)) = dimension {
+        let shape = joined(src, &part[1..]);
+        let own: Vec<(String, std::ops::Range<usize>)> = entities.iter().filter_map(|e| {
+            let name = e.first().and_then(named_kind)?;
+            matches!(e.get(1).map(|t| &t.kind), Some(TokenKind::LParen)).then(|| {
+                let close = closing(e, 1).unwrap_or(e.len() - 1);
+                (name.to_owned(), e[1].span.start..e[close].span.end)
+            })
+        }).collect();
+        if !own.is_empty() {
+            // The statement without DIMENSION, each entity with its shape.
+            let attributes: Vec<String> = parts.iter().enumerate().filter(|(i, _)| *i != index).map(|(_, p)| joined(src, p)).collect();
+            let items: Vec<String> = entities.iter().map(|e| {
+                let text = joined(src, e);
+                match e.first().and_then(named_kind) {
+                    Some(name) if !matches!(e.get(1).map(|t| &t.kind), Some(TokenKind::LParen) | Some(TokenKind::Star)) =>
+                        format!("{name}{shape}{}", &text[name.len()..]),
+                    _ => text,
+                }
+            }).collect();
+            out.push(Override { entities: own, overridden: format!("DIMENSION{shape}"), length: false,
+                suggestion: Some(format!("{} :: {}", attributes.join(", "), items.join(", "))) });
+        }
+    }
+    // CHARACTER(len=8) or CHARACTER*8, overridden by an entity's *length.
+    if matches!(first.kind, TokenKind::KwCharacter) {
+        let declared = match head.get(1).map(|t| &t.kind) {
+            Some(TokenKind::LParen) => closing(head, 1).map(|c| joined(src, &head[1..=c])),
+            Some(TokenKind::Star) => head.get(2).map(|t| format!("*{}", joined(src, std::slice::from_ref(t)))),
+            _ => None,
+        };
+        if let Some(declared) = declared {
+            let own: Vec<(String, std::ops::Range<usize>)> = entities.iter().filter_map(|e| {
+                let name = e.first().and_then(named_kind)?;
+                let star = e.iter().position(|t| matches!(t.kind, TokenKind::Star))?;
+                // The star after the name and any shape, not one in an initializer.
+                let eq = e.iter().position(|t| matches!(t.kind, TokenKind::Eq | TokenKind::Arrow)).unwrap_or(e.len());
+                (star < eq).then(|| (name.to_owned(), e[star].span.start..e.get(star + 1).map_or(e[star].span.end, |t| t.span.end)))
+            }).collect();
+            if !own.is_empty() {
+                out.push(Override { entities: own, overridden: declared, length: true, suggestion: None });
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Type { Real, Integer, Logical }
@@ -50,6 +147,66 @@ struct Constant {
     name: String,
     value: String,
     span: std::ops::Range<usize>,
+}
+
+/// A REAL or COMPLEX declaration without a kind: the type keyword, the
+/// entities declared, and the function whose result it is, if any.
+struct DefaultReal {
+    span: std::ops::Range<usize>,
+    head: String,
+    entities: Vec<String>,
+    function: Option<String>,
+    implicit: bool,
+}
+
+/// A REAL or COMPLEX type specification without a kind at the start of a
+/// declaration (after prefixes such as PURE, or IMPLICIT), or in a typed
+/// ALLOCATE or constructor before `::`.
+fn default_real(ts: &[Token], out: &mut Vec<DefaultReal>) {
+    let prefix = |t: &Token| matches!(word(t).as_str(),
+        "pure" | "elemental" | "recursive" | "impure" | "simple" | "non_recursive" | "module" | "implicit")
+        || matches!(t.kind, TokenKind::StatementLabel(_));
+    let start = ts.iter().position(|t| !prefix(t)).unwrap_or(ts.len());
+    let implicit = ts[..start].iter().any(|t| word(t) == "implicit");
+    for (i, t) in ts.iter().enumerate() {
+        if !matches!(t.kind, TokenKind::KwReal | TokenKind::KwComplex) { continue; }
+        let next = ts.get(i + 1).map(|t| &t.kind);
+        // A type followed by `::` later in a statement: typed ALLOCATE or a constructor.
+        let typed = i > start && matches!(next, Some(TokenKind::DColon));
+        if i != start && !typed { continue; }
+        // REAL*4 is a kind number, reported by -Wliteral-kind.
+        if matches!(next, Some(TokenKind::Star)) { continue; }
+        if matches!(next, Some(TokenKind::LParen)) {
+            // In IMPLICIT, a single parenthesized list holds letters, not a kind:
+            // IMPLICIT REAL (a-h) has no kind, IMPLICIT REAL(8) (a-h) does.
+            let Some(close) = closing(ts, i + 1) else { continue };
+            if !(implicit && !matches!(ts.get(close + 1).map(|t| &t.kind), Some(TokenKind::LParen))) { continue; }
+        }
+        // The entities: after `::`, or after the type and any attributes.
+        let mut entities = vec![];
+        let mut function = None;
+        if let Some(f) = ts.iter().position(|t| matches!(t.kind, TokenKind::KwFunction)) {
+            function = ts.get(f + 1).and_then(named_kind).map(str::to_owned);
+        } else if !implicit && !typed {
+            let begin = ts.iter().position(|t| matches!(t.kind, TokenKind::DColon)).map_or(i + 1, |c| c + 1);
+            let mut depth = 0i32;
+            let mut expect = true;
+            for t in &ts[begin..] {
+                match t.kind {
+                    TokenKind::LParen | TokenKind::LBracket => depth += 1,
+                    TokenKind::RParen | TokenKind::RBracket => depth -= 1,
+                    TokenKind::Comma if depth == 0 => { expect = true; continue; }
+                    _ => {}
+                }
+                if expect && depth == 0 {
+                    if let Some(n) = named_kind(t) { entities.push(n.to_owned()); }
+                    expect = false;
+                }
+            }
+        }
+        out.push(DefaultReal { span: t.span.clone(), head: word(t), entities, function, implicit });
+        break;
+    }
 }
 
 /// A constant set to a kind number and the kinds it is used as.
@@ -264,8 +421,21 @@ fn statement(src: &str, ts: &[Token], out: &mut Vec<Finding>, uses: &mut Vec<Kin
     }
 }
 
-fn analyze(src: &str, tokens: &[Token], own_len: usize) -> (Vec<Vec<Finding>>, Vec<ConstantReport>) {
+/// What the check finds: kind numbers by statement, constants set to kind
+/// numbers, declarations of default REAL, and the REAL kind constant used
+/// most often, for suggestions.
+struct Analysis {
+    overrides: Vec<Override>,
+    statements: Vec<Vec<Finding>>,
+    constants: Vec<ConstantReport>,
+    defaults: Vec<DefaultReal>,
+    real_kind: Option<String>,
+}
+
+fn analyze(src: &str, tokens: &[Token], own_len: usize) -> Analysis {
     let mut statements = vec![];
+    let mut defaults = vec![];
+    let mut overridden = vec![];
     let (mut uses, mut defined) = (vec![], vec![]);
     let mut i = 0;
     while i < tokens.len() {
@@ -277,6 +447,8 @@ fn analyze(src: &str, tokens: &[Token], own_len: usize) -> (Vec<Vec<Finding>>, V
         if tokens[i].span.start < own_len {
             if !found.is_empty() { statements.push(found); }
             constants(ts, &mut defined);
+            default_real(ts, &mut defaults);
+            overrides(src, ts, &mut overridden);
         }
         i += n;
     }
@@ -293,7 +465,17 @@ fn analyze(src: &str, tokens: &[Token], own_len: usize) -> (Vec<Vec<Finding>>, V
         let first_use = first.span.clone();
         reports.push(ConstantReport { constant, types, first_use });
     }
-    (statements, reports)
+    // The REAL kind constant used most often, preferring the first on ties.
+    let mut counts: Vec<(String, usize)> = vec![];
+    for u in uses.iter().filter(|u| u.ty == Type::Real && u.name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')) {
+        match counts.iter_mut().find(|(n, _)| *n == u.name) {
+            Some((_, c)) => *c += 1,
+            None => counts.push((u.name.clone(), 1)),
+        }
+    }
+    let most = counts.iter().map(|(_, c)| *c).max();
+    let real_kind = counts.into_iter().find(|(_, c)| Some(*c) == most).map(|(n, _)| n);
+    Analysis { overrides: overridden, statements, constants: reports, defaults, real_kind }
 }
 
 fn type_name(t: Type) -> &'static str {
@@ -312,10 +494,15 @@ pub(crate) fn check(
     let mut opt_in = settings.clone();
     opt_in.wall = false;
     let (enabled, error) = crate::unused::selected(CATEGORY, false, &opt_in, options);
-    if !enabled { return Ok(()); }
+    let (defaults_enabled, defaults_error) = crate::unused::selected(DEFAULT_REAL, false, &opt_in, options);
+    // In -Wextra, not -Wall.
+    let (overrides_enabled, overrides_error) = crate::unused::selected(DIMENSION_OVERRIDE, false, &opt_in, options);
+    if !enabled && !defaults_enabled && !overrides_enabled { return Ok(()); }
     let tokens: Vec<Token> = lex(src);
-    let (statements, reports) = analyze(src, &tokens, own_len);
-    if statements.is_empty() && reports.is_empty() { return Ok(()); }
+    let Analysis { overrides, mut statements, constants: mut reports, defaults, real_kind } = analyze(src, &tokens, own_len);
+    if !enabled { statements.clear(); reports.clear(); }
+    if statements.is_empty() && reports.is_empty() && !(defaults_enabled && !defaults.is_empty())
+        && !(overrides_enabled && !overrides.is_empty()) { return Ok(()); }
     use codespan_reporting::{diagnostic::{Diagnostic, Label}, files::SimpleFiles,
         term::{emit_to_io_write, termcolor::{ColorChoice, StandardStream}, Config}};
     let mut files = SimpleFiles::new();
@@ -384,7 +571,60 @@ pub(crate) fn check(
             .with_notes(notes);
         emit_to_io_write(&mut StandardStream::stderr(ColorChoice::Auto), &Config::default(), &files, &d)?;
     }
-    if error { bail!("{CATEGORY} warnings treated as errors"); }
+    if overrides_enabled {
+        for o in &overrides {
+            let names: Vec<String> = o.entities.iter().map(|(n, _)| format!("`{n}`")).collect();
+            let (what, own) = if o.length { ("length", "lengths") } else { ("shape", "shapes") };
+            let message = if names.len() == 1 {
+                format!("{} is declared with its own {what}, overriding {} of this statement [{DIMENSION_OVERRIDE}]", names[0], o.overridden)
+            } else {
+                format!("{} are declared with their own {own}, overriding {} of this statement [{DIMENSION_OVERRIDE}]", names.join(", "), o.overridden)
+            };
+            let labels = o.entities.iter().map(|(_, span)| {
+                let (file, at) = locate(span.clone());
+                Label::primary(file, at).with_message(format!("its own {what}"))
+            }).collect();
+            let mut notes = vec![];
+            match &o.suggestion {
+                Some(text) => notes.push(format!("suggestion: {text}")),
+                None => notes.push("declare it in a separate statement, or give every entity its own length".to_owned()),
+            }
+            notes.push(format!("-Wno-{DIMENSION_OVERRIDE} disables this warning"));
+            let diagnostic = if overrides_error { Diagnostic::error() } else { Diagnostic::warning() }
+                .with_message(message).with_labels(labels).with_notes(notes);
+            emit_to_io_write(&mut StandardStream::stderr(ColorChoice::Auto), &Config::default(), &files, &diagnostic)?;
+        }
+        if overrides_error && !overrides.is_empty() { bail!("{DIMENSION_OVERRIDE} warnings treated as errors"); }
+    }
+    if defaults_enabled {
+        for d in &defaults {
+            let (file, at) = locate(d.span.clone());
+            let kind = real_kind.clone().unwrap_or_else(|| "real32".to_owned());
+            let what = match (&d.function, d.implicit) {
+                (Some(f), _) => format!("function `{f}` has a default {} result", d.head.to_ascii_uppercase()),
+                (None, true) => format!("IMPLICIT gives these letters the default {} kind", d.head.to_ascii_uppercase()),
+                (None, false) if d.entities.is_empty() => format!("default {} type", d.head.to_ascii_uppercase()),
+                (None, false) => format!("{} declared as default {}",
+                    d.entities.iter().map(|e| format!("`{e}`")).collect::<Vec<_>>().join(", "), d.head.to_ascii_uppercase()),
+            };
+            let mut notes = vec![];
+            match &real_kind {
+                Some(k) => notes.push(format!("`{k}` is the REAL kind this file uses; make sure it is accessible here")),
+                None => {
+                    notes.push("`real32` from `use iso_fortran_env, only: real32` keeps the current precision; use `real64` if double precision was intended".to_owned());
+                }
+            }
+            notes.push("changing the kind changes results; literals such as 0.1 also need the kind, which -Wreal-literal-kind finds".to_owned());
+            notes.push(format!("-Wno-{DEFAULT_REAL} disables this warning"));
+            let diagnostic = if defaults_error { Diagnostic::error() } else { Diagnostic::warning() }
+                .with_message(format!("{what} [{DEFAULT_REAL}]"))
+                .with_labels(vec![Label::primary(file, at).with_message(format!("use {}({kind})", d.head))])
+                .with_notes(notes);
+            emit_to_io_write(&mut StandardStream::stderr(ColorChoice::Auto), &Config::default(), &files, &diagnostic)?;
+        }
+        if defaults_error && !defaults.is_empty() { bail!("{DEFAULT_REAL} warnings treated as errors"); }
+    }
+    if error && (!statements.is_empty() || !reports.is_empty()) { bail!("{CATEGORY} warnings treated as errors"); }
     Ok(())
 }
 
@@ -393,7 +633,7 @@ mod tests {
     /// Each statement's findings, as (written, replacement).
     fn findings(src: &str) -> Vec<Vec<(String, Option<String>)>> {
         let tokens = crate::lexer::lex(src);
-        super::analyze(src, &tokens, src.len()).0.into_iter()
+        super::analyze(src, &tokens, src.len()).statements.into_iter()
             .map(|s| s.into_iter().map(|f| (f.written, f.replacement)).collect()).collect()
     }
     fn one(written: &str, replacement: &str) -> Vec<(String, Option<String>)> {
@@ -424,7 +664,7 @@ mod tests {
     /// Each constant reported, its value and the kinds it is used as.
     fn constants(src: &str) -> Vec<(String, String, Vec<&'static str>)> {
         let tokens = crate::lexer::lex(src);
-        super::analyze(src, &tokens, src.len()).1.into_iter()
+        super::analyze(src, &tokens, src.len()).constants.into_iter()
             .map(|r| (r.constant.name, r.constant.value, r.types.into_iter().map(super::type_name).collect())).collect()
     }
 
@@ -441,6 +681,47 @@ mod tests {
         // Portable values, and a constant never used as a kind.
         assert!(constants("integer, parameter :: dp = kind(1.0d0), n = 8\nreal(dp) :: x(n)\nend\n").is_empty());
         assert!(constants("use iso_fortran_env, only: real64\ninteger, parameter :: wp = real64\nreal(wp) :: x\nend\n").is_empty());
+    }
+
+    /// Each default REAL declaration: its entities or function, and the kind suggested.
+    fn defaults(src: &str) -> (Vec<(Vec<String>, Option<String>)>, Option<String>) {
+        let tokens = crate::lexer::lex(src);
+        let a = super::analyze(src, &tokens, src.len());
+        (a.defaults.into_iter().map(|d| (d.entities, d.function)).collect(), a.real_kind)
+    }
+
+    #[test]
+    fn default_real_declarations() {
+        let (found, kind) = defaults("implicit none\nreal :: x, y(3) = 0, z\ncomplex c\nreal, intent(in) :: a\nreal function f(t)\nend function\nend\n");
+        assert_eq!(found, [(vec!["x".to_owned(), "y".to_owned(), "z".to_owned()], None), (vec!["c".to_owned()], None),
+            (vec!["a".to_owned()], None), (vec![], Some("f".to_owned()))]);
+        assert_eq!(kind, None);
+        // IMPLICIT REAL (a-h) has no kind; a typed ALLOCATE does not either.
+        assert_eq!(defaults("implicit real (a-h)\nallocate(real :: p)\nend\n").0.len(), 2);
+        // Kinds, star sizes, DOUBLE PRECISION and conversions are not reported, and
+        // the REAL kind used most often is suggested.
+        let (found, kind) = defaults("integer, parameter :: dp = kind(1d0)\nreal(dp) :: x\nreal(kind=dp) :: y\nreal*8 :: z\ndouble precision :: d\nimplicit real(8) (o-z)\nx = real(3)\nend\n");
+        assert!(found.is_empty(), "{found:?}");
+        assert_eq!(kind.as_deref(), Some("dp"));
+    }
+
+    /// Each override: the entities, what they override, and the suggestion.
+    fn overridden(src: &str) -> Vec<(Vec<String>, String, Option<String>)> {
+        let tokens = crate::lexer::lex(src);
+        super::analyze(src, &tokens, src.len()).overrides.into_iter()
+            .map(|o| (o.entities.into_iter().map(|(n, _)| n).collect(), o.overridden, o.suggestion)).collect()
+    }
+
+    #[test]
+    fn dimension_and_length_overrides() {
+        assert_eq!(overridden("real, dimension(2) :: x, y(3)\nend\n"),
+            [(vec!["y".to_owned()], "DIMENSION(2)".to_owned(), Some("real :: x(2), y(3)".to_owned()))]);
+        assert_eq!(overridden("integer, dimension(2), save :: a = 0, b(4) = 1, c(5)\nend\n"),
+            [(vec!["b".to_owned(), "c".to_owned()], "DIMENSION(2)".to_owned(), Some("integer, save :: a(2) = 0, b(4) = 1, c(5)".to_owned()))]);
+        assert_eq!(overridden("character(len=8) :: s, t*20\ncharacter*4 :: u*2, v\nend\n"),
+            [(vec!["t".to_owned()], "(len=8)".to_owned(), None), (vec!["u".to_owned()], "*4".to_owned(), None)]);
+        // No override: every entity uses the attribute, or there is no DIMENSION.
+        assert!(overridden("real, dimension(2) :: x, y\nreal :: a(2), b(3)\ncharacter(len=8) :: s = 'a*b'\nend\n").is_empty());
     }
 
     #[test]

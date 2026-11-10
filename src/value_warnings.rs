@@ -686,6 +686,57 @@ impl<'a> Analysis<'a> {
             self.cmplx_conversions(child, scope, offset, spans);
         }
     }
+    /// Report integer divisions in `e`: under `-Winteger-division` those
+    /// whose quotient is converted to REAL or COMPLEX (`real` when `e`
+    /// itself is), and under `-Winteger-division-all` every one. `cursor`
+    /// counts the divisions seen, to locate each `/` in the statement.
+    fn integer_quotients(&mut self, e: &Expr, scope: usize, offset: usize, real: bool, cursor: &mut usize) {
+        let integer = |a: &Self, x: &Expr| a.numeric_type(x, scope).is_some_and(|n| n.class == 0);
+        match e {
+            Expr::Bin(op, x, y) => {
+                let result_real = self.numeric_type(e, scope).is_some_and(|n| n.class > 0);
+                let comparison = matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge);
+                // An operand becomes REAL when the operation is a REAL one, or,
+                // for a comparison, when the other operand is REAL.
+                let operand = |a: &Self, other: &Expr| if comparison {
+                    a.numeric_type(other, scope).is_some_and(|n| n.class > 0)
+                } else {
+                    result_real && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow)
+                };
+                let (x_real, y_real) = (operand(self, y), operand(self, x));
+                let divide = matches!(op, BinOp::Div);
+                let quotient = divide && integer(self, x) && integer(self, y);
+                self.integer_quotients(x, scope, offset, if divide { false } else { x_real }, cursor);
+                if divide {
+                    let span = self.statement_tokens(offset).iter().filter(|t| matches!(t.kind, crate::lexer::TokenKind::Slash))
+                        .nth(*cursor).map(|t| t.span.clone()).unwrap_or(offset..offset);
+                    *cursor += 1;
+                    if quotient {
+                        // A constant quotient with a remainder is reported by the
+                        // constant check; a remainder-free one, such as 6/2, is exact.
+                        let constant = self.bound_integer(x, scope).zip(self.bound_integer(y, scope)).is_some();
+                        if constant {
+                        } else if real {
+                            self.warnings.push(Advice{category:"integer-division",span:span.clone(),
+                                message:"integer division truncates its quotient before conversion to REAL".into(),related:None,
+                                note:"convert an operand, as in real(n)/m, for a fractional result, or write real(n/m) if truncation is intended; Fortran truncates toward zero, as C does, while Python's // rounds down"});
+                        } else {
+                            self.warnings.push(Advice{category:"integer-division-all",span,
+                                message:"integer division truncates its quotient toward zero".into(),related:None,
+                                note:"-7/2 is -3 in Fortran and C but -7//2 is -4 in Python; use real operands for a fractional result"});
+                        }
+                    }
+                }
+                self.integer_quotients(y, scope, offset, if divide { false } else { y_real }, cursor);
+            }
+            Expr::Un(_, x) => self.integer_quotients(x, scope, offset, real, cursor),
+            // An explicit conversion shows the truncation is intended.
+            Expr::Call(n, args) if matches!(n.as_str(), "real" | "dble" | "cmplx" | "float" | "sngl" | "dfloat") => {
+                for a in args { self.integer_quotients(a, scope, offset, false, cursor); }
+            }
+            _ => for x in expressions(e) { self.integer_quotients(x, scope, offset, false, cursor); },
+        }
+    }
     fn numeric_assignment(
         &mut self,
         name: &str,
@@ -1368,6 +1419,36 @@ impl<'a> Analysis<'a> {
                     continue;
                 }
                 _ => {}
+            }
+            // Integer divisions whose quotient becomes REAL or COMPLEX, in
+            // source order of the statement's `/` tokens.
+            {
+                let mut cursor = 0;
+                match s {
+                    Stmt::Assign { name, value } | Stmt::AssignIndex { name, value, .. } => {
+                        if let Stmt::AssignIndex { indices, .. } = s {
+                            for e in indices { self.integer_quotients(e, scope, offset, false, &mut cursor); }
+                        }
+                        let real = self.data_type(scope, name)
+                            .and_then(|(k, _, _, _, owner)| k.and_then(|k| self.number_kind(&k, owner)))
+                            .is_some_and(|n| n.class > 0);
+                        self.integer_quotients(value, scope, offset, real, &mut cursor);
+                    }
+                    // Only the construct's own expressions; its statements are walked separately.
+                    Stmt::If { cond, .. } | Stmt::DoWhile { cond, .. } => self.integer_quotients(cond, scope, offset, false, &mut cursor),
+                    Stmt::Do { start, end, .. } => {
+                        self.integer_quotients(start, scope, offset, false, &mut cursor);
+                        self.integer_quotients(end, scope, offset, false, &mut cursor);
+                    }
+                    Stmt::SelectCase { expr, .. } => self.integer_quotients(expr, scope, offset, false, &mut cursor),
+                    Stmt::InitializedDecl { .. } | Stmt::Block { .. } => {}
+                    _ => {
+                        let mut copy = s.clone();
+                        for e in crate::procedure_arguments::expressions(&mut copy) {
+                            self.integer_quotients(e, scope, offset, false, &mut cursor);
+                        }
+                    }
+                }
             }
             if let Stmt::AssignIndex { name, indices, .. } = s {
                 self.check_indices(name, indices, scope, offset, &env);
