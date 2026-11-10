@@ -737,6 +737,42 @@ impl<'a> Analysis<'a> {
             _ => for x in expressions(e) { self.integer_quotients(x, scope, offset, false, cursor); },
         }
     }
+    /// `-Wcompare-reals`: `==` and `/=` with a REAL or COMPLEX operand,
+    /// except comparisons with an exact zero. `cursor` counts the equality
+    /// comparisons seen, to locate each operator in the statement.
+    fn real_comparisons(&mut self, e: &Expr, scope: usize, offset: usize, cursor: &mut usize) {
+        fn zero(e: &Expr) -> bool {
+            match e {
+                Expr::IntLit(t) | Expr::RealLit(t) => {
+                    let digits = t.split('_').next().unwrap_or(t).to_ascii_lowercase().replace(['d', 'q'], "e");
+                    digits.parse::<f64>().is_ok_and(|v| v == 0.0)
+                }
+                Expr::Un(UnOp::Neg, x) => zero(x),
+                _ => false,
+            }
+        }
+        if let Expr::Bin(op, x, y) = e {
+            self.real_comparisons(x, scope, offset, cursor);
+            if matches!(op, BinOp::Eq | BinOp::Ne) {
+                let span = self.statement_tokens(offset).iter()
+                    .filter(|t| matches!(t.kind, crate::lexer::TokenKind::EqEq | crate::lexer::TokenKind::Ne))
+                    .nth(*cursor).map(|t| t.span.clone());
+                *cursor += 1;
+                let floating = |a: &Self, z: &Expr| a.numeric_type(z, scope).is_some_and(|n| n.class > 0);
+                if let Some(span) = span {
+                    if (floating(self, x) || floating(self, y)) && !zero(x) && !zero(y) {
+                        let what = if matches!(op, BinOp::Eq) { "equality" } else { "inequality" };
+                        self.warnings.push(Advice{category:"compare-reals",span,
+                            message:format!("exact {what} comparison of floating-point values"),related:None,
+                            note:"rounding makes computed values differ in the last bits; compare with a tolerance, as in abs(x - y) <= tol*max(abs(x), abs(y)); comparisons with an exact zero are not reported"});
+                    }
+                }
+            }
+            self.real_comparisons(y, scope, offset, cursor);
+            return;
+        }
+        for x in expressions(e) { self.real_comparisons(x, scope, offset, cursor); }
+    }
     fn numeric_assignment(
         &mut self,
         name: &str,
@@ -1422,33 +1458,34 @@ impl<'a> Analysis<'a> {
             }
             // Integer divisions whose quotient becomes REAL or COMPLEX, in
             // source order of the statement's `/` tokens.
+            // The statement's own expressions in source order, each with
+            // whether its value becomes REAL or COMPLEX.
             {
-                let mut cursor = 0;
+                let mut ordered: Vec<(Expr, bool)> = vec![];
                 match s {
                     Stmt::Assign { name, value } | Stmt::AssignIndex { name, value, .. } => {
                         if let Stmt::AssignIndex { indices, .. } = s {
-                            for e in indices { self.integer_quotients(e, scope, offset, false, &mut cursor); }
+                            ordered.extend(indices.iter().map(|e| (e.clone(), false)));
                         }
                         let real = self.data_type(scope, name)
                             .and_then(|(k, _, _, _, owner)| k.and_then(|k| self.number_kind(&k, owner)))
                             .is_some_and(|n| n.class > 0);
-                        self.integer_quotients(value, scope, offset, real, &mut cursor);
+                        ordered.push((value.clone(), real));
                     }
                     // Only the construct's own expressions; its statements are walked separately.
-                    Stmt::If { cond, .. } | Stmt::DoWhile { cond, .. } => self.integer_quotients(cond, scope, offset, false, &mut cursor),
-                    Stmt::Do { start, end, .. } => {
-                        self.integer_quotients(start, scope, offset, false, &mut cursor);
-                        self.integer_quotients(end, scope, offset, false, &mut cursor);
-                    }
-                    Stmt::SelectCase { expr, .. } => self.integer_quotients(expr, scope, offset, false, &mut cursor),
+                    Stmt::If { cond, .. } | Stmt::DoWhile { cond, .. } => ordered.push((cond.clone(), false)),
+                    Stmt::Do { start, end, .. } => ordered.extend([(start.clone(), false), (end.clone(), false)]),
+                    Stmt::SelectCase { expr, .. } => ordered.push((expr.clone(), false)),
                     Stmt::InitializedDecl { .. } | Stmt::Block { .. } => {}
                     _ => {
                         let mut copy = s.clone();
-                        for e in crate::procedure_arguments::expressions(&mut copy) {
-                            self.integer_quotients(e, scope, offset, false, &mut cursor);
-                        }
+                        ordered.extend(crate::procedure_arguments::expressions(&mut copy).into_iter().map(|e| (e.clone(), false)));
                     }
                 }
+                let mut cursor = 0;
+                for (e, real) in &ordered { self.integer_quotients(e, scope, offset, *real, &mut cursor); }
+                let mut cursor = 0;
+                for (e, _) in &ordered { self.real_comparisons(e, scope, offset, &mut cursor); }
             }
             if let Stmt::AssignIndex { name, indices, .. } = s {
                 self.check_indices(name, indices, scope, offset, &env);

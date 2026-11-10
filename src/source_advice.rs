@@ -1276,6 +1276,7 @@ pub fn check(
         "dead-store",
         "integer-division",
         "integer-division-all",
+        "compare-reals",
         "unchecked-status",
         "target-lifetime",
         "aliasing",
@@ -1306,6 +1307,7 @@ pub fn check(
                 | "conversion"
                 | "real-literal-kind"
                 | "integer-division-all"
+                | "compare-reals"
                 | "implicit-interface"
                 | "intrinsic-shadow"
                 | "keyword-name"

@@ -130,6 +130,22 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wdimension-override` | No | Yes | An entity's own shape or length overriding DIMENSION(...) or the CHARACTER length of its declaration, as `y` in `real, dimension(2) :: x, y(3)`, with the statement rewritten as a suggestion |
 | `-Windentation` | No | No | Free-form construct bodies not indented past their opening statement, statements of one body in different columns, and END, ELSE and CASE statements not aligned with the construct; see [Indentation](#indentation) |
 | `-Wearly-return` | No | No | RETURN statements after which statements of the procedure can still run, such as `if (n <= 0) return` or a RETURN in a loop; a final RETURN is not reported; see [Early RETURN](#early-return) |
+| `-Wcompare-reals` | No | Yes | `==` and `/=` with a REAL or COMPLEX operand, except comparisons with an exact zero |
+| `-Wlogical-comparison` | No | Yes | Comparisons with `.true.` or `.false.`, such as `flag == .true.`, with the LOGICAL value or its `.not.` suggested; also in `-Wstyle` |
+| `-Wstyle` | No | No | The style group below; see [Style warnings](#style-warnings) |
+| `-Wold-relational` | No | No | `.lt.`, `.le.`, `.eq.`, `.ne.`, `.gt.` and `.ge.`, with the statement rewritten using `<`, `<=`, `==`, `/=`, `>` and `>=` |
+| `-Wmissing-double-colon` | No | No | Type declarations without `::`, such as `integer i, j` |
+| `-Wlabeled-do` | No | No | DO loops ended by a labeled statement, such as `do 10 i = 1, n ... 10 continue` |
+| `-Wdouble-precision` | No | No | DOUBLE PRECISION and DOUBLE COMPLEX, with `real(dp)` and `complex(dp)` suggested |
+| `-Wbare-end` | No | No | END statements of programs, modules, procedures and derived types without the name, such as `end` or `end subroutine` |
+| `-Wkeyword-case` | No | No | Keywords written in more than one case in a file, in one warning per file |
+| `-Wtabs` | No | No | Tab characters in free-form code, in one warning per file |
+| `-Wline-length[=N]` | No | No | Free-form lines longer than 132 characters, or N, in one warning per file |
+| `-Wunnamed-exit` | No | No | EXIT and CYCLE without a construct name, in one warning per DO loop |
+| `-Wgoto` | No | No | GO TO statements |
+| `-Wobsolescent` | No | No | Obsolescent and deleted features: computed and assigned GO TO, arithmetic IF, ASSIGN, COMMON, EQUIVALENCE, ENTRY, BLOCK DATA, FORALL, PAUSE, CHARACTER*length and alternate returns |
+| `-Wstop-in-procedure` | No | No | STOP in a function or subroutine; ERROR STOP is not reported |
+| `-Wassumed-size` | No | No | Assumed-size dummy arrays, such as `x(*)` or `y(n,*)`, outside BIND(C) procedures |
 | `-Wunchecked-status` | No | Yes | Local scalar IOSTAT, allocation STAT, and intrinsic status results not inspected or forwarded |
 | `-Wtarget-lifetime` | Yes | No | Pointer associations escaping a known automatic local target |
 | `-Winfinite-loop` | Yes | No | DO loops without loop control, or `DO WHILE (.true.)`, that nothing in their body can end |
@@ -774,6 +790,55 @@ also ends the loop. Code after an unconditional RETURN is also reported by
 The warning is opt-in, outside both `-Wall` and `-Wextra`.
 
 Regression checks: `python tests/test_early_return.py`.
+
+## Style warnings
+
+`-Wstyle` enables the checks of rules from Clerman and Spector's *Modern
+Fortran: Style and Usage*. Each is opt-in and can also be selected alone, and
+`-Wno-<name>` removes one from the group, as in `-Wstyle -Wno-goto`:
+
+- the new style checks `-Wold-relational`, `-Wlogical-comparison`,
+  `-Wmissing-double-colon`, `-Wlabeled-do`, `-Wdouble-precision`,
+  `-Wbare-end`, `-Wkeyword-case`, `-Wtabs`, `-Wline-length`,
+  `-Wunnamed-exit`, `-Wgoto`, `-Wobsolescent`, `-Wstop-in-procedure` and
+  `-Wassumed-size`;
+- the existing checks `-Windentation`, `-Wuse-without-only`,
+  `-Wmodule-default-public`, `-Wliteral-kind`, `-Wdefault-real`,
+  `-Wcould-be-parameter`, `-Wmissing-intent` and `-Wimplicit-typing`.
+
+```
+warning: `.lt.` is the old spelling of `<` [old-relational]
+10 │ if (n .lt. 0) stop
+   │       ^^^^ use <
+   = suggestion: if (n < 0) stop
+
+warning: EXIT without a construct name in this DO loop [unnamed-exit]
+11 │ do i = 1, n
+   │ ----------- this loop
+12 │    if (x(i) > 0) exit
+   │                  ^^^^ `exit` applies to the innermost DO loop
+   = name the loop, as in `name: do`, and write `exit name`; a named EXIT or CYCLE keeps its meaning if loops are added around it
+```
+
+Notes on individual checks:
+
+- `-Wlogical-comparison` and `-Wcompare-reals` are also in `-Wextra`, since
+  they often find mistakes. `-Wcompare-reals` is not part of `-Wstyle`; it
+  skips comparisons with an exact zero, such as `if (sigma == 0)`.
+- `-Wline-length` uses 132 characters, the free-form limit before Fortran
+  2023 and the gfortran default; `-Wline-length=100` sets another limit.
+  `-Wtabs` and `-Wline-length` check free-form source only.
+- `-Wkeyword-case` accepts any one case, lowercase, uppercase or
+  capitalized, and reports the keywords not in the file's most common case.
+- `-Wbare-end` covers programs, modules, submodules, functions,
+  subroutines, separate module procedures, block data and derived types.
+- `-Wobsolescent` reports plain GO TO under `-Wgoto` instead, since GO TO
+  itself is not obsolescent, and labeled DO loops under `-Wlabeled-do`,
+  which notes when shared or action-statement termination is obsolescent.
+- `-Wassumed-size` is advice: an assumed-shape dummy changes how the
+  procedure is called and needs an explicit interface.
+
+Regression checks: `python tests/test_style_warnings.py`.
 
 ## Multiple source files and modules
 

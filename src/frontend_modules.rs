@@ -140,6 +140,7 @@ mod parameter_warnings;
 mod kind_warnings;
 mod indentation_warnings;
 mod return_warnings;
+mod style_warnings;
 mod do_variables;
 mod declaration_warnings;
 mod short_circuit_warnings;

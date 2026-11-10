@@ -61,11 +61,28 @@ const CATEGORIES: &[&str] = &[
     "dimension-override",
     "indentation",
     "early-return",
+    "compare-reals",
+    "old-relational",
+    "logical-comparison",
+    "missing-double-colon",
+    "labeled-do",
+    "double-precision",
+    "bare-end",
+    "keyword-case",
+    "tabs",
+    "line-length",
+    "unnamed-exit",
+    "goto",
+    "obsolescent",
+    "stop-in-procedure",
+    "assumed-size",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface, conversion, and module-default-public remain
 /// individually selectable rather than members of this group.
 const EXTRA: &[&str] = &[
+    "compare-reals",
+    "logical-comparison",
     "dimension-override",
     "missing-intent",
     "shadow",
@@ -75,6 +92,32 @@ const EXTRA: &[&str] = &[
     "intrinsic-shadow",
     "keyword-name",
     "fixed-unit",
+];
+/// The categories that -Wstyle enables: the style rules of Clerman and
+/// Spector's "Modern Fortran: Style and Usage" that rfort checks.
+const STYLE: &[&str] = &[
+    "old-relational",
+    "logical-comparison",
+    "missing-double-colon",
+    "labeled-do",
+    "double-precision",
+    "bare-end",
+    "keyword-case",
+    "tabs",
+    "line-length",
+    "unnamed-exit",
+    "goto",
+    "obsolescent",
+    "stop-in-procedure",
+    "assumed-size",
+    "indentation",
+    "use-without-only",
+    "module-default-public",
+    "literal-kind",
+    "default-real",
+    "could-be-parameter",
+    "missing-intent",
+    "implicit-typing",
 ];
 fn canonical(name: &str) -> &str {
     match name {
@@ -90,7 +133,8 @@ pub fn validate_options(options: &[String]) -> Result<()> {
             .or_else(|| option.strip_prefix("error="))
             .unwrap_or(option);
         let name = canonical(name);
-        if !CATEGORIES.contains(&name) && !matches!(name, "unused" | "unused-private" | "extra") {
+        let line_length = name.strip_prefix("line-length=").is_some_and(|n| n.parse::<usize>().is_ok_and(|n| n > 0));
+        if !CATEGORIES.contains(&name) && !line_length && !matches!(name, "unused" | "unused-private" | "extra" | "style") {
             bail!("unknown warning option `{option}`");
         }
     }
@@ -144,6 +188,17 @@ pub(crate) fn selected(
             match option.as_str() {
                 "extra" => enabled = true,
                 "no-extra" => enabled = false,
+                _ => {}
+            }
+        }
+    }
+    // -Wstyle is a group in the same way.
+    if STYLE.contains(&category) {
+        for option in options {
+            match option.as_str() {
+                "style" => enabled = true,
+                "no-style" => enabled = false,
+                "error=style" => { enabled = true; error = true; }
                 _ => {}
             }
         }
