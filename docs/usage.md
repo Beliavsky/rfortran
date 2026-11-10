@@ -128,6 +128,8 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Winteger-division` | Yes | No | Constant integer divisions with a nonzero discarded remainder, including named constants, and integer quotients converted to REAL or COMPLEX, such as `x = n/m` with REAL `x` or `1/n*x`; `real(n/m)` marks truncation as intended |
 | `-Winteger-division-all` | No | No | Every other integer division, including `real(n/m)`, which truncates toward zero (`-7/2` is `-3`, while Python's `-7//2` is `-4`); for code ported from or to Python |
 | `-Wdimension-override` | No | Yes | An entity's own shape or length overriding DIMENSION(...) or the CHARACTER length of its declaration, as `y` in `real, dimension(2) :: x, y(3)`, with the statement rewritten as a suggestion |
+| `-Windentation` | No | No | Free-form construct bodies not indented past their opening statement, statements of one body in different columns, and END, ELSE and CASE statements not aligned with the construct; see [Indentation](#indentation) |
+| `-Wearly-return` | No | No | RETURN statements after which statements of the procedure can still run, such as `if (n <= 0) return` or a RETURN in a loop; a final RETURN is not reported; see [Early RETURN](#early-return) |
 | `-Wunchecked-status` | No | Yes | Local scalar IOSTAT, allocation STAT, and intrinsic status results not inspected or forwarded |
 | `-Wtarget-lifetime` | Yes | No | Pointer associations escaping a known automatic local target |
 | `-Winfinite-loop` | Yes | No | DO loops without loop control, or `DO WHILE (.true.)`, that nothing in their body can end |
@@ -712,6 +714,66 @@ The warning is opt-in, outside both `-Wall` and `-Wextra`. Use
 to single-precision libraries.
 
 Regression checks: `python tests/test_default_real.py`.
+
+## Indentation
+
+`-Windentation` reports free-form layout that hides the structure of IF, DO,
+SELECT, WHERE, FORALL, BLOCK, ASSOCIATE, CRITICAL and CHANGE TEAM
+constructs, interface blocks, derived type definitions and enumerations:
+
+```
+warning: statement is indented inconsistently with the rest of the DO loop [indentation]
+  ┌─ main.f90:3:5
+  │
+2 │    print *, "i", i
+  │    --------------- the body starts at column 4
+3 │     print *, "i**2", i**2
+  │     ^^^^^^^^^^^^^^^^^^^^^ column 5
+```
+
+- A body not indented past its opening statement. Statements after a CASE
+  are indented past the CASE statement.
+- Statements of one body that start in different columns. The branches of an
+  IF and the cases of a SELECT count as one body.
+- END, ELSE IF, ELSE and ELSE WHERE statements not aligned with the opening
+  statement. CASE statements may be aligned with SELECT or indented past it,
+  but consistently; CONTAINS in a type may not be indented less than TYPE.
+
+No indentation width is required. Each construct gets at most one body
+warning and one alignment warning. Bodies of programs, modules and procedures
+are not checked, since many styles do not indent them, but constructs inside
+them are. Only the first line of each statement counts, from the keyword after
+any label; statements after `;`, statements ending labeled DO loops and
+fixed-form source are not checked. Tabs advance to the next multiple of 8
+columns. A formatter such as fprettify or findent can reindent a file.
+
+The warning is opt-in, outside both `-Wall` and `-Wextra`.
+
+Regression checks: `python tests/test_indentation.py`.
+
+## Early RETURN
+
+`-Wearly-return` reports a RETURN, conditional or not, after which
+executable statements of the procedure can still run:
+
+```
+warning: RETURN before the end of subroutine `scale` [early-return]
+8 │ if (n <= 0) return
+  │             ^^^^^^ later statements of `scale` can still run
+```
+
+A RETURN that is the last executable statement is not reported, since that
+form is common and harmless. Neither is a RETURN followed only by END IF,
+END SELECT, END BLOCK, END ASSOCIATE, CONTINUE, FORMAT and DATA statements
+and by other branches of its IF and SELECT constructs, which it never falls
+into. A RETURN before an ENTRY statement is needed and is not reported. A
+RETURN in a DO loop, including a labeled one, is reported with a note that it
+also ends the loop. Code after an unconditional RETURN is also reported by
+`-Wunreachable-code`. Fixed-form source is checked.
+
+The warning is opt-in, outside both `-Wall` and `-Wextra`.
+
+Regression checks: `python tests/test_early_return.py`.
 
 ## Multiple source files and modules
 

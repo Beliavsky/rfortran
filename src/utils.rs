@@ -137,6 +137,8 @@ pub fn print_help() {
     println!("  -Wdefault-real      Warn about REAL and COMPLEX declarations without a kind (opt-in)");
     println!("  -Wdimension-override Warn about entity shapes or lengths overriding DIMENSION or the type length (in -Wextra)");
     println!("  -Winteger-division-all Warn about every integer division whose quotient is truncated (opt-in)");
+    println!("  -Windentation       Warn about unindented or inconsistently indented construct bodies and misaligned END, ELSE and CASE (opt-in)");
+    println!("  -Wearly-return      Warn about RETURN statements after which statements of the procedure can still run (opt-in)");
     println!("  -Winfinite-loop     Warn about DO loops without loop control that nothing in their body can end (enabled by -Wall)");
     println!("  -Wmissing-intent    Warn about data dummy arguments without INTENT (opt-in)");
     println!("  -Wshadow            Warn about locals shadowing enclosing data declarations (opt-in)");
