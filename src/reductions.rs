@@ -2035,6 +2035,9 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                     fn contains(e: &Expr) -> bool {
                         match e {
                             Expr::Call(n, _) if n == "@array_constructor" => true,
+                            // A reduction is scalar, as `sum(a, mask=[...])`.
+                            Expr::Call(n, _) if matches!(n.as_str(), "sum" | "product" | "maxval" | "minval" | "any" | "all"
+                                | "count" | "iany" | "iall" | "iparity" | "parity" | "norm2" | "dot_product" | "size") => false,
                             Expr::Call(_, a) | Expr::Index(_, a) => a.iter().any(contains),
                             Expr::Bin(_, a, b) => contains(a) || contains(b),
                             Expr::Un(_, a) => contains(a),

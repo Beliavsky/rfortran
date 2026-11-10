@@ -96,9 +96,9 @@ fn twin(name: &str, params: &[String], body: &[Stmt], kind: &TypeSpec) -> Option
 }
 
 /// Give the defining functions among the procedures of `body` their twins,
-/// recording their result types in `found`. `contained` says which functions
+/// recording their result types and numbers of arguments in `found`. `contained` says which functions
 /// of `body` are module or internal procedures rather than external ones.
-fn twins(body: &mut Vec<Stmt>, contained: &dyn Fn(&str) -> bool, found: &mut HashMap<String, TypeSpec>) {
+fn twins(body: &mut Vec<Stmt>, contained: &dyn Fn(&str) -> bool, found: &mut HashMap<String, (TypeSpec, usize)>) {
     let mut added = vec![];
     // Functions given twins by an earlier run keep them.
     let existing: std::collections::HashSet<String> = body.iter().filter_map(|s| match s {
@@ -114,7 +114,7 @@ fn twins(body: &mut Vec<Stmt>, contained: &dyn Fn(&str) -> bool, found: &mut Has
                 }));
                 if let (true, false, Some(kind), false) = (contained(name), *pure || *elemental, kind, existing.contains(name.as_str())) {
                     if let Some(t) = twin(name, params, inner, &kind) {
-                        found.insert(name.clone(), kind);
+                        found.insert(name.clone(), (kind, params.len()));
                         added.push((i + 1, t, name.clone()));
                     }
                 }
@@ -139,7 +139,7 @@ fn twins(body: &mut Vec<Stmt>, contained: &dyn Fn(&str) -> bool, found: &mut Has
 }
 
 struct Calls<'a> {
-    functions: &'a HashMap<String, TypeSpec>,
+    functions: &'a HashMap<String, (TypeSpec, usize)>,
     serial: usize,
     /// The prefix of the names of temporaries, which differs between runs.
     prefix: &'static str,
@@ -151,12 +151,19 @@ impl Calls<'_> {
     fn expr(&mut self, e: &mut Expr, prefix: &mut Vec<Stmt>, declarations: &mut Vec<Stmt>) {
         visit_expr(e, &mut |e| {
             if let Expr::Call(n, args) = e {
-                if let Some(kind) = self.functions.get(n.as_str()) {
+                if let Some((kind, count)) = self.functions.get(n.as_str()) {
                     self.serial += 1;
                     let temp = format!("{}{}", self.prefix, self.serial);
                     declarations.push(Stmt::VarDecl { kind: kind.clone(), names: vec![temp.clone()] });
                     let mut args = std::mem::take(args);
-                    args.push(Expr::Ident(temp.clone()));
+                    // After omitted optional or keyword arguments, the
+                    // result is passed by keyword.
+                    let keywords = args.iter().any(|a| matches!(a, Expr::Call(k, _) if k.starts_with("@keyword:")));
+                    if keywords || args.len() < *count {
+                        args.push(Expr::Call(format!("@keyword:{RESULT}"), vec![Expr::Ident(temp.clone())]));
+                    } else {
+                        args.push(Expr::Ident(temp.clone()));
+                    }
                     prefix.push(Stmt::CallSub { name: format!("{TWIN}{n}"), args });
                     *e = Expr::Ident(temp);
                 }
@@ -246,7 +253,7 @@ fn run(mut p: Program, prefix: &'static str) -> Result<Program> {
         return Ok(p);
     }
     // A function that USE ... ONLY imports brings its twin.
-    fn imports(body: &mut [Stmt], functions: &HashMap<String, TypeSpec>) {
+    fn imports(body: &mut [Stmt], functions: &HashMap<String, (TypeSpec, usize)>) {
         for s in body.iter_mut() {
             match s {
                 Stmt::Use { only: Some(names), .. } => {

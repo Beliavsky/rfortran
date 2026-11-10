@@ -729,6 +729,13 @@ fn eval_expr(
                             CgVal::I64(integer_power(b, *a, *bv))
                         }
                         _ => {
+                            // REAL(4) operands, or INTEGER ones, give a REAL(4)
+                            // result. Rounding the double result of +, -, * or
+                            // / to single gives the single-precision result.
+                            let single = REAL_KINDS.with(|k| {
+                                let k = k.borrow();
+                                [(&lv_raw, &**l), (&rv_raw, &**r)].iter().all(|(v, e)| matches!(v, CgVal::I64(_)) || single_value(e, &k, func_meta))
+                            });
                             let lv = to_f64(b, lv_raw);
                             let rv = to_f64(b, rv_raw);
                             let res = match op {
@@ -742,6 +749,10 @@ fn eval_expr(
                                 }
                                 _ => unreachable!(),
                             };
+                            let res = if single {
+                                let narrow = b.ins().fdemote(ir::types::F32, res);
+                                b.ins().fpromote(ir::types::F64, narrow)
+                            } else { res };
                             CgVal::F64(res)
                         }
                     }
@@ -2184,6 +2195,7 @@ fn gen_stmts(
                                         let ss = array_storage(b, module, len, current_fn.is_none())?;
                                         reals.insert(name.clone(), ss.into());
                                         real_kind.insert(name.clone(), false);
+                                        REAL_KINDS.with(|k| k.borrow_mut().insert(name.clone(), false));
                                         arrays.insert(name.clone(), len);
                                         continue;
                                     }
@@ -2197,6 +2209,7 @@ fn gen_stmts(
                         ));
                         reals.insert(name.clone(), ss.into());
                         real_kind.insert(name.clone(), false);
+                        REAL_KINDS.with(|k| k.borrow_mut().insert(name.clone(), false));
                     }
                     crate::ast::TypeSpec::DoublePrecision => {
                         if dims.len() == 1 {
@@ -2207,6 +2220,7 @@ fn gen_stmts(
                                         let ss = array_storage(b, module, len, current_fn.is_none())?;
                                         reals.insert(name.clone(), ss.into());
                                         real_kind.insert(name.clone(), true);
+                                        REAL_KINDS.with(|k| k.borrow_mut().insert(name.clone(), true));
                                         arrays.insert(name.clone(), len);
                                         continue;
                                     }
@@ -2220,6 +2234,7 @@ fn gen_stmts(
                         ));
                         reals.insert(name.clone(), ss.into());
                         real_kind.insert(name.clone(), true);
+                        REAL_KINDS.with(|k| k.borrow_mut().insert(name.clone(), true));
                     }
                     crate::ast::TypeSpec::Character(len_opt) => {
                         let len = len_opt.unwrap_or(1);
@@ -4081,6 +4096,9 @@ thread_local! {
     static LOOP_COUNTERS: std::cell::RefCell<HashMap<String, (Variable, Option<(i64, i64)>)>> = std::cell::RefCell::new(HashMap::new());
     /// Declared INTEGER kinds other than the default, for B, O and Z output.
     static INTEGER_KINDS: std::cell::RefCell<HashMap<String, u8>> = std::cell::RefCell::new(HashMap::new());
+    /// The REAL kinds of the current function's variables, as in `real_kind`:
+    /// true for kind 8. Arithmetic on kind 4 values is rounded to kind 4.
+    static REAL_KINDS: std::cell::RefCell<HashMap<String, bool>> = std::cell::RefCell::new(HashMap::new());
 }
 
 // The kind of an INTEGER output item, 0 when it is the default or unknown.
@@ -4505,6 +4523,7 @@ impl CraneliftBackend {
                 let mut bools = HashMap::new();
                 let mut chars = characters::Characters::new();
                 let mut real_kind = HashMap::new();
+                REAL_KINDS.with(|k| k.borrow_mut().clear());
                 let mut i128_vars = HashSet::new();
                 let mut i128_last = HashMap::new();
                 let mut dc = 0u32;
@@ -4566,6 +4585,7 @@ impl CraneliftBackend {
                             b.ins().store(ir::MemFlags::new(), pv, addr, 0);
                             reals.insert(pname.clone(), slot.into());
                             real_kind.insert(pname.clone(), pdf[idx]);
+                            REAL_KINDS.with(|k| k.borrow_mut().insert(pname.clone(), pdf[idx]));
                         }
                     }
                 }
@@ -4607,6 +4627,7 @@ impl CraneliftBackend {
                         b.ins().store(ir::MemFlags::new(), z, addr, 0);
                         reals.insert(f.name.clone(), ss.into());
                         real_kind.insert(f.name.clone(), false);
+                        REAL_KINDS.with(|k| k.borrow_mut().insert(f.name.clone(), false));
                         Some(RetSlot::F64(ss))
                     }
                     TypeSpec::DoublePrecision => {
@@ -4620,6 +4641,7 @@ impl CraneliftBackend {
                         b.ins().store(ir::MemFlags::new(), z, addr, 0);
                         reals.insert(f.name.clone(), ss.into());
                         real_kind.insert(f.name.clone(), true);
+                        REAL_KINDS.with(|k| k.borrow_mut().insert(f.name.clone(), true));
                         Some(RetSlot::F64(ss))
                     }
                     TypeSpec::Character(_) => None,
@@ -4716,6 +4738,7 @@ impl CraneliftBackend {
                 let mut bools = HashMap::new();
                 let mut chars = characters::Characters::new();
                 let mut real_kind = HashMap::new();
+                REAL_KINDS.with(|k| k.borrow_mut().clear());
                 let mut i128_vars = HashSet::new();
                 let mut i128_last = HashMap::new();
                 let mut dc = 0u32;

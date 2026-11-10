@@ -58,6 +58,32 @@ end
         self.check(program.replace("print *, next(1)\n",""),"3.0 1.0 1.0\n3.0\n3\n")
         self.check(program,error="absent OPTIONAL dummy `stride`")
 
+    def test_function_forwarding_absent_argument(self):
+        """A function that passes its OPTIONAL dummy on, referenced without
+        it, as in M_intrinsics demo_present.f90."""
+        self.check("""program main
+implicit none
+integer :: answer
+answer = func()
+print *, answer
+answer = func(12)
+print *, answer
+contains
+integer function func(x)
+integer, intent(in), optional :: x
+integer :: x_local
+x_local = 0
+if (present(x)) x_local = x
+func = x_local**2
+call tattle(x)
+end function
+subroutine tattle(arg)
+integer, intent(in), optional :: arg
+print *, present(arg)
+end subroutine
+end program main
+""", " F\n 0\n T\n 144\n")
+
     def test_execution(self):
         source=ROOT / "tests/113_optional_procedures.f90"
         expected=json.loads((ROOT/"tests/expectations.json").read_text(encoding="utf-8"))["cases"][source.stem]["program_stdout"]
