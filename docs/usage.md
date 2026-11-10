@@ -166,6 +166,10 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wmaybe-uninitialized` | No | Yes | Local scalars read where some path from the start of the procedure reaches the read without assigning them; see [Uninitialized variables](#uninitialized-variables) |
 | `-Wintent-out-unset` | No | Yes | INTENT(OUT) dummy arguments that some path to the end of the procedure, or to a RETURN, does not assign; one never assigned is reported as "was never assigned" by default |
 | `-Wcould-be-intent-out` | No | Yes | INTENT(INOUT) scalar dummy arguments that every path assigns before anything reads them or passes them to a procedure |
+| `-Wunchecked-conformance` | No | Yes | Procedures that combine two assumed-shape dummies in a way that requires a size relationship, such as `x*y`, `dot_product(x, y)`, `matmul(a, b)` or `y = x`, and never compare their sizes; see [Array conformance](#array-conformance) |
+| `-Wconformance` | Yes | No | Calls whose actual arguments, of sizes known at compile time, break such a relationship, as `sumproduct([1.0, 2.0], [3.0])` |
+| `-Wmaybe-nonconforming` | No | Yes | Elemental operations on arrays whose sizes, from PACK or ALLOCATE, may differ, as `x1 - x2` for two PACK results; see [Array conformance](#array-conformance) |
+| `-Wmaybe-out-of-bounds` | No | Yes | Constant subscripts of PACK results, which may have fewer elements, as `x1(1)` when the mask selects nothing |
 | `-Wcould-be-intent-in` | No | Yes | INTENT(INOUT) dummy arguments that nothing in the procedure can modify; POINTER, TARGET and polymorphic dummies are not reported |
 | `-Wunused-only` | No | Yes | Names in a USE ONLY list that the scope never uses, with the shortened ONLY list suggested |
 | `-Waliasing` | Yes | No | Known overlapping actuals when a defined procedure's OUT dummy, or modified INOUT dummy, conflicts with another dummy's reads |
@@ -377,14 +381,91 @@ For example, `print '(2i4)',1,1.1` warns that the second I4 expects INTEGER
 but receives REAL. Literal formats, CHARACTER named constants and labelled
 FORMAT statements are checked using the existing format parser and constant
 evaluation. Fixed arrays, sections, bounded implied-DOs and the two real
-components of COMPLEX items are considered. Reversion and unused trailing
-descriptors are valid; repeated identical mismatches within an array item
-produce one warning. Runtime formats and uncertain list lengths retain runtime
-checks; static checking stops where descriptor alignment becomes uncertain.
+components of COMPLEX items are considered. A mismatch that format reversion
+causes says so, as in `print '(a, f8.3)', 'x =', x(1:2)`, where the second
+REAL value meets `A`; each list item gets one warning. Runtime formats and
+other lists of uncertain length retain runtime checks; static checking stops
+where descriptor alignment becomes uncertain.
 Derived-type I/O is not checked yet. BOZ editing's legal noninteger types are
 not diagnosed as type mismatches, even where runtime support remains limited.
 Disable with `-Wno-format`, promote with `-Werror=format`, or use
 `!#allow(format)` / `!#deny(format)`. Run `python tests/test_format_warnings.py`.
+
+`-Wformat` also checks lists with arrays of unknown size, such as
+assumed-shape or allocatable arrays, which may fit the format for some sizes
+and not others:
+
+```fortran
+subroutine sub(x)
+real, intent(in) :: x(:)
+print "(f0.4,1x,i0)", x, size(x)
+end subroutine sub
+```
+
+```
+warning: the format matches the output list only when `x` has 1 element; with 2 elements in `x`, output item 1 (element 2) is REAL but meets I0 [format]
+6 │ print "(f0.4,1x,i0)", x, size(x)
+  = put the array last, in an unlimited group, as in `(i0,*(1x,f0.4))` for `size(x), x`, or write it in a statement of its own
+  = sizes up to 6 were tried
+```
+
+With two elements, `x(2)` meets `I0` and the program fails at run time; with
+none, `size(x)` meets `F0.4`. The check tries each size from 0 up to about
+twice the number of data edit descriptors in the format, past which the
+pattern of matches repeats, and reports the sizes that fit:
+
+- "only when `x` has 1 element", or "has 0 or 1 elements", for a few sizes;
+- "for no nonempty size of `x`", when only an empty array fits, as in
+  `print "(i4)", x` for a REAL `x`;
+- "for no size of `x`", when no size fits, as in `print "(a)", c, size(c)`;
+- "only for some sizes of `z` and `x`", when the list has several such
+  arrays.
+
+The message gives the smallest failing sizes as an example. Formats that fit
+every size are not reported, such as `(i0,*(1x,f0.4))` for `size(x), x`,
+`(*(g0,1x))`, and `(f8.3)`, which writes one value per record. The check
+applies when every other item has a known length and the list has at most
+three arrays of unknown size, which may be whole arrays or sections; a whole
+array named twice has one size. A vector subscript, as in `x([1, 3])`, makes
+the length unknown, and the statement is not checked. Mismatches among the
+items before the first such array are reported as usual, once.
+
+Two further checks of the same formats are in `-Wextra`. Each needs the
+number of list items to be known at compile time.
+
+- `-Wformat-reversion` reports a list with more items than the format has
+  data edit descriptors, such as `print '(f0.4)', x(1:3)`, which writes three
+  records. A format whose descriptors or groups have a repeat count, such as
+  `(10f8.3)`, is taken to revert on purpose, and an unlimited repeat such as
+  `(*(g0,1x))` never reverts.
+- `-Wformat-unused` reports data edit descriptors that no item reaches, such
+  as the `f8.4` of `print '(i6, f8.4)', 123`, which often means a missing
+  item, with the shortened format suggested. String and control edit
+  descriptors before the first unused one are kept in the suggestion, since
+  they are still written. A partly used repeat count, as in `(10f8.3)` with
+  three items, descriptors after a colon edit, unlimited repeats and empty
+  lists are not reported. A named constant or FORMAT statement is checked
+  only when a single statement uses it, since another statement may need the
+  whole format.
+
+`-Wcould-be-at` suggests the Fortran 2023 AT edit descriptor, which writes a
+CHARACTER value without its trailing blanks, in place of `trim`:
+
+```
+warning: the AT edit descriptor can replace `trim` in this output list [could-be-at]
+5 │ print "(*(1x,a))", (trim(s(i)), i=1,3)
+  = suggestion: print "(*(1x,at))", s
+```
+
+It rewrites `trim(x)` as `x`, and an implied-DO of `trim(s(i))` as `s`, or
+`s(a:b)` when the loop covers part of the array, changing each A descriptor
+that they meet to AT. The rewrite must be equivalent: every item meeting a
+changed descriptor must be one of these or a value without trailing blanks,
+such as `"name:"`, so `print "(*(1x,a))", label, trim(name)` is not reported,
+and a descriptor with a width, such as `a10`, is not changed. Only output
+statements with a literal format are checked, and only rewrites that shorten
+the statement are suggested. The check is opt-in, since compilers without
+Fortran 2023 support reject AT; with `--std=f2023` it is also in `-Wstyle`.
 
 `-Wunreachable-code`, enabled by `-Wall`/`--wall`, warns once at the first
 statement of each provably unreachable sequence. This includes statements after
@@ -905,6 +986,83 @@ Notes on individual checks:
   procedure is called and needs an explicit interface.
 
 Regression checks: `python tests/test_style_warnings.py`.
+
+## Array conformance
+
+Arrays combined by an elemental operation must have the same shape, and
+operands that do not conform give undefined results. For a procedure whose
+array dummies are assumed-shape, nothing checks this:
+
+```fortran
+function sumproduct(x, y) result(xy)
+real, intent(in) :: x(:), y(:)
+real :: xy
+xy = sum(x*y)
+end function sumproduct
+```
+
+`-Wunchecked-conformance`, in `-Wextra`, reports the relationship and the
+check that would enforce it:
+
+```
+warning: `x*y` requires `size(x) == size(y)`, which `sumproduct` does not check [unchecked-conformance]
+  = suggestion: if (size(x) /= size(y)) error stop "sumproduct: x and y do not conform"
+```
+
+The relationships come from elemental operators and intrinsics, which need
+equal sizes, or equal shapes for arrays of rank 2 or more; `dot_product`,
+which needs equal sizes; `matmul`, which needs `size(a, 2) == size(b, 1)`
+or its rank-one forms; and assignment to a dummy that is not ALLOCATABLE,
+as `y = 2*x`. A procedure counts as checking a relationship when some
+comparison combines the sizes of both arrays, as `size(x) /= size(y)` or
+`any(shape(a) /= shape(b))`, directly or through a variable assigned a size,
+as `n = size(x)` then `size(y) /= n`, or when a call is given both sizes, as
+`call assert_equal(size(x), size(y))`. Declaring a dummy with the size it
+must have, as `y(size(x))`, makes it explicit-shape, and it is not reported.
+OPTIONAL dummies are not considered.
+
+`-Wconformance`, in `-Wall`, reports a call whose actual arguments, of sizes
+known at compile time, break such a relationship, whether or not the
+procedure checks it:
+
+```
+warning: `sumproduct` requires `size(x) == size(y)`, but this call passes 2 and 1 elements [conformance]
+13 │ print*,sumproduct([10.0, 20.0], [30.0])
+```
+
+The sizes of array constructors of scalars and of arrays with constant
+bounds are known; sections and arrays of unknown size are not checked.
+
+Two further checks in `-Wextra` follow arrays whose sizes depend on the
+data. Within a procedure or main program, an array defined once, outside any
+construct, gets its size from that definition: `x1 = pack(x, tf)` gives 0
+to `size(x)` elements, `count(tf)`; `allocate(c(n))` gives `n`; and `x = y`
+gives the size of `y`. Arrays with constant bounds have theirs. Assigning a
+scalar, as `c = 1`, keeps the size; any other definition, or one inside a
+construct, stops the tracking.
+
+```fortran
+x1 = pack(x, tf)
+x2 = pack(x, .not. tf)
+print *, x1 - x2
+print *, x1(1), x1(size(x))
+```
+
+```
+warning: `x1 - x2` combines arrays whose sizes may differ: `x1` has count(tf) elements and `x2` has count(.not. tf) [maybe-nonconforming]
+warning: `x1(1)` is out of bounds when `x1` is empty; `x1 = pack(x, tf)` gives 0 to 10 elements [maybe-out-of-bounds]
+warning: `x1(size(x))` is `x1(10)`, out of bounds unless all 10 elements of `tf` are true; `x1 = pack(x, tf)` gives 0 to 10 elements [maybe-out-of-bounds]
+```
+
+`-Wmaybe-nonconforming` reports an elemental operation on two tracked
+arrays unless their sizes are the same: one size expression, as `c(n)` and
+`d(n)`, or PACK results of one array with one mask. `-Wmaybe-out-of-bounds`
+reports a subscript of a PACK result whose value is known, as `1` or
+`size(x)` for `x` of constant size. Neither reports an array whose size, or
+whose PACK mask's count, some comparison, DO bound or procedure argument of
+the scope uses, as in `if (size(a) > 0)`, `if (count(tf) >= 2)` or
+`do i = 1, size(g)`.
+Regression checks: `python tests/test_conformance_warnings.py`.
 
 ## Uninitialized variables
 

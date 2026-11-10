@@ -95,12 +95,24 @@ const CATEGORIES: &[&str] = &[
     "duplicate-constant",
     "declaration-order",
     "argument-order",
+    "format-reversion",
+    "format-unused",
+    "could-be-at",
+    "unchecked-conformance",
+    "conformance",
+    "maybe-nonconforming",
+    "maybe-out-of-bounds",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface, conversion, and module-default-public remain
 /// individually selectable rather than members of this group.
 const EXTRA: &[&str] = &[
     "maybe-uninitialized",
+    "maybe-nonconforming",
+    "maybe-out-of-bounds",
+    "unchecked-conformance",
+    "format-reversion",
+    "format-unused",
     "intent-out-unset",
     "could-be-intent-out",
     "could-be-intent-in",
@@ -179,6 +191,17 @@ pub(crate) fn selected(
     settings: &SemaSettings,
     options: &[String],
 ) -> (bool, bool) {
+    selected_as(category, private, settings, options, STYLE.contains(&category))
+}
+/// As `selected`, with `style` saying whether -Wstyle enables the category,
+/// for a category whose membership depends on the selected standard.
+pub(crate) fn selected_as(
+    category: &str,
+    private: bool,
+    settings: &SemaSettings,
+    options: &[String],
+    style: bool,
+) -> (bool, bool) {
     let old = match category {
         "unused-dummy-argument" => "unused_param",
         "unused-function" => "unused_function",
@@ -226,7 +249,7 @@ pub(crate) fn selected(
         }
     }
     // -Wstyle is a group in the same way.
-    if STYLE.contains(&category) {
+    if style {
         for option in options {
             match option.as_str() {
                 "style" => enabled = true,

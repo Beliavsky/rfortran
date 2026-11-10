@@ -172,6 +172,10 @@ pub fn print_help() {
     println!("  -Wcould-be-intent-out Warn about INTENT(INOUT) scalars assigned before any read (in -Wextra)");
     println!("  -Wredundant-cycle   Warn about CYCLE at the end of a loop body (in -Wextra)");
     println!("  -Wmaybe-uninitialized Warn about local scalars that may be read before being assigned (in -Wextra)");
+    println!("  -Wunchecked-conformance Warn about array dummies combined without checking their sizes (in -Wextra)");
+    println!("  -Wconformance       Warn about calls whose array sizes break a procedure's requirements (in -Wall)");
+    println!("  -Wmaybe-nonconforming Warn about operations on arrays whose sizes from PACK or ALLOCATE may differ (in -Wextra)");
+    println!("  -Wmaybe-out-of-bounds Warn about constant subscripts of PACK results (in -Wextra)");
     println!("  -Wcould-be-intent-in Warn about INTENT(INOUT) dummy arguments that are never modified (in -Wextra)");
     println!("  -Wunused-only       Warn about USE ONLY names that are never used (in -Wextra)");
     println!("  -Winfinite-loop     Warn about DO loops without loop control that nothing in their body can end (enabled by -Wall)");
@@ -183,6 +187,9 @@ pub fn print_help() {
     println!("  -Wunchecked-status Warn about status results never inspected or forwarded (opt-in)");
     println!("  -Wtarget-lifetime   Warn about pointers escaping automatic targets");
     println!("  -Waliasing          Warn about conflicting overlapping actual arguments");
+    println!("  -Wformat-reversion  Warn about lists with more items than the format's descriptors (in -Wextra)");
+    println!("  -Wformat-unused     Warn about format descriptors that no list item reaches (in -Wextra)");
+    println!("  -Wcould-be-at       Suggest the AT edit descriptor in place of trim (in -Wstyle with --std=f2023)");
     println!("  -Wconversion        Warn about information-losing implicit numeric conversions (opt-in)");
     println!("  -Wcmplx-kind        Warn about wider REAL arguments to CMPLX without KIND (included in -Wall and -Wconversion)");
     println!("  -Wprecision-loss    Warn about lower-precision work before widening");

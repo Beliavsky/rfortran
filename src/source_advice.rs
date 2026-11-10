@@ -17,6 +17,10 @@ mod value_warnings;
 mod uninitialized;
 #[path = "duplicate_constants.rs"]
 mod duplicate_constants;
+#[path = "conformance.rs"]
+mod conformance;
+#[path = "array_sizes.rs"]
+mod array_sizes;
 
 type Names = HashSet<String>;
 #[derive(Clone, Copy, PartialEq)]
@@ -1291,6 +1295,10 @@ pub fn check(
         "could-be-intent-out",
         "real-do-variable",
         "duplicate-constant",
+        "unchecked-conformance",
+        "conformance",
+        "maybe-nonconforming",
+        "maybe-out-of-bounds",
         "unchecked-status",
         "target-lifetime",
         "aliasing",
@@ -1327,6 +1335,9 @@ pub fn check(
                 | "intent-out-unset"
                 | "could-be-intent-out"
                 | "duplicate-constant"
+                | "unchecked-conformance"
+                | "maybe-nonconforming"
+                | "maybe-out-of-bounds"
                 | "implicit-interface"
                 | "intrinsic-shadow"
                 | "keyword-name"
@@ -1402,6 +1413,14 @@ pub fn check(
         };
         if checks.local || checks.out || checks.inout {
             a.uninitialized(&program.body, scope, Some(&program.contains), checks);
+        }
+        if controls["unchecked-conformance"].0 || controls["conformance"].0 {
+            let requirements = a.conformance_requirements();
+            if controls["unchecked-conformance"].0 { a.unchecked_conformance(&requirements); }
+            if controls["conformance"].0 { a.conformance_calls(&program.body, scope, 0, &requirements); }
+        }
+        if controls["maybe-nonconforming"].0 || controls["maybe-out-of-bounds"].0 {
+            a.array_sizes(&program.body, scope, controls["maybe-nonconforming"].0, controls["maybe-out-of-bounds"].0);
         }
         if controls["duplicate-constant"].0 {
             a.duplicate_constants(own_len);
