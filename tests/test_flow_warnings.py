@@ -1,6 +1,7 @@
-"""Flow and interface warnings: -Wmaybe-uninitialized, -Wcould-be-intent-in,
--Wunused-only and -Wredundant-cycle (in -Wextra), and -Wloop-runs-once (in
--Wall).
+"""Flow and interface warnings: -Wmaybe-uninitialized, -Wintent-out-unset,
+-Wcould-be-intent-out, -Wcould-be-intent-in, -Wunused-only and
+-Wredundant-cycle (in -Wextra), and -Wloop-runs-once and -Wreal-do-variable
+(in -Wall).
 
 Run after cargo build --release: python tests/test_flow_warnings.py
 Set RFORT_TEST_COMPILER to check another compiler build.
@@ -90,6 +91,53 @@ write (output_unit, *) a, b, c
 end program main
 '''
 
+OUT = '''module m
+implicit none
+contains
+subroutine s(n, a, b, c, d, e, f)
+integer, intent(in) :: n
+real, intent(out) :: a, b
+real, intent(inout) :: c, d, f
+real, intent(out) :: e(:)
+d = 0.0
+c = c + d
+e(1) = 0.0
+if (n > 0) a = 1.0
+if (n > 5) return
+b = 2.0
+call g(f)
+f = 1.0
+end subroutine s
+subroutine g(x)
+real, intent(inout) :: x
+x = 2*x
+end subroutine g
+subroutine h(m)
+integer, intent(inout) :: m
+character(len=m) :: text
+text = 'x'
+m = 1
+print *, text
+end subroutine h
+end module m
+program main
+use m, only: s
+implicit none
+real :: a, b, c = 1, d, f = 1, e(2)
+call s(1, a, b, c, d, e, f)
+print *, a, b, c, d, e, f
+end program main
+'''
+
+REAL_DO = '''program main
+implicit none
+real :: x
+do x = 1.0, 2.0
+   print *, x
+end do
+end program main
+'''
+
 
 def compile_with(source, *options):
     with tempfile.TemporaryDirectory(prefix='flow-') as tmp:
@@ -142,6 +190,28 @@ class FlowWarnings(unittest.TestCase):
         ], err)
         self.assertIn('suggestion: use iso_fortran_env, only: output_unit', err)
         self.assertNotIn('unused-only', compile_with(INTENT, '-Wall').stderr)
+
+    def test_intent_out(self):
+        err = compile_with(OUT, '-Wextra').stderr
+        # `a` is assigned on one branch and `b` after a RETURN; `e` is
+        # assigned through an element before the RETURN.
+        self.assertEqual(found(err, 'intent-out-unset'), [
+            (6, 'INTENT(OUT) dummy argument `a` is not assigned on every path through the procedure'),
+            (6, 'INTENT(OUT) dummy argument `b` is not assigned on every path through the procedure'),
+        ], err)
+        # `d` is assigned first; `c` is read first; `f` is passed to `g`
+        # before it is assigned; `x` is read; `m` is read by `character(len=m)`.
+        self.assertEqual(found(err, 'could-be-intent-out'), [
+            (7, 'dummy argument `d` is INTENT(INOUT) but its value on entry is never used'),
+        ], err)
+        err = compile_with(OUT, '-Wall').stderr
+        self.assertNotIn('intent-out-unset', err)
+        self.assertNotIn('could-be-intent-out', err)
+
+    def test_real_do_variable(self):
+        err = compile_with(REAL_DO, '-Wall').stderr
+        self.assertEqual(found(err, 'real-do-variable'), [(4, 'DO variable `x` is REAL')], err)
+        self.assertNotIn('real-do-variable', compile_with(REAL_DO, '-Wall', '-Wno-real-do-variable').stderr)
 
 
 if __name__ == '__main__':

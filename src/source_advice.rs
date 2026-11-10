@@ -15,6 +15,8 @@ mod call_label_warnings;
 mod value_warnings;
 #[path = "uninitialized.rs"]
 mod uninitialized;
+#[path = "duplicate_constants.rs"]
+mod duplicate_constants;
 
 type Names = HashSet<String>;
 #[derive(Clone, Copy, PartialEq)]
@@ -1285,6 +1287,10 @@ pub fn check(
         "compare-reals",
         "could-be-conditional",
         "maybe-uninitialized",
+        "intent-out-unset",
+        "could-be-intent-out",
+        "real-do-variable",
+        "duplicate-constant",
         "unchecked-status",
         "target-lifetime",
         "aliasing",
@@ -1318,6 +1324,9 @@ pub fn check(
                 | "compare-reals"
                 | "could-be-conditional"
                 | "maybe-uninitialized"
+                | "intent-out-unset"
+                | "could-be-intent-out"
+                | "duplicate-constant"
                 | "implicit-interface"
                 | "intrinsic-shadow"
                 | "keyword-name"
@@ -1386,8 +1395,19 @@ pub fn check(
             a.real_literal_checks(&program.body,scope,literal_style,literal_digits);
         }
         a.unused_labels(&program.body, 0);
-        if controls["maybe-uninitialized"].0 {
-            a.uninitialized(&program.body, scope, Some(&program.contains));
+        let checks = uninitialized::Checks {
+            local: controls["maybe-uninitialized"].0,
+            out: controls["intent-out-unset"].0,
+            inout: controls["could-be-intent-out"].0,
+        };
+        if checks.local || checks.out || checks.inout {
+            a.uninitialized(&program.body, scope, Some(&program.contains), checks);
+        }
+        if controls["duplicate-constant"].0 {
+            a.duplicate_constants(own_len);
+        }
+        if controls["real-do-variable"].0 {
+            a.real_do_variables(&program.body, scope, 0);
         }
         a.intrinsic_shadows();
         if controls.get("keyword-name").is_some_and(|c| c.0) {

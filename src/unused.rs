@@ -87,12 +87,22 @@ const CATEGORIES: &[&str] = &[
     "unused-only",
     "loop-runs-once",
     "redundant-cycle",
+    "intent-out-unset",
+    "could-be-intent-out",
+    "real-do-variable",
+    "semicolon",
+    "trailing-whitespace",
+    "duplicate-constant",
+    "declaration-order",
+    "argument-order",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface, conversion, and module-default-public remain
 /// individually selectable rather than members of this group.
 const EXTRA: &[&str] = &[
     "maybe-uninitialized",
+    "intent-out-unset",
+    "could-be-intent-out",
     "could-be-intent-in",
     "unused-only",
     "redundant-cycle",
@@ -120,6 +130,8 @@ const STYLE: &[&str] = &[
     "keyword-case",
     "tabs",
     "line-length",
+    "semicolon",
+    "trailing-whitespace",
     "unnamed-exit",
     "goto",
     "obsolescent",
@@ -128,6 +140,9 @@ const STYLE: &[&str] = &[
     "redundant-implicit",
     "name-case",
     "function-result",
+    "duplicate-constant",
+    "declaration-order",
+    "argument-order",
     "indentation",
     "use-without-only",
     "module-default-public",

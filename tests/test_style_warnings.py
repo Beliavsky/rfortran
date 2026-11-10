@@ -46,7 +46,7 @@ implicit none
 private
 public :: s, dp
 contains
-subroutine s(x, n, ok)
+subroutine s(n, ok, x)
 real(dp), intent(inout) :: x(:)
 integer, intent(in) :: n
 logical, intent(in) :: ok
@@ -62,7 +62,7 @@ program main
 use m, only: s, dp
 implicit none
 real(dp) :: x(3) = [1.0_dp, -1.0_dp, 0.5_dp]
-call s(x, 3, .true.)
+call s(3, .true., x)
 print *, x
 end program main
 '''
@@ -76,6 +76,42 @@ go to (1, 2), k
 2 return 1
 3 continue
 end subroutine s
+'''
+
+CONSTANTS = '''module constants_a
+implicit none
+integer, parameter :: dp = kind(1.0d0)
+real(dp), parameter :: pi = 3.141592653589793_dp
+end module constants_a
+module constants_b
+use iso_fortran_env, only: real64
+implicit none
+integer, parameter :: dp = real64
+real(dp), parameter :: pi = 3.14159_dp
+integer, parameter :: n = 10
+end module constants_b
+module m
+implicit none
+contains
+function area(r) result(a)
+real, intent(in) :: r
+real :: a
+real, parameter :: pi = 4*atan(1.0)
+integer, parameter :: n = 10
+a = pi*r**2
+end function area
+function circumference(r) result(c)
+real, intent(in) :: r
+real :: c
+real, parameter :: pi = 3.14159265
+c = 2*pi*r
+end function circumference
+end module m
+program main
+use m, only: area, circumference
+implicit none
+print *, area(1.0), circumference(1.0)
+end program main
 '''
 
 
@@ -248,6 +284,70 @@ end module m
         self.assertNotIn('one-line-if', compile_with(source, '-Wstyle').stderr)
         # The suggestion compiles and gives the same result.
         self.assertEqual(*self.outputs(source, source.replace(block, 'if (x > 0) x = sqrt(x)\n')))
+
+    def test_semicolons_and_trailing_whitespace(self):
+        source = ('program main\nimplicit none\ninteger :: i, n\nreal :: x, y\nx = 1.0; y = 2.0\nn = 1;\n'
+                  'select case (n)\n   case (1); y = sin(x)\n   case (2); y = cos(x); x = 0\n   case default; y = x\n'
+                  'end select\ndo i = 1, n; print *, i; end do  \nprint *, x, y ! a; b\nend program main\n')
+        err = compile_with(source, '-Wstyle').stderr
+        # Lines 8 and 10 are a CASE selector and one statement.
+        self.assertIn('3 lines have more than one statement [semicolon]', err)
+        self.assertIn('1 line ends with a semicolon [semicolon]', err)
+        self.assertIn('1 line has trailing whitespace [trailing-whitespace]', err)
+        lines = sorted({int(n) for n in re.findall(r'(\d+) │', err)})
+        self.assertNotIn(8, lines, err)
+        self.assertNotIn(10, lines, err)
+        self.assertNotIn('[semicolon]', compile_with(source, '-Wall').stderr)
+        self.assertNotIn('[semicolon]', compile_with(source, '-Wstyle', '-Wno-semicolon').stderr)
+
+    def test_duplicate_constant(self):
+        err = compile_with(CONSTANTS, '-Wduplicate-constant').stderr
+        got = [(c, l) for c, l in found(err) if c == 'duplicate-constant']
+        # `dp` twice; `pi` at a shorter value, at default kind, and again at
+        # default kind with the same value; not the INTEGER `n`.
+        self.assertEqual(got, [('duplicate-constant', 9), ('duplicate-constant', 10),
+                               ('duplicate-constant', 19), ('duplicate-constant', 26)], err)
+        self.assertIn('named constant `dp` is defined in 2 places', err)
+        self.assertIn('named constant `pi` = 3.14159_dp has a different value from its definition elsewhere, '
+                      '3.141592653589793_dp', err)
+        self.assertIn('named constant `pi` is also defined elsewhere with another kind', err)
+        self.assertIn('named constant `pi` is defined in 4 places', err)
+        self.assertNotIn('`n`', err)
+        self.assertIn('[duplicate-constant]', compile_with(CONSTANTS, '-Wstyle').stderr)
+        self.assertNotIn('[duplicate-constant]', compile_with(CONSTANTS, '-Wall', '-Wextra').stderr)
+
+    def test_declaration_and_argument_order(self):
+        source = """module m
+implicit none
+contains
+subroutine s(z, n, x, tol)
+integer, parameter :: wp = kind(1.0d0)
+real(wp), intent(in), optional :: tol
+real(wp), intent(out) :: z
+integer :: i
+integer, intent(in) :: n
+real(wp), intent(in) :: x(n)
+z = 0
+do i = 1, n
+   z = z + x(i)
+end do
+end subroutine s
+end module m
+program main
+use m, only: s
+implicit none
+real(kind(1.0d0)) :: z
+call s(z, 2, [1.0d0, 2.0d0])
+print *, z
+end program main
+"""
+        err = compile_with(source, '-Wstyle').stderr
+        got = [x for x in found(err) if x[0] in ('declaration-order', 'argument-order')]
+        self.assertEqual(sorted(got), [('argument-order', 4), ('declaration-order', 9)], err)
+        self.assertIn('dummy argument `n` is declared after local variable `i`', err)
+        self.assertIn('INTENT(IN) argument `n` follows output argument `z`', err)
+        self.assertIn('suggestion: subroutine s(n, x, z, tol)', err)
+        self.assertNotIn('-order]', compile_with(source, '-Wall', '-Wextra').stderr)
 
     def outputs(self, *sources):
         """The output of running each source."""

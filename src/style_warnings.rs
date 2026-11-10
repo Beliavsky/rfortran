@@ -60,7 +60,7 @@ pub(crate) const CATEGORIES: &[&str] = &[
     "old-relational", "logical-comparison", "missing-double-colon", "labeled-do", "double-precision", "bare-end",
     "keyword-case", "tabs", "line-length", "unnamed-exit", "goto", "obsolescent", "stop-in-procedure", "assumed-size",
     "redundant-implicit", "name-case", "function-result", "could-be-one-line-if", "one-line-if",
-    "could-be-intent-in", "unused-only",
+    "could-be-intent-in", "unused-only", "semicolon", "trailing-whitespace", "declaration-order", "argument-order",
 ];
 
 struct Warning {
@@ -119,6 +119,223 @@ struct Usage {
     arrays: std::collections::HashSet<String>,
     only: Vec<Imported>,
     private: bool,
+    order: Order,
+}
+
+/// For a procedure: its declarations and the attributes of its dummies, for
+/// -Wdeclaration-order and -Wargument-order.
+#[derive(Default)]
+struct Order {
+    /// The function result's name, and whether a RESULT clause gives it.
+    result: Option<String>,
+    result_clause: bool,
+    decls: Vec<Declared>,
+    attrs: std::collections::HashMap<String, Attributes>,
+    /// Whether the executable part has begun.
+    started: bool,
+    statements: usize,
+}
+
+/// An entity of a type declaration statement, or a dummy procedure
+/// declared by an interface body.
+struct Declared {
+    name: String,
+    /// The names its declaration references, as bounds, lengths and kinds.
+    refs: std::collections::HashSet<String>,
+    span: Range<usize>,
+    statement: usize,
+    /// The statement's text through `::`, and the entity's text.
+    prefix: Option<String>,
+    text: String,
+}
+
+#[derive(Default)]
+struct Attributes {
+    intent: Option<String>,
+    optional: bool,
+    value: bool,
+    polymorphic: bool,
+}
+
+/// Statements of the specification part, other than type declarations.
+const SPECIFICATION: &[&str] = &[
+    "use", "import", "implicit", "parameter", "dimension", "save", "external", "intrinsic", "public", "private",
+    "data", "format", "common", "equivalence", "namelist", "pointer", "target", "allocatable", "contiguous",
+    "volatile", "asynchronous", "protected", "bind", "procedure", "generic", "entry", "include", "enum",
+    "enumerator", "final", "sequence", "codimension", "intent", "optional", "value", "module",
+];
+
+/// The attributes a statement's words give, up to `end`.
+fn attributes_of(w: &[String], end: usize, a: &mut Attributes) {
+    let w = &w[..end.min(w.len())];
+    for (i, x) in w.iter().enumerate() {
+        match x.as_str() {
+            "intent" if w.get(i + 1).is_some_and(|y| y == "(") => {
+                if let Some(c) = closing_word(w, i + 1) { a.intent = Some(w[i + 2..c].concat()); }
+            }
+            "optional" => a.optional = true,
+            "value" => a.value = true,
+            _ => {}
+        }
+    }
+}
+
+/// Record a statement of a procedure's specification part in `o`.
+fn order_statement(src: &str, ts: &[Token], w: &[String], args: &[String], o: &mut Order) {
+    if o.started { return; }
+    let first = w.first().map(String::as_str).unwrap_or("");
+    let colon = ts.iter().position(|t| matches!(t.kind, TokenKind::DColon));
+    let typed = declaration(w) || (first == "procedure" && colon.is_some());
+    if !typed {
+        // INTENT, OPTIONAL and VALUE statements.
+        if matches!(first, "intent" | "optional" | "value") {
+            let at = w.iter().position(|x| x == "::").map_or_else(|| if first == "intent" { closing_word(w, 1).map_or(w.len(), |c| c + 1) } else { 1 }, |c| c + 1);
+            for name in w[at.min(w.len())..].iter().filter(|x| is_word(x)) {
+                if args.contains(name) { attributes_of(w, at, o.attrs.entry(name.clone()).or_default()); }
+            }
+        } else if !SPECIFICATION.contains(&first) {
+            o.started = true;
+        }
+        return;
+    }
+    let entities = match colon { Some(c) => c + 1, None => spec_end(ts) };
+    if entities >= ts.len() { return; }
+    let word_end = w.iter().position(|x| x == "::").unwrap_or(w.len());
+    let common: std::collections::HashSet<String> = ts[..entities].iter()
+        .filter(|t| matches!(t.kind, TokenKind::Ident(_))).map(|t| text(src, t).to_ascii_lowercase()).collect();
+    let prefix = colon.map(|c| src[ts[0].span.start..ts[c].span.end].split_whitespace().collect::<Vec<_>>().join(" "));
+    o.statements += 1;
+    for e in top_level(&ts[entities..]) {
+        let Some(name_token) = e.first().filter(|t| matches!(t.kind, TokenKind::Ident(_))) else { continue };
+        let name = text(src, name_token).to_ascii_lowercase();
+        let mut refs = common.clone();
+        refs.extend(e[1..].iter().filter(|t| matches!(t.kind, TokenKind::Ident(_))).map(|t| text(src, t).to_ascii_lowercase()));
+        refs.remove(&name);
+        if args.contains(&name) {
+            let a = o.attrs.entry(name.clone()).or_default();
+            attributes_of(w, word_end, a);
+            a.polymorphic |= first == "class";
+        }
+        let text = src[e[0].span.start..e[e.len() - 1].span.end].split_whitespace().collect::<Vec<_>>().join(" ");
+        o.decls.push(Declared { name, refs, span: name_token.span.clone(), statement: o.statements, prefix: prefix.clone(), text });
+    }
+}
+
+/// `-Wdeclaration-order`: dummies, then the function result, then locals.
+fn declaration_order(unit: &Unit, o: &Order, out: &mut Vec<Warning>) {
+    let kind_of = |n: &str| if unit.args.iter().any(|a| a == n) { Some(0) } else if o.result.as_deref() == Some(n) { Some(1) } else { None };
+    // Locals that the declarations of dummies or the result need, directly
+    // or through other locals, may come first.
+    let mut needed: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let locals: std::collections::HashSet<&str> = o.decls.iter().filter(|d| kind_of(&d.name).is_none()).map(|d| d.name.as_str()).collect();
+    let mut frontier: Vec<&str> = o.decls.iter().filter(|d| kind_of(&d.name).is_some())
+        .flat_map(|d| d.refs.iter().map(String::as_str)).filter(|n| locals.contains(n)).collect();
+    while let Some(n) = frontier.pop() {
+        if !needed.insert(n) { continue; }
+        for d in o.decls.iter().filter(|d| d.name == n) {
+            frontier.extend(d.refs.iter().map(String::as_str).filter(|r| locals.contains(r)));
+        }
+    }
+    let rank = |d: &Declared| match kind_of(&d.name) {
+        Some(k) => Some(k),
+        None if needed.contains(d.name.as_str()) => None,
+        None => Some(2),
+    };
+    let describe = |d: &Declared| match kind_of(&d.name) {
+        Some(0) => format!("dummy argument `{}`", d.name),
+        Some(_) => format!("function result `{}`", d.name),
+        None => format!("local variable `{}`", d.name),
+    };
+    // The first declaration after one of a later group, in an earlier statement.
+    let mut highest: Option<(usize, &Declared)> = None;
+    let mut late = None;
+    let mut statement = 0;
+    let mut pending: Option<(usize, &Declared)> = None;
+    for d in &o.decls {
+        if d.statement != statement {
+            if let Some((r, p)) = pending.take() { if highest.is_none_or(|(h, _)| r > h) { highest = Some((r, p)); } }
+            statement = d.statement;
+        }
+        let Some(r) = rank(d) else { continue };
+        if let Some((h, earlier)) = highest {
+            if r < h && late.is_none() { late = Some((d, earlier)); }
+        }
+        if pending.is_none_or(|(p, _)| r > p) { pending = Some((r, d)); }
+    }
+    if let Some((d, earlier)) = late {
+        let what = describe(d);
+        let message = format!("{what} is declared after {} [declaration-order]", describe(earlier));
+        let mut w = Warning::new("declaration-order", message, d.span.clone(), "declared here");
+        w.related.push((earlier.span.clone(), "declared earlier".to_owned()));
+        out.push(w.note(if o.result.is_some() {
+            "declare the dummy arguments first, then the function result, then local variables; a local needed in their declarations, such as a named constant used as a bound or kind, may come first"
+        } else {
+            "declare the dummy arguments before local variables; a local needed in their declarations, such as a named constant used as a bound or kind, may come first"
+        }));
+    }
+    // A statement declaring entities of more than one group.
+    let mut mixed = o.decls.iter().filter_map(|d| rank(d).map(|r| (d.statement, r, d))).collect::<Vec<_>>();
+    mixed.sort_by_key(|(s, r, _)| (*s, *r));
+    for group in mixed.chunk_by(|a, b| a.0 == b.0) {
+        if group.first().map(|g| g.1) == group.last().map(|g| g.1) { continue; }
+        let (a, b) = (group[0].2, group[group.len() - 1].2);
+        let message = format!("one declaration declares {} and {} [declaration-order]", describe(a), describe(b));
+        let mut w = Warning::new("declaration-order", message, b.span.clone(), "declared with it");
+        w.related.push((a.span.clone(), describe(a)));
+        if let Some(prefix) = &a.prefix {
+            let mut parts = vec![];
+            for r in 0..3 {
+                let names: Vec<&str> = o.decls.iter().filter(|d| d.statement == a.statement && rank(d) == Some(r)).map(|d| d.text.as_str()).collect();
+                if !names.is_empty() { parts.push(format!("`{prefix} {}`", names.join(", "))); }
+            }
+            w = w.note(format!("suggestion: split it into {}", parts.join(" and ")));
+        }
+        out.push(w.note("declare dummy arguments, the function result and local variables in separate statements"));
+        break;
+    }
+}
+
+/// `-Wargument-order`: required INTENT(IN) arguments, then other required
+/// arguments, then OPTIONAL ones. The warning is kept with the procedure's
+/// name, since defined assignment and defined I/O are exempt.
+fn argument_order(unit: &Unit, o: &Order, header: &Range<usize>) -> Option<Warning> {
+    let args: Vec<&String> = unit.args.iter().filter(|a| is_word(a)).collect();
+    // The passed-object dummy of a type-bound procedure comes first.
+    let skip = usize::from(args.first().is_some_and(|a| o.attrs.get(*a).is_some_and(|x| x.polymorphic)));
+    let args = &args[skip..];
+    let attrs = |a: &str| o.attrs.get(a);
+    let optional = |a: &str| attrs(a).is_some_and(|x| x.optional);
+    let input = |a: &str| attrs(a).is_some_and(|x| x.intent.as_deref() == Some("in") || (x.intent.is_none() && x.value));
+    let output = |a: &str| attrs(a).is_some_and(|x| matches!(x.intent.as_deref(), Some("out" | "inout")));
+    let mut problems = vec![];
+    if let Some(i) = (0..args.len()).find(|&i| !optional(args[i]) && input(args[i]) && args[..i].iter().any(|a| !optional(a) && output(a))) {
+        let before = args[..i].iter().find(|a| !optional(a) && output(a)).unwrap();
+        problems.push(format!("INTENT(IN) argument `{}` follows output argument `{before}`", args[i]));
+    }
+    if let Some(i) = (0..args.len()).find(|&i| !optional(args[i]) && args[..i].iter().any(|a| optional(a))) {
+        let before = args[..i].iter().find(|a| optional(a)).unwrap();
+        problems.push(format!("required argument `{}` follows OPTIONAL argument `{before}`", args[i]));
+    }
+    if problems.is_empty() { return None; }
+    // Required inputs, other required arguments, then OPTIONAL ones, each
+    // in its original order. A dummy without INTENT stays with the inputs
+    // unless it follows an output.
+    let mut keyed: Vec<(u8, &String)> = vec![];
+    let mut seen_output = false;
+    for a in args {
+        seen_output |= !optional(a) && output(a);
+        let key = if optional(a) { 2 } else if input(a) || (!output(a) && !seen_output) { 0 } else { 1 };
+        keyed.push((key, a));
+    }
+    keyed.sort_by_key(|(k, _)| *k);
+    let mut list: Vec<&str> = unit.args[..skip].iter().map(String::as_str).collect();
+    list.extend(keyed.iter().map(|(_, a)| a.as_str()));
+    let result = match (&o.result, o.result_clause) { (Some(r), true) => format!(" result({r})"), _ => String::new() };
+    let message = format!("arguments of {} `{}` are out of order: {} [argument-order]", unit.kind, unit.name, problems[0]);
+    let mut w = Warning::new("argument-order", message, header.clone(), "argument list");
+    if problems.len() > 1 { w = w.note(problems[1].clone()); }
+    w = w.note(format!("suggestion: {} {}({}){result}", unit.kind, unit.name, list.join(", ")));
+    Some(w.note("put required INTENT(IN) arguments first, then the other required arguments, then OPTIONAL ones; positional calls must change to match, while calls by keyword need not"))
 }
 
 /// A name imported by USE ONLY.
@@ -1070,11 +1287,53 @@ fn keyword_case(src: &str, tokens: &[Token], out: &mut Vec<Warning>) {
     out.push(warning.note("write keywords in one case throughout the file"));
 }
 
+/// A summary warning for a file, labeling the first five places.
+fn summary(category: &'static str, message: String, places: &[Range<usize>], label: &str, more: &str, note: &str) -> Warning {
+    let mut w = Warning { category, message: format!("{message} [{category}]"),
+        labels: places.iter().take(5).map(|s| (s.clone(), label.to_owned())).collect(), related: vec![], notes: vec![] };
+    if places.len() > 5 { w = w.note(format!("{} more {more}", places.len() - 5)); }
+    w.note(note)
+}
+
+fn lines(n: usize) -> String { format!("{n} line{}", if n == 1 { "" } else { "s" }) }
+
+/// Lines with more than one statement, apart from a CASE, TYPE IS, CLASS IS
+/// or RANK selector followed by one statement.
+fn semicolons(src: &str, seen: &[Seen], out: &mut Vec<Warning>) {
+    let mut places = vec![];
+    let mut k = 0;
+    while k < seen.len() {
+        let mut end = k + 1;
+        while end < seen.len() && !src[seen[end - 1].range.end..seen[end].range.start].contains('\n') { end += 1; }
+        let line = &seen[k..end];
+        let branch = line.len() == 2 && line[0].role == Role::Case;
+        if line.len() > 1 && !branch {
+            for pair in line.windows(2) {
+                let gap = pair[0].range.end..pair[1].range.start;
+                if let Some(p) = src[gap.clone()].find(';') { places.push(gap.start + p..gap.start + p + 1); }
+            }
+        }
+        k = end;
+    }
+    if places.is_empty() { return; }
+    let n = places.iter().map(|p| src[..p.start].matches('\n').count()).collect::<std::collections::BTreeSet<_>>().len();
+    out.push(summary("semicolon", format!("{} {} more than one statement", lines(n), if n == 1 { "has" } else { "have" }),
+        &places, "statement separator", "separators",
+        "write one statement per line; a CASE, TYPE IS, CLASS IS or RANK selector followed by one statement is not reported"));
+}
+
 fn layout(src: &str, own_len: usize, tabs: bool, limit: Option<usize>, out: &mut Vec<Warning>) {
+    let (mut trailing, mut ending) = (vec![], vec![]);
     let (mut tabbed, mut long) = (vec![], vec![]);
     let mut start = 0;
     for line in src[..own_len.min(src.len())].split('\n') {
         let line_text = line.trim_end_matches('\r');
+        let kept = line_text.trim_end_matches([' ', '\t']);
+        if kept.len() < line_text.len() { trailing.push(start + kept.len()..start + line_text.len()); }
+        let code = code_part(line_text).trim_end();
+        if code.ends_with(';') && !code.trim_end_matches(';').trim_end().is_empty() {
+            ending.push(start + code.len() - 1..start + code.len());
+        }
         if tabs {
             if let Some(p) = code_part(line_text).find('\t') { tabbed.push(start + p..start + p + 1); }
         }
@@ -1086,6 +1345,14 @@ fn layout(src: &str, own_len: usize, tabs: bool, limit: Option<usize>, out: &mut
             }
         }
         start += line.len() + 1;
+    }
+    if !trailing.is_empty() {
+        out.push(summary("trailing-whitespace", format!("{} {} trailing whitespace", lines(trailing.len()), if trailing.len() == 1 { "has" } else { "have" }),
+            &trailing, "trailing whitespace", "lines have trailing whitespace", "remove spaces and tabs at the ends of lines"));
+    }
+    if !ending.is_empty() {
+        out.push(summary("semicolon", format!("{} {} with a semicolon", lines(ending.len()), if ending.len() == 1 { "ends" } else { "end" }),
+            &ending, "trailing semicolon", "lines end with a semicolon", "a semicolon only separates statements on one line; remove it"));
     }
     if !tabbed.is_empty() {
         let n = tabbed.len();
@@ -1114,6 +1381,8 @@ fn analyze(src: &str, tokens: &[Token], own_len: usize, fixed_form: bool, line_l
     let mut keywords = vec![];
     let mut names = Names::new();
     let mut seen: Vec<Seen> = vec![];
+    let mut fixed_order: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut argument_warnings: Vec<(String, Warning)> = vec![];
     let mut i = 0;
     while i < tokens.len() && tokens[i].span.start < own_len {
         let all = crate::declaration_warnings::statement_tokens(tokens, tokens[i].span.start, usize::MAX, src);
@@ -1134,6 +1403,38 @@ fn analyze(src: &str, tokens: &[Token], own_len: usize, fixed_form: bool, line_l
             then: matches!(role, Role::Open(Kind::If, _)).then(|| ts[ts.len() - 1].span.start),
         });
         statement_checks(src, &ts, &w, span.clone(), &mut stack, &mut out);
+        // Declarations of the innermost procedure, for -Wdeclaration-order
+        // and -Wargument-order.
+        if let Some(f) = stack.last_mut().filter(|f| f.kind == Kind::Unit) {
+            let args = f.unit.as_ref().map(|u| u.args.clone()).unwrap_or_default();
+            match role {
+                Role::Open(Kind::Interface | Kind::Type | Kind::Enum, _) | Role::Close(_) => {}
+                Role::Open(Kind::Unit, _) => {}
+                Role::Open(..) | Role::Contains => f.usage.order.started = true,
+                _ => order_statement(src, &ts, &w, &args, &mut f.usage.order),
+            }
+        }
+        if let (Role::Open(Kind::Unit, _), [.., parent, interface]) = (&role, stack.as_mut_slice()) {
+            if interface.kind == Kind::Interface && parent.kind == Kind::Unit && !parent.usage.order.started {
+                if let (Some(u), Some(p)) = (unit(&w, Kind::Unit), parent.unit.as_ref()) {
+                    if p.args.contains(&u.name) {
+                        parent.usage.order.statements += 1;
+                        let statement = parent.usage.order.statements;
+                        parent.usage.order.decls.push(Declared { name: u.name.clone(), refs: Default::default(), span: span.clone(), statement, prefix: None, text: u.name });
+                    }
+                }
+            }
+        }
+        // Procedures of defined assignment and defined I/O, whose argument
+        // order is fixed.
+        if w.first().is_some_and(|x| x == "generic") && w.iter().any(|x| matches!(x.as_str(), "assignment" | "read" | "write")) {
+            if let Some(p) = w.iter().position(|x| x == "=>") { fixed_order.extend(w[p + 1..].iter().filter(|x| is_word(x)).cloned()); }
+        }
+        if stack.last().is_some_and(|f| f.kind == Kind::Interface && f.name.as_deref() == Some("@fixed-order"))
+            && matches!(w.first().map(String::as_str), Some("module" | "procedure")) {
+            let at = w.iter().position(|x| x == "procedure").map_or(w.len(), |p| p + 1);
+            fixed_order.extend(w[at..].iter().filter(|x| is_word(x) && x.as_str() != "::").cloned());
+        }
         let opens_scope = matches!(role, Role::Open(Kind::Unit | Kind::Type, _));
         // Dummies, arrays and USE ONLY names of the innermost unit; what may
         // be modified and what is used, for it and the units enclosing it.
@@ -1224,16 +1525,33 @@ fn analyze(src: &str, tokens: &[Token], own_len: usize, fixed_form: bool, line_l
                 let scope = (kind == Kind::Unit).then(|| names.scope());
                 let rename = (kind == Kind::Unit).then(|| function_result(src, &ts, &w, &mut out)).flatten()
                     .map(|name| (name, out.len() - 1));
+                let mut usage = Usage::default();
+                if let Some(u) = unit.as_ref().filter(|u| u.kind == "function") {
+                    let clause = w.iter().position(|x| x == "result").and_then(|r| w.get(r + 2)).cloned();
+                    usage.order.result_clause = clause.is_some();
+                    usage.order.result = Some(clause.unwrap_or_else(|| u.name.clone()));
+                }
+                let fixed = kind == Kind::Interface && (w.iter().any(|x| x == "assignment")
+                    || w.windows(3).any(|x| matches!(x[0].as_str(), "read" | "write") && x[1] == "(" && matches!(x[2].as_str(), "formatted" | "unformatted")));
                 stack.push(Frame {
-                    kind, label: do_label, span: span.clone(), name: construct_name(&w), unit, bare: vec![],
-                    implicit, scope, uses, inherits, rename, usage: Usage::default(),
+                    kind, label: do_label, span: span.clone(), name: if fixed { Some("@fixed-order".into()) } else { construct_name(&w) }, unit, bare: vec![],
+                    implicit, scope, uses, inherits, rename, usage,
                 });
                 if opens_scope { header_names(src, &ts, &mut stack, &mut names); }
             }
             Role::Close(kind) => {
                 let wanted = kind.unwrap_or(Kind::Unit);
                 if let Some(p) = stack.iter().rposition(|f| f.kind == wanted) {
+                    let in_interface = stack[..p].iter().any(|f| f.kind == Kind::Interface);
                     for f in stack.split_off(p).iter().rev() {
+                        if let (true, Some(u)) = (f.kind == wanted && f.kind == Kind::Unit, &f.unit) {
+                            if matches!(u.kind.as_str(), "function" | "subroutine") {
+                                declaration_order(u, &f.usage.order, &mut out);
+                                if !in_interface {
+                                    if let Some(w) = argument_order(u, &f.usage.order, &f.span) { argument_warnings.push((u.name.clone(), w)); }
+                                }
+                            }
+                        }
                         unnamed(f, &mut out);
                         if f.kind == wanted {
                             if let Some(u) = &f.unit { bare_end(src, &ts, &w, u, &mut out); }
@@ -1248,10 +1566,12 @@ fn analyze(src: &str, tokens: &[Token], own_len: usize, fixed_form: bool, line_l
             _ => {}
         }
     }
+    out.extend(argument_warnings.into_iter().filter(|(n, _)| !fixed_order.contains(n)).map(|(_, w)| w));
     name_warnings(&names, &mut out);
     one_line_ifs(src, &seen, line_limit.unwrap_or(132), &mut out);
     keywords.dedup_by(|a, b| a.span == b.span);
     keyword_case(src, &keywords, &mut out);
+    semicolons(src, &seen, &mut out);
     if !fixed_form { layout(src, own_len, tabs, line_limit, &mut out); }
     out
 }
@@ -1358,8 +1678,11 @@ mod tests {
             go to 20\n20 continue\nend\n";
         assert_eq!(categories(src), ["missing-double-colon", "missing-double-colon", "assumed-size", "assumed-size",
             "missing-double-colon", "double-precision", "missing-double-colon", "old-relational", "logical-comparison",
-            "stop-in-procedure", "unnamed-exit", "labeled-do", "goto", "bare-end"]);
+            "stop-in-procedure", "unnamed-exit", "labeled-do", "goto", "declaration-order", "declaration-order", "bare-end"]);
         let w = warnings(src);
+        // `integer n, i` declares a dummy with a local, before `x` and `y`.
+        assert!(w.iter().any(|x| x.2 == "dummy argument `x` is declared after local variable `i`"));
+        assert!(w.iter().any(|x| x.2 == "one declaration declares dummy argument `n` and local variable `i`"));
         assert!(w.iter().any(|x| x.2 == "`.lt.` is the old spelling of `<`"));
         assert!(w.iter().any(|x| x.2 == "END statement without the name of subroutine `s`"));
         assert!(w.iter().any(|x| x.2 == "comparison with `.true.` is redundant"));
@@ -1454,6 +1777,41 @@ mod tests {
         let tokens = crate::lexer::lex_source(src);
         let all = super::analyze(src, &tokens, src.len(), false, None, false);
         assert!(all.iter().any(|w| w.notes.iter().any(|n| n == "suggestion: use a, only: x")));
+    }
+
+    #[test]
+    fn declaration_and_argument_order() {
+        let src = "module m\nimplicit none\ntype :: t\ncontains\nprocedure :: assign\ngeneric :: assignment(=) => assign\nend type t\ncontains\n\
+subroutine s(n, x, y)\ninteger, parameter :: wp = kind(1.0d0)\ninteger :: i\ninteger, intent(in) :: n\nreal(wp), intent(in) :: x(n)\nreal(wp), intent(out) :: y\ny = sum(x)\ni = 1\nend subroutine s\n\
+function f(a, b, tol) result(r)\nreal, intent(out) :: a\nreal, intent(in), optional :: tol\nreal, intent(in) :: b\nreal :: r, tmp\ntmp = b\na = tmp\nr = tmp\nend function f\n\
+subroutine assign(lhs, rhs)\nclass(t), intent(out) :: lhs\ntype(t), intent(in) :: rhs\nend subroutine assign\n\
+subroutine g(z, k)\nreal, intent(out) :: z\ninteger, intent(in) :: k\nend subroutine g\nend module m\n";
+        let w: Vec<_> = super::analyze(src, &crate::lexer::lex_source(src), src.len(), false, None, false).into_iter()
+            .filter(|w| matches!(w.category, "declaration-order" | "argument-order"))
+            .map(|w| (src[..w.labels[0].0.start].matches('\n').count() + 1, w.message.rsplit_once(" [").unwrap().0.to_owned(), w.notes)).collect();
+        let messages: Vec<(usize, &str)> = w.iter().map(|(l, m, _)| (*l, m.as_str())).collect();
+        assert_eq!(messages, [
+            (12, "dummy argument `n` is declared after local variable `i`"),
+            (22, "one declaration declares function result `r` and local variable `tmp`"),
+            (18, "arguments of function `f` are out of order: INTENT(IN) argument `b` follows output argument `a`"),
+            (31, "arguments of subroutine `g` are out of order: INTENT(IN) argument `k` follows output argument `z`"),
+        ].as_slice().iter().map(|(l, m)| (*l, *m)).collect::<Vec<_>>().as_slice());
+        assert!(w[2].2.iter().any(|n| n == "suggestion: function f(b, a, tol) result(r)"), "{:?}", w[2].2);
+    }
+
+    #[test]
+    fn semicolons_and_trailing_whitespace() {
+        let src = "program main\nimplicit none\ninteger :: i, n\nreal :: x, y\nx = 1.0; y = 2.0\nn = 1;\nselect case (n)\n   case (1); y = sin(x)\n   case (2); y = cos(x); x = 0\n   case default; y = x\nend select\ndo i = 1, n; print *, i; end do  \nprint *, x, y ! a; b\nend program main\n";
+        let w: Vec<_> = super::analyze(src, &crate::lexer::lex_source(src), src.len(), false, None, false).into_iter()
+            .filter(|w| matches!(w.category, "semicolon" | "trailing-whitespace")).map(|w| {
+                let lines: Vec<usize> = w.labels.iter().map(|l| src[..l.0.start].matches('\n').count() + 1).collect();
+                (w.category, w.message, lines)
+            }).collect();
+        assert_eq!(w, [
+            ("semicolon", "3 lines have more than one statement [semicolon]".to_owned(), vec![5, 9, 9, 12, 12]),
+            ("trailing-whitespace", "1 line has trailing whitespace [trailing-whitespace]".to_owned(), vec![12]),
+            ("semicolon", "1 line ends with a semicolon [semicolon]".to_owned(), vec![6]),
+        ]);
     }
 
     #[test]

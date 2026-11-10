@@ -141,7 +141,7 @@ impl<'a> Analysis<'a> {
         }
         find(self, scope, name, &mut HashSet::new())
     }
-    fn kind_number(&self, scope: usize, text: &str) -> Option<u8> {
+    pub(super) fn kind_number(&self, scope: usize, text: &str) -> Option<u8> {
         let expr = if let Some(text) = text.strip_prefix(crate::ast::KIND_EXPRESSION) {
             serde_json::from_str(text).ok()?
         } else if text.parse::<i64>().is_ok() {
@@ -439,7 +439,7 @@ impl<'a> Analysis<'a> {
             _ => e.clone(),
         })
     }
-    fn constant_number(
+    pub(super) fn constant_number(
         &self,
         e: &Expr,
         scope: usize,
@@ -738,7 +738,7 @@ impl<'a> Analysis<'a> {
         }
     }
     /// The source text of tokens, with whitespace collapsed.
-    fn token_text(&self, ts: &[Token]) -> String {
+    pub(super) fn token_text(&self, ts: &[Token]) -> String {
         match (ts.first(), ts.last()) {
             (Some(a), Some(b)) => self.src[a.span.start..b.span.end].split_whitespace().collect::<Vec<_>>().join(" ")
                 .replace("& ", ""),

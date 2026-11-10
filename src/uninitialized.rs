@@ -18,6 +18,12 @@
 //! After a loop that runs at least once (a DO loop with constant bounds, or
 //! one without loop control), what was assigned on every path that ends it
 //! counts: its EXITs, and for a DO loop, the end of its body and its CYCLEs.
+//!
+//! The same walk gives `-Wintent-out-unset` and `-Wcould-be-intent-out`, in
+//! -Wextra: an INTENT(OUT) dummy that some path to the end of the procedure
+//! does not assign, and an INTENT(INOUT) scalar that every path assigns
+//! before anything could read it. `-Wreal-do-variable`, in -Wall, reports
+//! DO loops with a REAL variable.
 use super::*;
 use crate::ast::UnOp;
 
@@ -80,7 +86,27 @@ struct Target {
     cycles: State,
 }
 
+/// What a walk checks.
+#[derive(PartialEq, Clone, Copy)]
+enum Mode {
+    /// Reads of local scalars before they are assigned.
+    Local,
+    /// Whether INTENT(OUT) dummies are assigned on every path to the end.
+    Out,
+    /// Whether INTENT(INOUT) scalars are assigned before any read.
+    InOut,
+}
+
+/// The checks `Analysis::uninitialized` runs.
+#[derive(Clone, Copy)]
+pub(super) struct Checks {
+    pub(super) local: bool,
+    pub(super) out: bool,
+    pub(super) inout: bool,
+}
+
 struct Walk {
+    mode: Mode,
     /// The candidates of the procedure being analyzed.
     candidates: HashSet<usize>,
     /// Variables assigned somewhere in the procedure.
@@ -89,9 +115,18 @@ struct Walk {
     targets: Vec<Target>,
     /// The name of the loop about to be walked, from its `@named_loop`.
     name: Option<String>,
+    /// The state at the RETURN statements.
+    returns: State,
+    /// INOUT candidates that may be read, or passed to a procedure, before
+    /// they are assigned.
+    early: HashSet<usize>,
 }
 
 impl Walk {
+    fn new(mode: Mode, candidates: HashSet<usize>) -> Self {
+        Walk { mode, candidates, assigned: HashSet::new(), reported: HashSet::new(), targets: vec![], name: None,
+            returns: None, early: HashSet::new() }
+    }
     /// The target of an EXIT or CYCLE: named, or the innermost loop.
     fn target(&mut self, name: Option<&str>) -> Option<&mut Target> {
         match name {
@@ -119,11 +154,11 @@ impl<'a> Analysis<'a> {
     /// Analyze `body` and the procedures in it. For the main program,
     /// `internal` names its internal procedures; elsewhere every procedure
     /// in `body` is internal.
-    pub(super) fn uninitialized(&mut self, body: &'a [Stmt], scope: usize, internal: Option<&[String]>) {
+    pub(super) fn uninitialized(&mut self, body: &'a [Stmt], scope: usize, internal: Option<&[String]>, checks: Checks) {
         for s in body {
             if let Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } = s {
                 let inner = self.bodies.get(&(body.as_ptr() as usize)).copied().unwrap_or(scope);
-                self.uninitialized(body, inner, None);
+                self.uninitialized(body, inner, None, checks);
             }
         }
         if self.scopes[scope].kind == ScopeKind::Module || jumps(body) { return; }
@@ -153,17 +188,102 @@ impl<'a> Analysis<'a> {
         let candidates: HashSet<usize> = self.scopes[scope].names.iter()
             .filter(|(n, &id)| !excluded.contains(n.as_str()) && self.ordinary_scalar(id, scope))
             .map(|(_, &id)| id).collect();
-        if candidates.is_empty() { return; }
-        let mut w = Walk { candidates, assigned: HashSet::new(), reported: HashSet::new(), targets: vec![], name: None };
-        self.assignments(body, scope, &mut w);
-        self.flow(body, scope, 0, Some(HashSet::new()), &mut w);
+        if checks.local && !candidates.is_empty() {
+            let mut w = Walk::new(Mode::Local, candidates);
+            self.assignments(body, scope, &mut w);
+            self.flow(body, scope, 0, Some(HashSet::new()), &mut w);
+        }
+        if self.scopes[scope].kind != ScopeKind::Procedure { return; }
+        // Dummies of intrinsic type that only the procedure itself defines.
+        let dummies = |intent: &str, scalar: bool| -> HashSet<usize> {
+            self.scopes[scope].names.iter().filter(|(n, &id)| {
+                let d = &self.decls[id];
+                !excluded.contains(n.as_str()) && d.scope == scope && d.dummy && d.kind.is_some() && d.attrs.contains(intent)
+                    && (!scalar || d.dims.is_empty())
+                    && !["optional", "pointer", "allocatable", "target", "volatile", "asynchronous", "value", "@polymorphic"]
+                        .iter().any(|a| d.attrs.contains(*a))
+            }).map(|(_, &id)| id).collect()
+        };
+        let sets = [(Mode::Out, checks.out, dummies("intent(out)", false)), (Mode::InOut, checks.inout, dummies("intent(inout)", true))];
+        for (mode, on, candidates) in sets {
+            if !on || candidates.is_empty() { continue; }
+            let mut w = Walk::new(mode, candidates);
+            if mode == Mode::InOut { self.specification_reads(scope, &mut w); }
+            self.assignments(body, scope, &mut w);
+            let end = self.flow(body, scope, 0, Some(HashSet::new()), &mut w);
+            let Some(end) = meet(end, w.returns.take()) else { continue };
+            let mut ids: Vec<usize> = w.candidates.iter().copied().collect();
+            ids.sort_by_key(|&id| self.decls[id].span.start);
+            for id in ids {
+                let name = self.decls[id].name.clone();
+                let span = self.span(self.decls[id].span.start, &name);
+                match mode {
+                    // A dummy never assigned anywhere already gets "was never assigned".
+                    Mode::Out if !end.contains(&id) && w.assigned.contains(&id) => self.warnings.push(Advice {
+                        category: "intent-out-unset", span, related: None, suggestion: None,
+                        message: format!("INTENT(OUT) dummy argument `{name}` is not assigned on every path through the procedure"),
+                        note: "an INTENT(OUT) argument is undefined on entry, so on a path that does not assign it the caller receives an undefined value",
+                    }),
+                    Mode::InOut if end.contains(&id) && !w.early.contains(&id) => self.warnings.push(Advice {
+                        category: "could-be-intent-out", span, related: None, suggestion: None,
+                        message: format!("dummy argument `{name}` is INTENT(INOUT) but its value on entry is never used"),
+                        note: "every path assigns the argument before anything reads it; declare it INTENT(OUT)",
+                    }),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Candidates read on entry by the specification expressions of the
+    /// scope, as `n` in `character(len=n) :: text` or `real :: x(n)`.
+    fn specification_reads(&self, scope: usize, w: &mut Walk) {
+        let mut exprs: Vec<Expr> = vec![];
+        for d in self.decls.iter().filter(|d| d.scope == scope) {
+            exprs.extend(d.dims.iter().cloned());
+            if let Some(TypeSpec::CharacterLength(e)) = &d.kind { exprs.push((**e).clone()); }
+        }
+        for mut e in exprs {
+            crate::procedure_arguments::visit_expr(&mut e, &mut |x| {
+                if let Expr::Ident(n) | Expr::Index(n, _) | Expr::Call(n, _) = x {
+                    if let Some(id) = self.resolve(scope, root(n)) {
+                        if w.candidates.contains(&id) { w.early.insert(id); }
+                    }
+                }
+            });
+        }
+    }
+
+    /// `-Wreal-do-variable`: DO loops whose variable is REAL.
+    pub(super) fn real_do_variables(&mut self, body: &'a [Stmt], scope: usize, mut offset: usize) {
+        for s in body {
+            if let Stmt::SourceLocation(p) = s { offset = *p; continue; }
+            if let Stmt::Do { var, .. } = s {
+                let real = self.resolve(scope, var).and_then(|id| self.decls[id].kind.as_ref())
+                    .is_some_and(|k| matches!(k, TypeSpec::Real | TypeSpec::RealKind(_) | TypeSpec::DoublePrecision));
+                if real {
+                    self.warnings.push(Advice {
+                        category: "real-do-variable", span: self.span(offset, var), related: None, suggestion: None,
+                        message: format!("DO variable `{var}` is REAL"),
+                        note: "REAL DO variables were deleted from Fortran 95, and rounding makes the number of iterations unpredictable; loop over an integer and compute the REAL value from it",
+                    });
+                }
+            }
+            match s {
+                Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => {
+                    let inner = self.bodies.get(&(body.as_ptr() as usize)).copied().unwrap_or(scope);
+                    self.real_do_variables(body, inner, offset);
+                }
+                _ => for b in children(s) { self.real_do_variables(b, scope, offset); },
+            }
+        }
     }
 
     /// Record the candidates assigned anywhere in `body`.
     fn assignments(&self, body: &[Stmt], scope: usize, w: &mut Walk) {
         for s in body {
-            if let Stmt::Assign { name, .. } = s {
-                if let Some(id) = self.resolve(scope, name) { w.assigned.insert(id); }
+            if let Stmt::Assign { name, .. } | Stmt::AssignIndex { name, .. } = s {
+                if let Some(id) = self.resolve(scope, root(name)) { w.assigned.insert(id); }
             }
             let (_, defs) = self.uses(s, scope);
             w.assigned.extend(defs);
@@ -256,6 +376,18 @@ impl<'a> Analysis<'a> {
     }
 
     fn check_reads(&mut self, reads: &[(usize, String)], state: &HashSet<usize>, defs: &HashSet<usize>, offset: usize, w: &mut Walk) {
+        match w.mode {
+            Mode::Local => {}
+            Mode::Out => return,
+            // A read, or a procedure or I/O statement that may read what it
+            // is passed.
+            Mode::InOut => {
+                for id in reads.iter().map(|(id, _)| id).chain(defs) {
+                    if w.candidates.contains(id) && !state.contains(id) { w.early.insert(*id); }
+                }
+                return;
+            }
+        }
         for (id, name) in reads {
             if !w.candidates.contains(id) || state.contains(id) || defs.contains(id) || !w.reported.insert(*id) { continue; }
             let message = if w.assigned.contains(id) {
@@ -283,6 +415,19 @@ impl<'a> Analysis<'a> {
             state = match s {
                 Stmt::Assign { name, .. } => {
                     if let Some(id) = self.resolve(scope, name) { next.insert(id); }
+                    Some(next)
+                }
+                // Assigning an element, substring or component counts as
+                // assigning the variable for -Wintent-out-unset; for
+                // -Wcould-be-intent-out it keeps the rest of the entry value.
+                Stmt::AssignIndex { name, .. } => {
+                    if let Some(id) = self.resolve(scope, root(name)) {
+                        match w.mode {
+                            Mode::Out => { next.insert(id); }
+                            Mode::InOut if w.candidates.contains(&id) && !next.contains(&id) => { w.early.insert(id); }
+                            _ => {}
+                        }
+                    }
                     Some(next)
                 }
                 Stmt::If { then_body, else_body, .. } => {
@@ -350,7 +495,10 @@ impl<'a> Analysis<'a> {
                     if let Some(t) = w.target(transfer_name(args)) { t.cycles = meet(t.cycles.take(), Some(next)); }
                     None
                 }
-                Stmt::Return(_) => None,
+                Stmt::Return(_) => {
+                    w.returns = meet(w.returns.take(), Some(next));
+                    None
+                }
                 Stmt::CallSub { name, .. } if matches!(name.as_str(), "@stop" | "@error_stop") => None,
                 _ => Some(next),
             };

@@ -141,6 +141,8 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wkeyword-case` | No | No | Keywords written in more than one case in a file, in one warning per file |
 | `-Wtabs` | No | No | Tab characters in free-form code, in one warning per file |
 | `-Wline-length[=N]` | No | No | Free-form lines longer than 132 characters, or N, in one warning per file |
+| `-Wsemicolon` | No | No | Lines with more than one statement, such as `x = 1; y = 2`, and free-form lines ending in a semicolon; a CASE, TYPE IS, CLASS IS or RANK selector followed by one statement, such as `case ("cos"); y = cos(x)`, is not reported; in one warning per file |
+| `-Wtrailing-whitespace` | No | No | Free-form lines ending in spaces or tabs, in one warning per file |
 | `-Wunnamed-exit` | No | No | EXIT and CYCLE without a construct name, in one warning per DO loop |
 | `-Wgoto` | No | No | GO TO statements |
 | `-Wobsolescent` | No | No | Obsolescent and deleted features: computed and assigned GO TO, arithmetic IF, ASSIGN, COMMON, EQUIVALENCE, ENTRY, BLOCK DATA, FORALL, PAUSE, CHARACTER*length and alternate returns |
@@ -148,6 +150,9 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wassumed-size` | No | No | Assumed-size dummy arrays, such as `x(*)` or `y(n,*)`, outside BIND(C) procedures |
 | `-Wredundant-implicit` | No | No | IMPLICIT NONE in a module or internal procedure, or a submodule, whose host's IMPLICIT NONE already applies; interface bodies, which do not inherit, are not reported |
 | `-Wname-case` | No | No | A name written in a case different from its declaration, or from its first appearance, such as `X` for a variable declared `x`; in one warning per name |
+| `-Wduplicate-constant` | No | No | REAL and COMPLEX named constants, and kind parameters such as `dp`, defined in more than one scope, such as `pi` in several procedures or modules; definitions with different values, such as `3.14159` and `3.141592653589793_dp`, are reported as such |
+| `-Wdeclaration-order` | No | No | Procedures that declare a dummy argument after a local variable or the function result, or the result after a local, and declarations that mix the groups, such as `real :: x, tmp` with dummy `x`; a local needed in a dummy's or the result's declaration, such as a named constant used as a bound or kind, may come first |
+| `-Wargument-order` | No | No | Argument lists with a required INTENT(IN) argument after an INTENT(OUT) or INTENT(INOUT) one, or a required argument after an OPTIONAL one, with the reordered list suggested; see [Style warnings](#style-warnings) |
 | `-Wfunction-result` | No | No | FUNCTION statements with the result type in the prefix, such as `real function f(x)`, or without a RESULT clause, with the preferred `function f(x) result(y)` form suggested |
 | `-Wcould-be-conditional` | No | No | IF blocks whose two or three branches each assign one value to the same variable, with a Fortran 2023 conditional expression suggested, such as `y = (x > 0 ? sqrt(x) : -1.0)` |
 | `-Wcould-be-one-line-if` | No | No | IF blocks holding a single action statement, with the one-line IF suggested when it fits the line length, such as `if (x > 0) x = sqrt(x)` |
@@ -156,8 +161,11 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wtarget-lifetime` | Yes | No | Pointer associations escaping a known automatic local target |
 | `-Winfinite-loop` | Yes | No | DO loops without loop control, or `DO WHILE (.true.)`, that nothing in their body can end |
 | `-Wloop-runs-once` | Yes | No | DO loops whose body cannot start a second iteration, because every path ends in EXIT, RETURN or STOP |
+| `-Wreal-do-variable` | Yes | No | DO loops with a REAL variable, a feature deleted from Fortran 95 |
 | `-Wredundant-cycle` | No | Yes | CYCLE as the last statement of a loop body, directly or at the end of an IF or CASE branch that ends it |
 | `-Wmaybe-uninitialized` | No | Yes | Local scalars read where some path from the start of the procedure reaches the read without assigning them; see [Uninitialized variables](#uninitialized-variables) |
+| `-Wintent-out-unset` | No | Yes | INTENT(OUT) dummy arguments that some path to the end of the procedure, or to a RETURN, does not assign; one never assigned is reported as "was never assigned" by default |
+| `-Wcould-be-intent-out` | No | Yes | INTENT(INOUT) scalar dummy arguments that every path assigns before anything reads them or passes them to a procedure |
 | `-Wcould-be-intent-in` | No | Yes | INTENT(INOUT) dummy arguments that nothing in the procedure can modify; POINTER, TARGET and polymorphic dummies are not reported |
 | `-Wunused-only` | No | Yes | Names in a USE ONLY list that the scope never uses, with the shortened ONLY list suggested |
 | `-Waliasing` | Yes | No | Known overlapping actuals when a defined procedure's OUT dummy, or modified INOUT dummy, conflicts with another dummy's reads |
@@ -811,9 +819,10 @@ Fortran: Style and Usage*. Each is opt-in and can also be selected alone, and
 - the new style checks `-Wold-relational`, `-Wlogical-comparison`,
   `-Wmissing-double-colon`, `-Wlabeled-do`, `-Wdouble-precision`,
   `-Wbare-end`, `-Wkeyword-case`, `-Wtabs`, `-Wline-length`,
-  `-Wunnamed-exit`, `-Wgoto`, `-Wobsolescent`, `-Wstop-in-procedure`,
-  `-Wassumed-size`, `-Wredundant-implicit`, `-Wname-case` and
-  `-Wfunction-result`;
+  `-Wsemicolon`, `-Wtrailing-whitespace`, `-Wunnamed-exit`, `-Wgoto`, `-Wobsolescent`, `-Wstop-in-procedure`,
+  `-Wassumed-size`, `-Wredundant-implicit`, `-Wname-case`,
+  `-Wfunction-result`, `-Wduplicate-constant`, `-Wdeclaration-order` and
+  `-Wargument-order`;
 - the existing checks `-Windentation`, `-Wuse-without-only`,
   `-Wmodule-default-public`, `-Wliteral-kind`, `-Wdefault-real`,
   `-Wcould-be-parameter`, `-Wmissing-intent` and `-Wimplicit-typing`.
@@ -839,7 +848,27 @@ Notes on individual checks:
   skips comparisons with an exact zero, such as `if (sigma == 0)`.
 - `-Wline-length` uses 132 characters, the free-form limit before Fortran
   2023 and the gfortran default; `-Wline-length=100` sets another limit.
-  `-Wtabs` and `-Wline-length` check free-form source only.
+  `-Wtabs`, `-Wline-length` and `-Wtrailing-whitespace` check free-form
+  source only, as does the trailing-semicolon part of `-Wsemicolon`.
+- `-Wduplicate-constant` compares the files compiled together, and
+  compares values after evaluating them at the kind of each constant, so
+  `3.141592653589793_dp` and `4*atan(1.0_dp)` are the same value. INTEGER
+  constants other than kind parameters, and LOGICAL and CHARACTER constants,
+  are not reported, since a shared name such as `n` is usually a
+  coincidence.
+- `-Wdeclaration-order` checks functions, subroutines and interface bodies.
+  A dummy procedure counts as declared at its interface body or PROCEDURE
+  statement; INTENT, OPTIONAL and DIMENSION statements do not move a
+  declaration. One warning is given per procedure for the order, and one
+  for a declaration that mixes groups, with the statement split as a
+  suggestion.
+- `-Wargument-order` wants required INTENT(IN) arguments first (or VALUE
+  ones without INTENT), then the other required arguments, then OPTIONAL
+  ones. Dummies without INTENT are not compared by intent. Interface bodies,
+  a CLASS passed-object first argument, and the procedures of defined
+  assignment and defined I/O, whose order is fixed, are not reported. The
+  suggested list keeps each group in its order; positional calls must change
+  to match it.
 - `-Wkeyword-case` accepts any one case, lowercase, uppercase or
   capitalized, and reports the keywords not in the file's most common case.
 - `-Wbare-end` covers programs, modules, submodules, functions,
@@ -910,6 +939,16 @@ The analysis is conservative, so that each report is a real path:
   assigned on every path to its EXIT statements counts.
 - Procedures with GO TO, statement labels or I/O branches (ERR=, END=,
   EOR=) are not analyzed.
+
+The same analysis gives two checks of dummy arguments, also in `-Wextra`.
+`-Wintent-out-unset` reports an INTENT(OUT) dummy that some path to the end
+of the procedure or to a RETURN does not assign, so that the caller receives
+an undefined value; assigning an element or component counts.
+`-Wcould-be-intent-out` reports an INTENT(INOUT) scalar that every path
+assigns before anything reads it or passes it to a procedure, so that its
+value on entry is never used. Both consider dummies of intrinsic type that
+are not OPTIONAL, POINTER, ALLOCATABLE, TARGET, VALUE, VOLATILE or
+ASYNCHRONOUS, nor referenced by a contained procedure.
 
 Regression checks: `python tests/test_flow_warnings.py`.
 

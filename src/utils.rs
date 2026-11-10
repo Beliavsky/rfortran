@@ -150,6 +150,11 @@ pub fn print_help() {
     println!("  -Wkeyword-case      Warn about keywords written in more than one case (in -Wstyle)");
     println!("  -Wtabs              Warn about tab characters in free-form code (in -Wstyle)");
     println!("  -Wline-length[=N]   Warn about free-form lines longer than 132 or N characters (in -Wstyle)");
+    println!("  -Wduplicate-constant Warn about REAL named constants and kind parameters defined in several scopes (in -Wstyle)");
+    println!("  -Wdeclaration-order Warn about dummies declared after locals or the result (in -Wstyle)");
+    println!("  -Wargument-order    Warn about INTENT(IN) arguments after outputs, or required after OPTIONAL (in -Wstyle)");
+    println!("  -Wsemicolon         Warn about lines with more than one statement, except CASE branches (in -Wstyle)");
+    println!("  -Wtrailing-whitespace Warn about free-form lines ending in spaces or tabs (in -Wstyle)");
     println!("  -Wunnamed-exit      Warn about EXIT and CYCLE without a construct name (in -Wstyle)");
     println!("  -Wgoto              Warn about GO TO statements (in -Wstyle)");
     println!("  -Wobsolescent       Warn about obsolescent and deleted features such as COMMON and computed GO TO (in -Wstyle)");
@@ -162,6 +167,9 @@ pub fn print_help() {
     println!("  -Wcould-be-one-line-if Suggest one-line IFs for IF blocks holding a single statement (opt-in)");
     println!("  -Wone-line-if       Warn about one-line IFs, suggesting the block form (opt-in)");
     println!("  -Wloop-runs-once    Warn about DO loops whose body cannot start a second iteration (in -Wall)");
+    println!("  -Wreal-do-variable  Warn about DO loops with a REAL variable (in -Wall)");
+    println!("  -Wintent-out-unset  Warn about INTENT(OUT) dummy arguments not assigned on every path (in -Wextra)");
+    println!("  -Wcould-be-intent-out Warn about INTENT(INOUT) scalars assigned before any read (in -Wextra)");
     println!("  -Wredundant-cycle   Warn about CYCLE at the end of a loop body (in -Wextra)");
     println!("  -Wmaybe-uninitialized Warn about local scalars that may be read before being assigned (in -Wextra)");
     println!("  -Wcould-be-intent-in Warn about INTENT(INOUT) dummy arguments that are never modified (in -Wextra)");
