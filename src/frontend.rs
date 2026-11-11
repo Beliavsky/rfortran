@@ -29,7 +29,7 @@ pub(crate) fn prepare_program(
     reachability::check(&prepared.program, &prepared.source, src.len(), filename,
                         &prepared.origins, settings, &args.warnings)?;
     format_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
-                           &prepared.origins, settings, &args.warnings)?;
+                           &prepared.origins, settings, &args.warnings, args.standard)?;
     open_warnings::check(&prepared.source, src.len(), filename, &prepared.origins, settings, &args.warnings, args.standard)?;
     leak_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
                          &prepared.origins, settings, &args.warnings)?;

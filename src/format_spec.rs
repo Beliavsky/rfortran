@@ -321,6 +321,20 @@ pub struct GroupParser<'a> {
     stop_after_data: bool,
 }
 impl<'a> Parser<'a> {
+    /// A parser of the items of a group's body, for static checks.
+    pub(crate) fn items(bytes: &'a [u8]) -> Self {
+        Self { bytes, pos: 0 }
+    }
+    /// The text not yet parsed, after any separator.
+    pub(crate) fn rest(&mut self) -> &'a [u8] {
+        self.separator();
+        &self.bytes[self.pos..]
+    }
+    /// The next item if it is a group: its body, repeat count and whether
+    /// the repeat is unlimited.
+    pub(crate) fn next_group(&mut self) -> Result<Option<(&'a [u8], usize, bool)>, &'static str> {
+        self.group()
+    }
     fn separator(&mut self) {
         self.spaces();
         if self.bytes.get(self.pos) == Some(&b',') {

@@ -297,6 +297,38 @@ mod tests {
     }
 
     #[test]
+    fn missing_contains_is_named() {
+        let at = |src: &str, line: &str| super::missing_contains(src, src.find(line).unwrap());
+        let module = "module m
+implicit none
+function f(x) result(y)
+";
+        assert_eq!(at(module, "function"), Some(("function".into(), "f".into(), "module `m`".into())));
+        let program = "program p
+print *, f(2.0)
+pure real(kind=8) function f(x)
+";
+        assert_eq!(at(program, "pure"), Some(("function".into(), "f".into(), "program `p`".into())));
+        // A unit with CONTAINS, and one closed before the next begins.
+        assert_eq!(at("module m
+contains
+subroutine s
+", "subroutine"), None);
+        let later = "module m
+contains
+subroutine s
+end subroutine s
+end module m
+module n
+subroutine t
+";
+        assert_eq!(at(later, "subroutine t"), Some(("subroutine".into(), "t".into(), "module `n`".into())));
+        assert_eq!(at("x = 1
+call s(1)
+", "call"), None);
+    }
+
+    #[test]
     fn bare_end_is_an_empty_main_program() {
         for src in ["end\n", "! Empty main program\nEND ! done\n"] {
             let tokens = crate::lexer::lex(src);
@@ -305,6 +337,59 @@ mod tests {
             assert_eq!(program.name, "main");
             assert!(program.body.is_empty());
         }
+    }
+}
+
+/// The kind and name of the procedure whose FUNCTION or SUBROUTINE
+/// statement `words` is, after any prefixes such as PURE or a type.
+fn procedure_header(words: &[String]) -> Option<(String, String)> {
+    let at = words.iter().position(|w| w == "function" || w == "subroutine")?;
+    let prefix = &words[..at];
+    let simple = ["pure", "impure", "elemental", "recursive", "non_recursive", "module", "simple"];
+    let typed = ["integer", "real", "complex", "logical", "character", "double", "doubleprecision", "type", "class"];
+    // A prefix of keywords, or a type with its parameters in parentheses.
+    let mut depth = 0;
+    for w in prefix {
+        match w.as_str() {
+            "(" => depth += 1,
+            ")" => depth -= 1,
+            _ if depth > 0 => {}
+            w if simple.contains(&w) || typed.contains(&w) || w == "precision" || w == "*" || w.bytes().all(|b| b.is_ascii_digit()) => {}
+            _ => return None,
+        }
+    }
+    let name = words.get(at + 1).filter(|n| n.bytes().next().is_some_and(|b| b.is_ascii_alphabetic()))?;
+    Some((words[at].clone(), name.clone()))
+}
+
+/// For a parse error at a FUNCTION or SUBROUTINE statement: the program
+/// unit around it that lacks CONTAINS, as "module `m`".
+fn missing_contains(src: &str, start: usize) -> Option<(String, String, String)> {
+    let line_start = src[..start].rfind('\n').map_or(0, |n| n + 1);
+    let line_end = src[start..].find('\n').map_or(src.len(), |n| start + n);
+    let (kind, name) = procedure_header(&crate::indentation_warnings::words(&src[line_start..line_end]))?;
+    // The open program units before it, and whether each has CONTAINS.
+    let mut stack: Vec<(String, bool)> = vec![];
+    for line in src[..line_start].lines() {
+        let w = crate::indentation_warnings::words(line);
+        let at = |i: usize| w.get(i).map(String::as_str).unwrap_or("");
+        match at(0) {
+            "" => {}
+            "end" if w.len() == 1 || matches!(at(1), "module" | "submodule" | "program" | "function" | "subroutine" | "procedure") => { stack.pop(); }
+            "endmodule" | "endsubmodule" | "endprogram" | "endfunction" | "endsubroutine" | "endprocedure" => { stack.pop(); }
+            "contains" => { if let Some(top) = stack.last_mut() { top.1 = true; } }
+            "module" if at(1) != "procedure" && !at(1).is_empty() && w.len() == 2 => stack.push((format!("module `{}`", at(1)), false)),
+            "submodule" => stack.push(("the submodule".into(), false)),
+            "program" if !at(1).is_empty() => stack.push((format!("program `{}`", at(1)), false)),
+            _ => {
+                if let Some((k, n)) = procedure_header(&w) { stack.push((format!("{k} `{n}`"), false)); }
+            }
+        }
+    }
+    match stack.last() {
+        Some((_, true)) => None,
+        Some((unit, false)) => Some((kind, name, unit.clone())),
+        None => Some((kind, name, "the main program".into())),
     }
 }
 
@@ -799,9 +884,18 @@ pub fn parse_with_origins(
                 } => ((start)..(end), format!("extra token {}", human_token(&tok))),
                 lalrpop_util::ParseError::User { error } => ((0)..(0), format!("{}", error)),
             };
+            // A procedure where a statement was expected: CONTAINS is missing.
+            let (msg, notes) = match missing_contains(src, span.start).filter(|_| msg.starts_with("unexpected")) {
+                Some((kind, name, unit)) => (
+                    format!("a CONTAINS statement is needed before {kind} `{name}` in {unit}"),
+                    vec![format!("the procedures of {unit} follow CONTAINS, after its other statements; add `contains` before this line")],
+                ),
+                None => (msg, vec![]),
+            };
             let diag = Diagnostic::error()
                 .with_message(&msg)
-                .with_labels(vec![Label::primary((), span.clone())]);
+                .with_labels(vec![Label::primary((), span.clone())])
+                .with_notes(notes);
             let _ = emit_to_io_write(&mut stderr, &Config::default(), &file, &diag);
             errs.push(CompileError::new(CompileErrorKind::Parse, msg, span));
             Ok(crate::ast::Program {
