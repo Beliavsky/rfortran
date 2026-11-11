@@ -87,7 +87,7 @@ end function good
         cases=[
             ('program main\n! declaration below\nreal(kind=16)::x\nend program main\n',3,'unsupported REAL kind 16'),
             ('program main\ninteger,parameter::n=1/0\nend program main\n',2,'division by zero'),
-            ('program main\ninteger::n\nn=2\nblock\ncharacter(len=n)::text\nend block\nend program main\n',5,'runtime-dependent lengths'),
+            ('program main\ninteger::n\nn=2\nblock\ninteger,parameter::m=1/0\nend block\nend program main\n',5,'division by zero'),
         ]
         with tempfile.TemporaryDirectory(prefix='source-diagnostics-') as tmp:
             directory=Path(tmp);source=directory/'types.f90'

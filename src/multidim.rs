@@ -347,6 +347,13 @@ impl Lowerer {
                 if let Some(kind) = self.functions.get(n) {
                     return matches!(kind, TypeSpec::Integer(_));
                 }
+                // An element of a runtime-sized (allocatable or generated)
+                // INTEGER array, such as v(k) or v(@alloc_offset_N(...)).
+                if !args.is_empty()
+                    && matches!(self.types.get(n), Some(TypeSpec::Integer(None | Some(1 | 2 | 4 | 8))))
+                {
+                    return args.iter().all(|a| self.integer_expr(a, shapes));
+                }
                 match n.as_str() {
                     // Allocation checks preserve the scalar integer inquiry
                     // value; their status/name operands are not array bounds.

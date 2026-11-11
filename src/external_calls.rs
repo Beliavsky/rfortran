@@ -1037,7 +1037,9 @@ fn dummies(params: &[String], body: &[Stmt], scope: &Scope) -> Option<Vec<(TypeS
         let attributes: Vec<&str> = body
             .iter()
             .filter_map(|s| match s {
-                Stmt::DummyIntent { name, intent } if name == p => Some(intent.as_str()),
+                // A split record field keeps its bounds checks; that marker
+                // does not change how the dummy is passed.
+                Stmt::DummyIntent { name, intent } if name == p && intent != "@source_array" => Some(intent.as_str()),
                 _ => None,
             })
             .collect();

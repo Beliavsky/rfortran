@@ -119,7 +119,9 @@ fn allocate_typed(args: &[Expr], ranks: &Ranks, kinds:Option<&Kinds>) -> Result<
     // In particular, SIZE(function(...)) may not yet have a bound interface.
     // The ordinary array-assignment path binds the function result first.
     if let (Some(value),Some(Expr::Ident(target)),Some(kinds))=(source_value.as_ref(),objects.first(),kinds) {
-        if !matches!(value,Expr::Ident(_)) && ranks.get(target).is_some_and(|r|*r>0) {
+        // Only rank one: assignment reallocates a rank-one temporary, but not
+        // one of higher rank, which would stop as unallocated.
+        if !matches!(value,Expr::Ident(_)) && ranks.get(target).is_some_and(|r|*r==1) {
             if let Some(kind)=kinds.get(target).filter(|k|matches!(k,TypeSpec::Integer(_)|TypeSpec::IntegerKind(_)|TypeSpec::Real|TypeSpec::RealKind(_)|TypeSpec::DoublePrecision|TypeSpec::Logical|TypeSpec::LogicalKind(_))) {
                 static SERIAL:std::sync::atomic::AtomicUsize=std::sync::atomic::AtomicUsize::new(0);
                 let temp=format!("@allocation_source_array_{}",SERIAL.fetch_add(1,std::sync::atomic::Ordering::Relaxed));
