@@ -542,9 +542,22 @@ pub(crate) fn emit_read_items(
         }
         *serial += 1;
         let index = format!("@list_read_index_{serial}");
+        // The width stored into a runtime-length CHARACTER scalar.
+        let mut store_width = None;
         let (target, count, kind) = match item {
             Expr::Ident(n) if matches!(symbols.get(n),Some((TypeSpec::Character(_),d)) if d.is_empty()) => {
                 (item.clone(), None, symbols[n].0.clone())
+            }
+            // A whole deferred-length scalar, x itself. READ keeps its
+            // allocated length: fill its storage, of which LEN(x) is visible.
+            // Runtime-sized storage takes exactly its current length.
+            Expr::Call(n, a) if n == "@dynamic_substring" && a.len() == 4 && matches!(&a[1], Expr::IntLit(z) if z == "0")
+                && matches!(&a[0], Expr::Ident(x) if matches!(symbols.get(x),Some((TypeSpec::Character(_),d)) if d.is_empty())) => {
+                let Expr::Ident(x) = &a[0] else { unreachable!() };
+                if crate::parameters::integer_constant(&a[3]).ok() == Some(crate::substrings::MAX_EXPRESSION_LENGTH as i64) {
+                    store_width = Some(a[2].clone());
+                }
+                (a[0].clone(), None, symbols[x].0.clone())
             }
             Expr::Index(n, _) | Expr::Call(n, _) if symbols.contains_key(n) => {
                 (item.clone(), None, symbols[n].0.clone())
@@ -560,6 +573,9 @@ pub(crate) fn emit_read_items(
             TypeSpec::Character(n) => (4, n.unwrap_or(1) as i64),
             _ => bail!("unsupported list-directed READ destination type"),
         } };
+        // A runtime-length destination reads through a bounded buffer, as
+        // elements of deferred-length arrays do.
+        let width = if store_width.is_some() && tag == 4 { 4096 } else { width };
         let temp = format!("@list_read_value_{serial}");
         let invalidate = Stmt::CallSub {
             name: "@undefine".into(),
@@ -570,7 +586,7 @@ pub(crate) fn emit_read_items(
                 if tag == 4 {
                     Stmt::CallSub {
                         name: "@character_assign".into(),
-                        args: vec![var(&n), var(&temp), int(width)],
+                        args: vec![var(&n), var(&temp), store_width.clone().unwrap_or_else(|| int(width))],
                     }
                 } else {
                     set(&n, var(&temp))
@@ -593,7 +609,7 @@ pub(crate) fn emit_read_items(
         };
         let mut transfer = vec![
             Stmt::VarDecl {
-                kind,
+                kind: if store_width.is_some() && tag == 4 { TypeSpec::Character(Some(width as usize)) } else { kind },
                 names: vec![temp.clone()],
             },
             set(&temp, initial),
