@@ -21,6 +21,8 @@ mod duplicate_constants;
 mod conformance;
 #[path = "array_sizes.rs"]
 mod array_sizes;
+#[path = "constant_conditions.rs"]
+mod constant_conditions;
 
 type Names = HashSet<String>;
 #[derive(Clone, Copy, PartialEq)]
@@ -1299,6 +1301,8 @@ pub fn check(
         "conformance",
         "maybe-nonconforming",
         "maybe-out-of-bounds",
+        "constant-condition",
+        "constant-condition-all",
         "unchecked-status",
         "target-lifetime",
         "aliasing",
@@ -1338,6 +1342,8 @@ pub fn check(
                 | "unchecked-conformance"
                 | "maybe-nonconforming"
                 | "maybe-out-of-bounds"
+                | "constant-condition"
+                | "constant-condition-all"
                 | "implicit-interface"
                 | "intrinsic-shadow"
                 | "keyword-name"
@@ -1418,6 +1424,13 @@ pub fn check(
             let requirements = a.conformance_requirements();
             if controls["unchecked-conformance"].0 { a.unchecked_conformance(&requirements); }
             if controls["conformance"].0 { a.conformance_calls(&program.body, scope, 0, &requirements); }
+        }
+        if controls["constant-condition"].0 || controls["constant-condition-all"].0 {
+            a.constant_conditions(&program.body, scope, 0);
+            // -Wconstant-condition-all includes the literal cases.
+            if !controls["constant-condition"].0 {
+                for w in a.warnings.iter_mut().filter(|w| w.category == "constant-condition") { w.category = "constant-condition-all"; }
+            }
         }
         if controls["maybe-nonconforming"].0 || controls["maybe-out-of-bounds"].0 {
             a.array_sizes(&program.body, scope, controls["maybe-nonconforming"].0, controls["maybe-out-of-bounds"].0);

@@ -61,6 +61,7 @@ pub(crate) const CATEGORIES: &[&str] = &[
     "keyword-case", "tabs", "line-length", "unnamed-exit", "goto", "obsolescent", "stop-in-procedure", "assumed-size",
     "redundant-implicit", "name-case", "function-result", "could-be-one-line-if", "one-line-if",
     "could-be-intent-in", "unused-only", "semicolon", "trailing-whitespace", "declaration-order", "argument-order",
+    "do-while-true",
 ];
 
 struct Warning {
@@ -1048,6 +1049,24 @@ fn relational(kind: &TokenKind) -> Option<&'static str> {
 fn statement_checks(src: &str, ts: &[Token], w: &[String], span: Range<usize>, stack: &mut [Frame], out: &mut Vec<Warning>) {
     let a = action(w);
     let at = |i: usize| a.get(i).map(String::as_str).unwrap_or("");
+    // DO WHILE with a condition that is literally true: an endless loop,
+    // which DO without loop control writes.
+    if a.first().is_some_and(|x| x == "do") || w.get(1).is_some_and(|x| x == ":") && w.get(2).is_some_and(|x| x == "do") {
+        if let Some(k) = ts.iter().position(|t| text(src, t).eq_ignore_ascii_case("while")) {
+            if let Some(close) = ts.get(k + 1).filter(|t| matches!(t.kind, TokenKind::LParen)).and_then(|_| closing(ts, k + 1)) {
+                let condition: String = ts[k + 2..close].iter().map(|t| text(src, t).to_ascii_lowercase()).collect::<String>()
+                    .chars().filter(|c| !c.is_whitespace() && *c != '(' && *c != ')').collect();
+                if matches!(condition.as_str(), ".true." | ".not..false.") && close + 1 == ts.len() {
+                    let kept = src[span.start..ts[k].span.start].trim_end().trim_end_matches(',').trim_end();
+                    let condition_text = &src[ts[k + 1].span.start..ts[close].span.end];
+                    out.push(Warning::new("do-while-true", format!("`do while {condition_text}` is an endless loop; write `do` [do-while-true]"),
+                        ts[k].span.start..ts[close].span.end, "always true")
+                        .note(format!("suggestion: {kept}"))
+                        .note("DO without loop control is the form for a loop that ends at an EXIT"));
+                }
+            }
+        }
+    }
     let find = |word: &str| ts.iter().rev().find(|t| text(src, t).replace([' ', '\t'], "").eq_ignore_ascii_case(word)).map(|t| t.span.clone());
     // Old relational operators, with the statement rewritten.
     let old: Vec<(&Token, &str)> = ts.iter().filter_map(|t| relational(&t.kind).filter(|_| text(src, t).starts_with('.')).map(|r| (t, r))).collect();

@@ -349,6 +349,15 @@ end program main
         self.assertIn('suggestion: subroutine s(n, x, z, tol)', err)
         self.assertNotIn('-order]', compile_with(source, '-Wall', '-Wextra').stderr)
 
+    def test_do_while_true(self):
+        source = ('program main\nimplicit none\ninteger :: i\ni = 0\ndo while (.true.)\n   i = i + 1\n   if (i > 2) exit\nend do\n'
+                  'outer: do while (.not. .false.)\n   exit outer\nend do outer\ndo while (i < 5)\n   i = i + 1\nend do\nend program main\n')
+        err = compile_with(source, '-Wstyle').stderr
+        self.assertEqual([x for x in found(err) if x[0] == 'do-while-true'], [('do-while-true', 5), ('do-while-true', 9)], err)
+        self.assertIn('`do while (.true.)` is an endless loop; write `do`', err)
+        self.assertIn('suggestion: outer: do\n', err)
+        self.assertNotIn('do-while-true', compile_with(source, '-Wall', '-Wextra').stderr)
+
     def outputs(self, *sources):
         """The output of running each source."""
         out = []

@@ -153,6 +153,7 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wduplicate-constant` | No | No | REAL and COMPLEX named constants, and kind parameters such as `dp`, defined in more than one scope, such as `pi` in several procedures or modules; definitions with different values, such as `3.14159` and `3.141592653589793_dp`, are reported as such |
 | `-Wdeclaration-order` | No | No | Procedures that declare a dummy argument after a local variable or the function result, or the result after a local, and declarations that mix the groups, such as `real :: x, tmp` with dummy `x`; a local needed in a dummy's or the result's declaration, such as a named constant used as a bound or kind, may come first |
 | `-Wargument-order` | No | No | Argument lists with a required INTENT(IN) argument after an INTENT(OUT) or INTENT(INOUT) one, or a required argument after an OPTIONAL one, with the reordered list suggested; see [Style warnings](#style-warnings) |
+| `-Wdo-while-true` | No | No | `do while (.true.)`, an endless loop, with `do` suggested |
 | `-Wfunction-result` | No | No | FUNCTION statements with the result type in the prefix, such as `real function f(x)`, or without a RESULT clause, with the preferred `function f(x) result(y)` form suggested |
 | `-Wcould-be-conditional` | No | No | IF blocks whose two or three branches each assign one value to the same variable, with a Fortran 2023 conditional expression suggested, such as `y = (x > 0 ? sqrt(x) : -1.0)` |
 | `-Wcould-be-one-line-if` | No | No | IF blocks holding a single action statement, with the one-line IF suggested when it fits the line length, such as `if (x > 0) x = sqrt(x)` |
@@ -170,6 +171,8 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wconformance` | Yes | No | Calls whose actual arguments, of sizes known at compile time, break such a relationship, as `sumproduct([1.0, 2.0], [3.0])` |
 | `-Wmaybe-nonconforming` | No | Yes | Elemental operations on arrays whose sizes, from PACK or ALLOCATE, may differ, as `x1 - x2` for two PACK results; see [Array conformance](#array-conformance) |
 | `-Wmaybe-out-of-bounds` | No | Yes | Constant subscripts of PACK results, which may have fewer elements, as `x1(1)` when the mask selects nothing |
+| `-Wconstant-condition` | No | Yes | Conditions, or parts of them, whose values are known at compile time, such as `.true. .or. (x > y)`, `n == n` or `n > 5 .and. n < 3`; see [Constant conditions](#constant-conditions) |
+| `-Wconstant-condition-all` | No | No | The same, also for values that come from named constants, such as `debug .or. n > 2` with a PARAMETER `debug` |
 | `-Wcould-be-intent-in` | No | Yes | INTENT(INOUT) dummy arguments that nothing in the procedure can modify; POINTER, TARGET and polymorphic dummies are not reported |
 | `-Wunused-only` | No | Yes | Names in a USE ONLY list that the scope never uses, with the shortened ONLY list suggested |
 | `-Waliasing` | Yes | No | Known overlapping actuals when a defined procedure's OUT dummy, or modified INOUT dummy, conflicts with another dummy's reads |
@@ -902,8 +905,8 @@ Fortran: Style and Usage*. Each is opt-in and can also be selected alone, and
   `-Wbare-end`, `-Wkeyword-case`, `-Wtabs`, `-Wline-length`,
   `-Wsemicolon`, `-Wtrailing-whitespace`, `-Wunnamed-exit`, `-Wgoto`, `-Wobsolescent`, `-Wstop-in-procedure`,
   `-Wassumed-size`, `-Wredundant-implicit`, `-Wname-case`,
-  `-Wfunction-result`, `-Wduplicate-constant`, `-Wdeclaration-order` and
-  `-Wargument-order`;
+  `-Wfunction-result`, `-Wduplicate-constant`, `-Wdeclaration-order`,
+  `-Wargument-order` and `-Wdo-while-true`;
 - the existing checks `-Windentation`, `-Wuse-without-only`,
   `-Wmodule-default-public`, `-Wliteral-kind`, `-Wdefault-real`,
   `-Wcould-be-parameter`, `-Wmissing-intent` and `-Wimplicit-typing`.
@@ -1063,6 +1066,47 @@ whose PACK mask's count, some comparison, DO bound or procedure argument of
 the scope uses, as in `if (size(a) > 0)`, `if (count(tf) >= 2)` or
 `do i = 1, size(g)`.
 Regression checks: `python tests/test_conformance_warnings.py`.
+
+## Constant conditions
+
+`-Wconstant-condition`, in `-Wextra`, reports a condition, or part of one,
+whose value is known at compile time, so that part of the test has no
+effect:
+
+```
+warning: `.true. .or. x > y` is always true; `x > y` has no effect [constant-condition]
+```
+
+It checks IF, ELSE IF and DO WHILE conditions, WHERE and MERGE masks,
+the conditions of conditional expressions, and LOGICAL assignments such as
+`flag = .false. .and. g`. It reports:
+
+- literals combined with other operands, as `.true. .or. e` and
+  `.false. .and. e`, which are constant, and `.true. .and. e`, where the
+  literal has no effect;
+- an INTEGER, LOGICAL or CHARACTER variable compared with itself, as
+  `n == n` or `s /= s`. REAL and COMPLEX are not reported, since `x /= x`
+  is the test for a NaN;
+- comparisons of one INTEGER variable with constants that contradict or
+  cover every value, as `n > 5 .and. n < 3` or `n > 5 .or. n <= 5`;
+- comparisons of literals, as `1 > 2` or `"ab" == "ab "`.
+
+`if (.true.)` without ELSE is reported as having no effect, and
+`else if (.true.)` as an ELSE. Other literals that are the whole condition
+are left to other checks: `-Wunreachable-code`, in `-Wall`, reports the
+branch that `if (.false.)`, or `if (.true.)` with ELSE, makes unreachable,
+and `-Wdo-while-true`, in `-Wstyle`, suggests `do` for `do while (.true.)`. Values that come from named
+constants are not reported either, since constants such as
+`logical, parameter :: debug = .false.` are usually settings.
+`-Wconstant-condition-all`, which is not in any group, reports them too, and
+says where the value comes from:
+
+```
+warning: `tf .or. x > y` is always true, since `tf` is a named constant with value .true.; `x > y` has no effect [constant-condition-all]
+warning: `debug` is a named constant with value .false., so the condition is always false [constant-condition-all]
+```
+
+Regression checks: `python tests/test_constant_conditions.py`.
 
 ## Uninitialized variables
 

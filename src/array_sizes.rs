@@ -46,7 +46,7 @@ impl Size {
 }
 
 /// An expression as written, for messages.
-fn text(e: &Expr) -> String {
+pub(super) fn text(e: &Expr) -> String {
     match e {
         Expr::Ident(n) => n.clone(),
         Expr::IntLit(s) | Expr::RealLit(s) => s.clone(),

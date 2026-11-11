@@ -102,12 +102,16 @@ const CATEGORIES: &[&str] = &[
     "conformance",
     "maybe-nonconforming",
     "maybe-out-of-bounds",
+    "constant-condition",
+    "constant-condition-all",
+    "do-while-true",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface, conversion, and module-default-public remain
 /// individually selectable rather than members of this group.
 const EXTRA: &[&str] = &[
     "maybe-uninitialized",
+    "constant-condition",
     "maybe-nonconforming",
     "maybe-out-of-bounds",
     "unchecked-conformance",
@@ -155,6 +159,7 @@ const STYLE: &[&str] = &[
     "duplicate-constant",
     "declaration-order",
     "argument-order",
+    "do-while-true",
     "indentation",
     "use-without-only",
     "module-default-public",

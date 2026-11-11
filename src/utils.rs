@@ -153,6 +153,7 @@ pub fn print_help() {
     println!("  -Wduplicate-constant Warn about REAL named constants and kind parameters defined in several scopes (in -Wstyle)");
     println!("  -Wdeclaration-order Warn about dummies declared after locals or the result (in -Wstyle)");
     println!("  -Wargument-order    Warn about INTENT(IN) arguments after outputs, or required after OPTIONAL (in -Wstyle)");
+    println!("  -Wdo-while-true     Warn about do while (.true.), suggesting do (in -Wstyle)");
     println!("  -Wsemicolon         Warn about lines with more than one statement, except CASE branches (in -Wstyle)");
     println!("  -Wtrailing-whitespace Warn about free-form lines ending in spaces or tabs (in -Wstyle)");
     println!("  -Wunnamed-exit      Warn about EXIT and CYCLE without a construct name (in -Wstyle)");
@@ -176,6 +177,8 @@ pub fn print_help() {
     println!("  -Wconformance       Warn about calls whose array sizes break a procedure's requirements (in -Wall)");
     println!("  -Wmaybe-nonconforming Warn about operations on arrays whose sizes from PACK or ALLOCATE may differ (in -Wextra)");
     println!("  -Wmaybe-out-of-bounds Warn about constant subscripts of PACK results (in -Wextra)");
+    println!("  -Wconstant-condition Warn about conditions whose values are known at compile time (in -Wextra)");
+    println!("  -Wconstant-condition-all Also warn when the value comes from a named constant");
     println!("  -Wcould-be-intent-in Warn about INTENT(INOUT) dummy arguments that are never modified (in -Wextra)");
     println!("  -Wunused-only       Warn about USE ONLY names that are never used (in -Wextra)");
     println!("  -Winfinite-loop     Warn about DO loops without loop control that nothing in their body can end (enabled by -Wall)");
