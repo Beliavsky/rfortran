@@ -1450,7 +1450,7 @@ end function
 end
 """,'1 4',reason='not a proven PURE function')
 
-    def test_pure_call_optional_fallback(self):
+    def test_pure_call_optional_parallel(self):
         self.build_run("""implicit none
 integer::i,a(9000)
 do concurrent(i=1:9000)
@@ -1464,7 +1464,7 @@ f=0
 if(present(n)) f=n+1
 end function
 end
-""",'2 9001',reason='unsupported or saved storage')
+""",'2 9001')
 
     def test_pure_call_fixed_array_argument(self):
         self.build_run("""implicit none

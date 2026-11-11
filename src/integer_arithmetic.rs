@@ -34,7 +34,9 @@ pub(crate) fn evaluate(op: &str, k: u8, a: i64, b: i64, checked: bool) -> Result
         "mul" => fit(a as i128 * b as i128),
         "neg" => fit(-(a as i128)),
         "abs" => fit((a as i128).abs()),
-        "cast" => fit(a as i128),
+        // "real" is INT of an operand whose kind was not inferred; an
+        // integer value reaching here converts as "cast" does.
+        "cast" | "real" => fit(a as i128),
         "div" => {
             if b == 0 {
                 bail!("integer division by zero");

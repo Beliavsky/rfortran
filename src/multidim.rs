@@ -320,6 +320,8 @@ impl Lowerer {
     fn integer_expr(&self, e: &Expr, shapes: &Shapes) -> bool {
         match e {
             Expr::IntLit(n) => n.parse::<i64>().is_ok(),
+            // A kind-suffixed literal such as 2_8.
+            Expr::Call(n, a) if n == "@integer_literal" && a.len() == 2 => true,
             Expr::Ident(n) => {
                 matches!(
                     self.types.get(n),

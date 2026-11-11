@@ -118,7 +118,7 @@ end
                 self.assertIn(message,result.stderr)
 
     def test_increment_overflow(self):
-        for first, last, step in [("9223372036854775806","9223372036854775807","2"), ("-9223372036854775807","-9223372036854775807","-2")]:
+        for first, last, step in [("9223372036854775806_8","9223372036854775807_8","2"), ("-9223372036854775807_8","-9223372036854775807_8","-2")]:
             source=self.source(f"integer(kind=8)::i\nprint *, (i,i={first},{last},{step})\nend\n")
             for cmd in build_commands(source,self.directory):
                 result=subprocess.run(cmd,capture_output=True,text=True,timeout=15)

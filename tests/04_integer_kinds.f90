@@ -9,8 +9,8 @@ program test_integer_kinds
     i1 = 1
     i2 = 2
     i4 = 42
-    i8 = 9000000000
-    i16 = 12345678901234567890
+    i8 = 9000000000_8
+    i16 = 12345678901234567890_16
 
     print *, i1, i2, i4, i8, i16
 end program test_integer_kinds

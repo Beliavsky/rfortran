@@ -1319,7 +1319,18 @@ impl Context {
                         }
                         self.check_value(&t, value, &scope, prepare)?;
                         if let Some(ty) = scope.enum_members.get(name) {
-                            let ordinal = self.constant(value, &scope).ok_or_else(||anyhow::anyhow!("enumerator `{name}` requires an integer constant expression"))?;
+                            let Some(ordinal) = self.constant(value, &scope) else {
+                                // The implied value after a C enumerator at the top of the
+                                // int range overflows default INTEGER; report the C range.
+                                if let Expr::Bin(BinOp::Add, previous, one) = value {
+                                    if self.is_c_enum(ty) {
+                                        if let (Some(last), Some(step)) = (self.constant(previous, &scope), self.constant(one, &scope)) {
+                                            self.check_c_value(ty, last.saturating_add(step))?;
+                                        }
+                                    }
+                                }
+                                bail!("enumerator `{name}` requires an integer constant expression");
+                            };
                             self.check_c_value(ty,ordinal)?;
                             if !initialized.insert(name.clone()) {bail!("cannot assign to enumeration named constant `{name}`");}
                         }

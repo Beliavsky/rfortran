@@ -138,6 +138,7 @@ mod action_warnings;
 mod use_warnings;
 mod parameter_warnings;
 mod kind_warnings;
+mod literal_range;
 mod indentation_warnings;
 mod return_warnings;
 mod style_warnings;

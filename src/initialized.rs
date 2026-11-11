@@ -763,11 +763,27 @@ fn collect(body: &[Stmt], variables: &mut BTreeMap<String, Option<i64>>) {
 /// Generated temporaries in control-flow bodies belong to this scope, just as
 /// their declarations do in `collect`. Their placeholder extent (usually one)
 /// must not replace the heap descriptor's runtime length in bounds checks.
-/// BLOCK and procedure bodies have separate scopes and collect their own data.
+/// BLOCK and procedure bodies have separate scopes and collect their own data,
+/// but a temporary whose declaration was hoisted out of a BLOCK (as runtime-DIM
+/// reduction results are) keeps its descriptor markers inside it. Take those
+/// markers for names the BLOCK does not declare itself.
 fn scope_metadata(body: &[Stmt], shapes: &mut crate::allocatables::Shapes) {
     crate::allocatables::metadata(body, shapes);
     for stmt in body {
         match stmt {
+            Stmt::Block { body } => {
+                let local: std::collections::HashSet<&str> = body.iter().flat_map(|s| match s {
+                    Stmt::ArrayDecl { name, .. } => vec![name.as_str()],
+                    Stmt::VarDecl { names, .. } => names.iter().map(String::as_str).collect(),
+                    _ => vec![],
+                }).collect();
+                let mut inner = crate::allocatables::Shapes::new();
+                scope_metadata(body, &mut inner);
+                for (key, value) in inner {
+                    let owner = key.split_once(':').map_or(key.as_str(), |(_, n)| n);
+                    if !local.contains(owner) { shapes.entry(key).or_insert(value); }
+                }
+            }
             Stmt::If { then_body, else_body, .. } => {
                 scope_metadata(then_body, shapes);
                 if let Some(body)=else_body { scope_metadata(body, shapes); }

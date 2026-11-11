@@ -177,6 +177,8 @@ pub(crate) fn integer(e: &Expr, symbols: &Symbols) -> bool {
         Expr::Call(n,a) if n=="@heap_bound"=>a.len()==3 && a[..2].iter().all(|e|integer(e,symbols)),
         Expr::Call(n,a) if matches!(n.as_str(),"@heap_lower_bound"|"@heap_upper_bound")=>a.len()==2 && a.iter().all(|e|integer(e,symbols)),
         Expr::IntLit(_) => true,
+        // A kind-suffixed literal such as 5_8.
+        Expr::Call(n, a) if n == "@integer_literal" && a.len() == 2 => true,
         Expr::Ident(n) => {
             matches!(symbols.get(n), Some((TypeSpec::Integer(None | Some(1 | 2 | 4 | 8)), dims)) if dims.is_empty())
         }

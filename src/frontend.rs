@@ -14,6 +14,8 @@ pub(crate) fn prepare_program(
 ) -> Result<module_files::Prepared> {
     let filename = input.to_str().unwrap_or("<unknown>");
     unused::validate_options(&args.warnings)?;
+    literal_range::check(tokens)
+        .map_err(|error| source_diagnostics::report(error, src, tokens, filename, origins))?;
     optional_warnings::check(&program, src, tokens, filename, origins, settings, &args.warnings)?;
     declaration_warnings::check(&program, src, tokens, filename, origins, settings, &args.warnings)?;
     let prepared = module_files::prepare(program, src, input, origins, args)

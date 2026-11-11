@@ -751,10 +751,16 @@ pub(super) fn flatten(
     let total = temporary(prefix, serial);
     let linear = temporary(prefix, serial);
     let remaining = temporary(prefix, serial);
-    let max = Expr::Call(
-        "@integer_literal".into(),
-        vec![Expr::IntLit(i64::MAX.to_string()), int(8)],
-    );
+    // Hold HUGE(0_8) in an INTEGER(8) temporary. A bare literal of this
+    // value would be folded as default INTEGER in the guards below (and the
+    // @integer_literal kind wrapper does not survive every later pass when the
+    // loop is in an inlined procedure), overflowing at compile time.
+    let max_name = temporary(prefix, serial);
+    prefix.push(set(
+        &max_name,
+        Expr::Call("@integer_literal".into(), vec![Expr::IntLit(i64::MAX.to_string()), int(8)]),
+    ));
+    let max = id(&max_name);
     let mut dimensions = vec![];
     let mut nonempty = Expr::Logical(true);
     for c in controls.chunks(4) {

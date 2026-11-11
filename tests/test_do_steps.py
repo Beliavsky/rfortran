@@ -71,7 +71,7 @@ end
         with tempfile.TemporaryDirectory(prefix="overflow-do-") as tmp:
             directory = Path(tmp)
             source = directory / "main.f90"
-            for control in ("9223372036854775807,9223372036854775807,1", "-9223372036854775807,-9223372036854775807,-2"):
+            for control in ("9223372036854775807_8,9223372036854775807_8,1", "-9223372036854775807_8,-9223372036854775807_8,-2"):
                 source.write_text("program main\ninteger(8)::i\ndo i="+control+"\ncycle\nend do\nend program main\n")
                 for command in build_commands(source, directory):
                     with self.subTest(control=control,command=command):
