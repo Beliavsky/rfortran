@@ -2125,7 +2125,8 @@ fn expand(
                         // retain their original initialization flags.
                         let Expr::Ident(actual)=actual else {bail!("parallel read-only capture requires storage");};
                         names.insert(p.clone(),actual.clone());
-                    } else if intent == "intent(in)" {
+                    } else if intent == "intent(in)" && !(r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent==crate::optional::BORROW_INPUT))
+                        && matches!(actual,Expr::Call(n,_)|Expr::Index(n,_) if shapes.get(n).is_some_and(|(_,d)|!d.is_empty()))) {
                         *serial += 1;
                         let temp = format!("@array_call_input_{serial}");
                         // A copy of runtime length, of a deferred-length actual.

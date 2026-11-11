@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! Field-based helpers for bounded private record actuals. Public ABIs stay intact.
+//! Field-based helpers for private records and shared record-array elements.
 use super::*;
 
 #[derive(Clone)]
@@ -20,6 +20,37 @@ fn argument(e: &Expr) -> &Expr {
     crate::named_arguments::keyword(e).map_or(e, |(_, e)| e)
 }
 
+// A record element selects exactly one owner, without calls or vector indices.
+fn element<'a>(e: &'a Expr, scope: &Scope) -> Option<(&'a str, &'a [Expr])> {
+    fn scalar(e: &Expr, scope: &Scope) -> bool {
+        match e {
+            Expr::IntLit(_) => true,
+            Expr::Ident(n) => scope.get(n).is_none_or(|o| o.dims.is_empty() && !o.derived),
+            Expr::Bin(_, a, b) => scalar(a, scope) && scalar(b, scope),
+            Expr::Un(_, a) => scalar(a, scope),
+            _ => false,
+        }
+    }
+    let (Expr::Call(n, indices) | Expr::Index(n, indices)) = e else {
+        return None;
+    };
+    let owner = scope.get(n)?;
+    (owner.derived
+        && !owner.dims.is_empty()
+        && owner.dims.len() == indices.len()
+        && indices.iter().all(|e| scalar(e, scope)))
+    .then_some((n, indices))
+}
+
+fn root(e: &Expr) -> Option<&str> {
+    if let Expr::Call(tag, a) = e {
+        if tag.starts_with("@record_component:") {
+            return a.first().and_then(root);
+        }
+    }
+    calls::designator(e)
+}
+
 fn associate(
     name: &mut String,
     args: &mut Vec<Expr>,
@@ -31,10 +62,10 @@ fn associate(
     let Some(plan) = plans.get(name) else {
         return Ok(());
     };
-    if !args
-        .iter()
-        .any(|e| matches!(argument(e),Expr::Ident(n) if private.contains(n)))
-    {
+    if !args.iter().any(|e| {
+        matches!(argument(e),Expr::Ident(n) if private.contains(n))
+            || element(argument(e), scope).is_some()
+    }) {
         return Ok(());
     }
     let slots = plan.signature.associate(name, args)?;
@@ -44,12 +75,14 @@ fn associate(
             .map(|i| argument(&args[i]).clone())
             .context("optional arguments in a private-record call are not yet supported")?;
         if let Some(record) = plan.records.get(p) {
-            let Expr::Ident(n) = &value else {
-                bail!("private-record calls require scalar record variables");
+            let n = if let Expr::Ident(n) = &value {
+                if !private.contains(n) || scope.get(n).is_none_or(|o| !o.dims.is_empty()) {
+                    bail!("record helper arguments require LOCAL/LOCAL_INIT scalars or scalar record-array elements");
+                }
+                n.as_str()
+            } else {
+                element(&value,scope).context("record helper arguments require scalar record-array elements without calls or vector subscripts")?.0
             };
-            if !private.contains(n) || scope.get(n).is_none_or(|o| !o.dims.is_empty()) {
-                bail!("record arguments to a private-record helper must be LOCAL or LOCAL_INIT scalar records");
-            }
             if records::identity(n, scope) != Some(&record.identity) {
                 bail!("private-record argument `{p}` requires the same declared type as its dummy");
             }
@@ -62,8 +95,7 @@ fn associate(
         if !plan.outputs.contains(p) {
             continue;
         }
-        let root = calls::designator(&actuals[i])
-            .context("private-record output requires variable storage")?;
+        let root = root(&actuals[i]).context("private-record output requires variable storage")?;
         for (j, other) in actuals.iter().enumerate() {
             if i == j {
                 continue;
@@ -84,14 +116,13 @@ fn associate(
     let mut flattened = vec![];
     for (p, value) in plan.signature.params.iter().zip(actuals) {
         if let Some(record) = plan.records.get(p) {
-            let Expr::Ident(n) = value else {
-                unreachable!()
-            };
             for (field, _, _) in &record.fields {
-                flattened.push(id(&format!(
-                    "{n}%{}",
-                    field.strip_prefix(&format!("{p}%")).unwrap()
-                )));
+                let field = field.strip_prefix(&format!("{p}%")).unwrap();
+                flattened.push(if let Expr::Ident(n) = &value {
+                    id(&format!("{n}%{field}"))
+                } else {
+                    Expr::Call(format!("@record_component:{field}"), vec![value.clone()])
+                });
             }
         } else {
             flattened.push(value);
@@ -144,7 +175,7 @@ fn rewrite(
 }
 
 pub(super) fn prepare(program: &mut Program) -> Result<()> {
-    if !records::active() || !records::has_locality(&program.body) {
+    if !records::active() || !records::has_concurrent(&program.body) {
         return Ok(());
     }
     fn collect(
@@ -257,11 +288,22 @@ pub(super) fn prepare(program: &mut Program) -> Result<()> {
         let function = matches!(&helper, Stmt::Function { .. });
         let (name, params, body) = match &mut helper {
             Stmt::Subroutine {
-                name, params, body, ..
+                name,
+                params,
+                body,
+                elemental,
+                ..
             }
             | Stmt::Function {
-                name, params, body, ..
-            } => (name, params, body),
+                name,
+                params,
+                body,
+                elemental,
+                ..
+            } => {
+                *elemental = false;
+                (name, params, body)
+            }
             _ => unreachable!(),
         };
         let private = plan.records.keys().cloned().collect();
@@ -403,7 +445,7 @@ pub(super) fn prepare(program: &mut Program) -> Result<()> {
                                 _ => None,
                             })
                             .collect();
-                        rewrite(&mut body[1..], plans, &private, &scope, used)?;
+                        rewrite(body, plans, &private, &scope, used)?;
                     }
                 }
             }

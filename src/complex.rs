@@ -1532,7 +1532,8 @@ impl Lower {
                     );
                 }
                 if !(matches!(e, Expr::Ident(_))
-                    || matches!(e,Expr::Call(name,_) if s.contains_key(name)))
+                    || matches!(e,Expr::Call(name,_) if s.contains_key(name))
+                    || record_component(e,s).is_some())
                 {
                     *e = self.pair(e.clone(), s, out)?.pack();
                 }

@@ -77,13 +77,12 @@ fn resolve(name: &str, definitions: &Definitions, resolved: &mut HashMap<String,
 
 pub(super) fn active() -> bool { TYPES.with(|t|!t.borrow().is_empty()) }
 
-pub(super) fn has_locality(body: &[Stmt]) -> bool {
+pub(super) fn has_concurrent(body: &[Stmt]) -> bool {
     body.iter().any(|s| match s {
-        Stmt::CallSub {name,args} if matches!(name.as_str(),"@do_concurrent"|"@concurrent_reduce") =>
-            args.iter().any(|e|matches!(e,Expr::Call(tag,_) if matches!(tag.as_str(),"@locality:local"|"@locality:local_init"))),
-        Stmt::Module {body,..}|Stmt::Function {body,..}|Stmt::Subroutine {body,..}|Stmt::Block {body}|Stmt::Do {body,..}|Stmt::DoWhile {body,..} => has_locality(body),
-        Stmt::If {then_body,else_body,..} => has_locality(then_body)||else_body.as_ref().is_some_and(|b|has_locality(b)),
-        Stmt::SelectCase {cases,default,..} => cases.iter().any(|c|has_locality(&c.body))||default.as_ref().is_some_and(|b|has_locality(b)),
+        Stmt::CallSub {name,..} if matches!(name.as_str(),"@do_concurrent"|"@concurrent_reduce") => true,
+        Stmt::Module {body,..}|Stmt::Function {body,..}|Stmt::Subroutine {body,..}|Stmt::Block {body}|Stmt::Do {body,..}|Stmt::DoWhile {body,..} => has_concurrent(body),
+        Stmt::If {then_body,else_body,..} => has_concurrent(then_body)||else_body.as_ref().is_some_and(|b|has_concurrent(b)),
+        Stmt::SelectCase {cases,default,..} => cases.iter().any(|c|has_concurrent(&c.body))||default.as_ref().is_some_and(|b|has_concurrent(b)),
         _=>false,
     })
 }
@@ -96,7 +95,7 @@ pub(super) fn prepare(program: &Program) {
         })
     }
     DEFINED_ASSIGNMENT.with(|v|v.set(false));
-    if !parallel::enabled() && !has_locality(&program.body) {
+    if !parallel::enabled() && !has_concurrent(&program.body) {
         TYPES.with(|t|t.borrow_mut().clear()); return;
     }
     DEFINED_ASSIGNMENT.with(|v|v.set(assignment(&program.body)));

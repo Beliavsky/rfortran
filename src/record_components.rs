@@ -5,6 +5,26 @@
 //! Materialize record elements without flattening owned allocations into values.
 use super::*;
 impl Lower {
+    // Full fixed primitive fields are contiguous within one record. Borrow
+    // both data and definition bits rather than materializing a value section.
+    pub(super) fn primitive_component_actual(&mut self,e:&mut Expr,objects:&mut Objects,
+        prefix:&mut Vec<Stmt>,suffix:&mut Vec<Stmt>)->Result<bool> {
+        let Expr::Call(tag,args)=e else {return Ok(false)};
+        let Some(field)=tag.strip_prefix("@record_component:") else {return Ok(false)};
+        if args.len()!=1 {return Ok(false)}
+        let Some((owner,indices))=self.element(&args[0],objects) else {return Ok(false)};
+        let owner=owner.to_owned();let mut indices=indices.to_vec();
+        let Some(f)=self.fields(&objects[&owner].ty)?.into_iter().find(|f|f.name==field && f.heap.is_none()
+            && !f.dims.is_empty() && matches!(f.kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical)) else {return Ok(false)};
+        self.capture_indices(&mut indices,prefix);
+        self.serial+=1;let temp=format!("@record_argument_field_{}",self.serial);
+        prefix.push(Stmt::ArrayDecl{kind:f.kind.clone(),name:temp.clone(),dims:f.dims.clone()});
+        let storage_name=storage(&owner,&f.name);
+        let first=(1..=f.dims.len()).map(|axis|Expr::Call("lbound".into(),vec![Expr::Ident(storage_name.clone()),Expr::IntLit(axis.to_string())])).collect();
+        prefix.push(Stmt::CallSub{name:"@record_field_borrow".into(),args:vec![Expr::Ident(temp.clone()),select(&owner,&f,first,&indices)?,Expr::IntLit(component_count(&f)?.to_string())]});
+        suffix.push(Stmt::CallSub{name:"@record_field_unborrow".into(),args:vec![Expr::Ident(temp.clone())]});
+        *e=Expr::Ident(temp);Ok(true)
+    }
     /// A function can change an owned descriptor just as a subroutine can.
     /// Evaluate its result before writing staged components back to the owner.
     pub(super) fn component_function_actuals(&mut self,e:&mut Expr,objects:&mut Objects,prefix:&mut Vec<Stmt>)->Result<bool> {
@@ -12,6 +32,7 @@ impl Lower {
         let Some(mut declaration)=self.scalar_result_declarations.get(name).cloned() else{return Ok(false)};
         let mut suffix=vec![];
         for (i,actual) in args.iter_mut().enumerate() {
+            if self.record_field_procedures.contains(name) && self.primitive_component_actual(actual,objects,prefix,&mut suffix)? {continue;}
             if !self.readonly_actual(name,i,objects) {
                 self.heap_component_actual(actual,objects,prefix,Some(&mut suffix))?;
             }

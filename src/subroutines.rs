@@ -279,7 +279,8 @@ fn expand(body: &mut Vec<Stmt>, routines: &HashMap<String, Routine>, active: &mu
                         let intent = intents.get(param).map(String::as_str).unwrap_or("");
                         // An expression passed to a dummy without INTENT is an input.
                         let element=matches!(actual,Expr::Index(n,_)|Expr::Call(n,_) if arrays.contains(n));
-                        let input = intent == "intent(in)" || !intent.starts_with("intent(") && !matches!(actual, Expr::Ident(_)) && !element;
+                        let borrowed_element=element && routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && intent==crate::optional::BORROW_INPUT));
+                        let input = intent == "intent(in)" && !borrowed_element || !intent.starts_with("intent(") && !matches!(actual, Expr::Ident(_)) && !element;
                         if input {
                             if let Expr::Ident(actual)=actual {
                                 if routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && intent==crate::optional::BORROW_INPUT)) {

@@ -174,6 +174,7 @@ type Objects = HashMap<String, Object>;
 // The marker is consumed by `body` before the call leaves this lowering pass.
 const PREPARED_CALL: &str = "@record_prepared:";
 struct Lower {
+    record_field_procedures: std::collections::HashSet<String>,
     component_definitions: HashMap<String, Vec<Stmt>>,
     constructor_components: HashMap<String, Vec<String>>,
     types: HashMap<String, Vec<Field>>,
@@ -647,6 +648,7 @@ impl Lower {
                     {
                         self.scalar_procedures.insert(name.clone());
                     }
+                    if params.iter().any(|p|p.contains("$parallel_record_field")) {self.record_field_procedures.insert(name.clone());}
                     self.readonly_params.insert(name.clone(),params.iter().map(|p|body.iter().any(|s|match s {
                             Stmt::DerivedDecl {names,attributes,..}=>names.contains(p) && attributes.iter().any(|a|a=="intent(in)"),
                             Stmt::DummyIntent {name,intent}=>name==p && intent=="intent(in)",
@@ -2043,6 +2045,7 @@ impl Lower {
                         if let Some(original) = &prepared { *name = original.clone(); }
                         if !name.starts_with("@heap_record_") {
                             for (i,actual) in args.iter_mut().enumerate() {
+                                if self.record_field_procedures.contains(name) && self.primitive_component_actual(actual,&mut objects,&mut prefix,&mut suffix)? {continue;}
                                 let back=if self.readonly_actual(name,i,&objects) {None} else {Some(&mut suffix)};
                                 self.heap_component_actual(actual,&mut objects,&mut prefix,back)?;
                             }
@@ -2292,6 +2295,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         array_shapes: HashMap::new(),
         array_components: HashMap::new(),
         scalar_components: HashMap::new(),
+        record_field_procedures: std::collections::HashSet::new(),
         dummies: vec![],
         layouts: HashMap::new(),
         scalar_procedures: Default::default(),

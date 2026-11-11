@@ -277,7 +277,7 @@ pub(super) fn emit(
     // Their masks must start with empty private descriptors, rather than
     // copying caller storage whose size has not been computed yet. Cleanup
     // inserted by heap::cleanup frees both data and masks at lexical exits.
-    fn heap_bindings(body: &[IStmt], bound: &mut HashSet<String>) {
+    fn heap_bindings(body: &[IStmt], bound: &mut HashSet<String>, fields:&mut HashSet<String>, data:&mut HashSet<String>) {
         for stmt in body {
             match stmt {
                 IStmt::Call(tag, args) if tag == "@heap_bind" => {
@@ -285,25 +285,29 @@ pub(super) fn emit(
                         bound.insert(n.clone());
                     }
                 }
+                IStmt::Call(tag,args) if tag=="@record_field_borrow" => {
+                    if let Some(IExpr::Ident(n))=args.first() {fields.insert(n.clone());data.insert(n.clone());}
+                    if let Some(IExpr::Ident(n))=args.get(2) {fields.insert(n.clone());}
+                }
                 IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } | IStmt::Block { body } => {
-                    heap_bindings(body, bound)
+                    heap_bindings(body, bound,fields,data)
                 }
                 IStmt::If {
                     then_body,
                     else_body,
                     ..
                 } => {
-                    heap_bindings(then_body, bound);
+                    heap_bindings(then_body, bound,fields,data);
                     if let Some(body) = else_body {
-                        heap_bindings(body, bound);
+                        heap_bindings(body, bound,fields,data);
                     }
                 }
                 IStmt::SelectCase { cases, default, .. } => {
                     for case in cases {
-                        heap_bindings(&case.body, bound);
+                        heap_bindings(&case.body, bound,fields,data);
                     }
                     if let Some(body) = default {
-                        heap_bindings(body, bound);
+                        heap_bindings(body, bound,fields,data);
                     }
                 }
                 _ => {}
@@ -311,8 +315,15 @@ pub(super) fn emit(
         }
     }
     let mut bound_heaps = HashSet::new();
-    heap_bindings(body, &mut bound_heaps);
+    let mut bound_fields=HashSet::new();let mut field_data=HashSet::new();
+    heap_bindings(body, &mut bound_heaps,&mut bound_fields,&mut field_data);
+    let budget=field_data.iter().fold(0usize,|total,n|total.saturating_add(arrays.get(n).copied().unwrap_or(1)));
+    if budget>4096 {
+        crate::concurrent_reduce::parallel::report("serial fallback: borrowed record fields exceed 4096-component worker budget");
+        return Ok(false);
+    }
     let mut worker_heaps = vec![];
+    let mut worker_fields=vec![];
     used.insert(var.into());
     let mut names = used.into_iter().collect::<Vec<_>>();
     names.sort();
@@ -336,6 +347,9 @@ pub(super) fn emit(
             // may still be a placeholder until @heap_bind runs in the worker.
             worker_heaps.push((n, kind));
             continue;
+        }
+        if bound_fields.contains(&n) {
+            worker_fields.push((n,kind));continue;
         }
         if !matches!(
             storage,
@@ -526,6 +540,15 @@ pub(super) fn emit(
                 }
             }
             wa.insert(n.clone(), 1);
+        }
+        // Borrow targets are local binding slots, not captured scratch buffers.
+        // A captured array already uses Storage::Borrowed; borrowing that again
+        // would either fail or accidentally share a worker's reference slot.
+        for (n,kind) in &worker_fields {
+            let count=arrays.get(n).copied().unwrap_or(1);
+            let storage=fixed_storage(&mut w,module,count.checked_mul(8).context("record field size overflow")?,false)?;
+            if arrays.contains_key(n) {wa.insert(n.clone(),count);}
+            match kind {1=>{wr.insert(n.clone(),storage);},2=>{wb.insert(n.clone(),storage);},_=>{wi.insert(n.clone(),storage);}}
         }
         for (i, (n, original, kind)) in captures.iter().enumerate() {
             let address = w
