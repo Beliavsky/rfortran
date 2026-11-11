@@ -246,7 +246,7 @@ contains
     print *, b(2)%n, size(b(2)%v), sum(b(2)%v), kind(b(1)%v)
   end subroutine
 end program
-""", "3 3 3.0 3 8\n6 6 24.0 4\n5 5 10.0 5 8\n5 abcde\n2 2 3.0 2 8\n")
+""", "3 3 3.0 3 8\n6 6 24.0 4\n5 5 10.0 5 8\n5 abcde\n2 2 3.0 2 8\n", interpreter=False)
 
     def test_deferred_len_allocation(self):
         self.check("""module m

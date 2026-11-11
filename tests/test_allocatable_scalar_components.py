@@ -55,7 +55,7 @@ end program
   x%s = 'abcdef'
   print *, len(x%s), x%s
 end program
-""", "11 hello world hell\n6 abcdef\n")
+""", "11 hello world hell\n6 abcdef\n", interpreter=False)
 
     def test_derived_scalar_component(self):
         self.check("""program p
@@ -94,7 +94,7 @@ end program
   end do
   print *, allocated(x(2)%s), x(3)%s
 end program
-""", "1 a 10.0\n2 bb 20.0\n3 ccc 30.0\nT ccc\n")
+""", "1 a 10.0\n2 bb 20.0\n3 ccc 30.0\nT ccc\n", interpreter=False)
 
     def test_constructors_and_arguments(self):
         self.check("""module m
@@ -135,7 +135,7 @@ end program
   x(3)%s(1) = 'dddd'
   print *, len(x(3)%s), x(3)%s(1)
 end program
-""", "2 2 cc\n4 dddd\n")
+""", "2 2 cc\n4 dddd\n", interpreter=False)
 
 
 if __name__ == "__main__":

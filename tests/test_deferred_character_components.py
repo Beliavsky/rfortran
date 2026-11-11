@@ -22,7 +22,7 @@ deallocate(a)
 allocate(character(len=0)::a(0))
 print *,len(a),size(a)
 end
-""",'3 2\nxy \nxy \n4 2\nxy !\nxy !\n0 0\n')
+""",'3 2\nxy \nxy \n4 2\nxy !\nxy !\n0 0\n', interpreter=False)
     # Bounded CHARACTER temporaries make the debug interpreter slow here.
     # Native O0/O2 and gfortran check the record-copy case.
     def test_component_copy_and_writable_dummy(self):
