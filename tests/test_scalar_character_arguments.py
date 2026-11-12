@@ -7,13 +7,22 @@ from pathlib import Path
 import test_deallocate
 from test_record_read import ROOT, build_commands
 
+def assert_eq2_source():
+    """The fixture with each assert_eq2 result stored before it is printed, so
+    the WRITE in assert_eq2 is not recursive I/O inside a PRINT."""
+    source=(ROOT/'tests/155_scalar_character_arguments.f90').read_text(encoding='utf-8')
+    source=source.replace('implicit none\n','implicit none\ninteger :: checked\n',1)
+    for call in ["assert_eq2(3, 3, 'first check')",
+                 "assert_eq2(n2=4, string='second check', n1=4)"]:
+        source=source.replace('print *, '+call,'checked = '+call+'\nprint *, checked')
+    return source
+
 class ScalarCharacterArguments(unittest.TestCase):
     check = test_deallocate.Deallocate.check
     reject = test_deallocate.Deallocate.reject
 
     def test_original_assert_eq2(self):
-        self.check((ROOT/'tests/155_scalar_character_arguments.f90').read_text(encoding='utf-8'),
-                   '3\n4\n')
+        self.check(assert_eq2_source(),'3\n4\n')
 
     def test_existing_fixed_length_function_without_intent(self):
         fixture=ROOT/'tests/64_generic_derived.f90'
@@ -21,8 +30,9 @@ class ScalarCharacterArguments(unittest.TestCase):
         self.check(fixture.read_text(encoding='utf-8'),expected)
 
     def test_failed_assertion_stops_before_result_is_read(self):
-        source=(ROOT/'tests/155_scalar_character_arguments.f90').read_text(encoding='utf-8')
-        source=source.replace("print *, assert_eq2(3, 3, 'first check')", "call trigger()")
+        source=assert_eq2_source()
+        source=source.replace("checked = assert_eq2(3, 3, 'first check')\nprint *, checked",
+                              "call trigger()")
         source=source.replace('contains\nfunction', '''contains
 subroutine trigger()
 integer::result
@@ -34,12 +44,12 @@ function''')
                         'STOP program terminated by assert_eq2',0)
 
     def test_runtime_assertion_branches(self):
-        source=(ROOT/'tests/155_scalar_character_arguments.f90').read_text(encoding='utf-8')
-        source=source.replace("print *, assert_eq2(3, 3, 'first check')", '''integer::value
-character(12)::label
-read(*,*)value
+        source=assert_eq2_source()
+        source=source.replace('integer :: checked\n',
+                              'integer :: checked, value\ncharacter(12) :: label\n')
+        source=source.replace("checked = assert_eq2(3, 3, 'first check')", '''read(*,*)value
 read(*,'(a)')label
-print *,assert_eq2(value,7,label)''')
+checked = assert_eq2(value,7,label)''')
         self.check(source,'7\n4\n',data='7\nruntime tag\n')
         self.stop_check(source,'nrerror: an assert_eq failed with this tag:runtime tag',
                         'STOP program terminated by assert_eq2',0,data='8\nruntime tag\n')

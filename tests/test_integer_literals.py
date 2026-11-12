@@ -62,7 +62,7 @@ end program main
             ("2147483648_4", "out of range for kind 4"),
             ("9223372036854775808_8", "64-bit range"),
             ("1_3", "unsupported integer literal kind 3"),
-            ("1_16", "unsupported integer literal kind 16"),
+            ("1_5", "unsupported integer literal kind 5"),
             ("1_missing", "not a previously defined integer PARAMETER"),
         ]
         with tempfile.TemporaryDirectory(prefix="integer-literal-errors-") as tmp:
