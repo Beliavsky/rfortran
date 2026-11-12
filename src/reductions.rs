@@ -1869,6 +1869,56 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 }
                 output.push(Stmt::Block{body:capture});continue;
             }
+            if name=="@write" && args.len()>=2 && args[2..].iter().any(|e|matches!(e,Expr::Call(n,_) if n=="@write_option:iostat"||n=="@write_option:iomsg")) {
+                let mut args=args.clone();
+                if matches!(&args[1],Expr::Call(n,_) if n=="@list_directed") {
+                    // List-directed output either completes or stops the
+                    // program, so IOSTAT= is zero afterwards.
+                    let after=crate::output::status_controls(&mut args)?;
+                    let mut body=vec![Stmt::CallSub{name:"@write".into(),args}];
+                    body.extend(after);
+                    lower_body(&mut body,&symbols,serial)?;
+                    output.extend(prefix);output.push(Stmt::Block{body});continue;
+                }
+                // Formatted output reports a bad format or a failed write in
+                // IOSTAT= and IOMSG=, as defined child output does.
+                if crate::parameters::integer_constant(&args[0]).ok()!=Some(6) {crate::file_io::unit(&args[0], &symbols.variables)?;}
+                *serial+=1;
+                let ios=format!("@write_status_{serial}");
+                let msg=format!("@write_message_{serial}");
+                let (mut status,mut message,mut advance)=(None,None,int(1));
+                let mut first=2;
+                let mut body=vec![Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![ios.clone()]},
+                    Stmt::VarDecl{kind:TypeSpec::Character(Some(256)),names:vec![msg.clone()]}];
+                while let Some(Expr::Call(option,values))=args.get(first) {
+                    let Some(option)=option.strip_prefix("@write_option:") else {break;};
+                    match option {
+                        "iostat"=>status=Some(values[0].clone()),
+                        "iomsg"=>message=Some(values[0].clone()),
+                        "advance"=>advance=advance_control(&values[0],&symbols.variables,&mut body,serial)?,
+                        _=>bail!("unsupported WRITE control `{option}`"),
+                    }
+                    first+=1;
+                }
+                body.push(Stmt::Assign{name:ios.clone(),value:int(0)});
+                body.push(Stmt::Assign{name:msg.clone(),value:Expr::Str(String::new())});
+                let mut checked=vec![args[0].clone(),args[1].clone(),advance,Expr::Ident(ios.clone()),Expr::Ident(msg.clone())];
+                checked.extend_from_slice(&args[first..]);
+                body.push(Stmt::CallSub{name:"@write_checked".into(),args:checked});
+                let failed=bin(BinOp::Ne,Expr::Ident(ios.clone()),int(0));
+                match status {
+                    Some(Expr::Ident(n))=>body.push(Stmt::Assign{name:n,value:Expr::Ident(ios.clone())}),
+                    Some(Expr::Index(n,i)|Expr::Call(n,i))=>body.push(Stmt::AssignIndex{name:n,indices:i,value:Expr::Ident(ios.clone())}),
+                    Some(_)=>bail!("WRITE IOSTAT requires a scalar INTEGER variable"),
+                    None=>body.push(Stmt::If{cond:failed.clone(),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Ident(msg.clone())]}],else_body:None}),
+                }
+                if let Some(target)=message {
+                    let Expr::Ident(n)=target else {bail!("WRITE IOMSG requires a scalar CHARACTER variable");};
+                    body.push(Stmt::If{cond:failed,then_body:vec![Stmt::Assign{name:n,value:Expr::Ident(msg.clone())}],else_body:None});
+                }
+                lower_body(&mut body,&symbols,serial)?;
+                output.extend(prefix);output.push(Stmt::Block{body});continue;
+            }
             if name=="@write" {
                 if crate::parameters::integer_constant(&args[0]).ok()!=Some(6) {
                     crate::file_io::unit(&args[0], &symbols.variables)?;

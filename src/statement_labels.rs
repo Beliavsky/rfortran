@@ -576,24 +576,89 @@ fn unresolved_end(body: &[Stmt]) -> bool {
     })
 }
 
-/// Expose INQUIRE ERR= as an ordinary transfer before label resolution.
+fn rename_status(stmt: &mut Stmt, name: &str) {
+    match stmt {
+        Stmt::CallSub { args, .. } => for arg in args {
+            crate::procedure_arguments::visit_expr(arg, &mut |e| {
+                if matches!(e, Expr::Ident(n) if n == crate::input::BRANCH_STATUS) { *e = Expr::Ident(name.into()); }
+            });
+        },
+        Stmt::Block { body } => for s in body { rename_status(s, name); },
+        _ => {}
+    }
+}
+
+/// Expose READ ERR=, END= and EOR= that follow another control, and
+/// unformatted WRITE ERR=, as branches on the status the statement stores.
+/// Without IOSTAT=, a condition with no branch stops the program.
+fn io_branches(body: &mut [Stmt], temps: &mut Vec<String>) -> Result<()> {
+    for stmt in body {
+        match stmt {
+            Stmt::Block { body } if matches!(body.last(), Some(Stmt::CallSub { name, .. }) if name == crate::input::IO_BRANCHES) => {
+                let Some(Stmt::CallSub { args, .. }) = body.pop() else { unreachable!() };
+                let [status, Expr::Logical(user), controls @ ..] = args.as_slice() else { bail!("invalid I/O branch controls") };
+                let status = if matches!(status, Expr::Ident(n) if n == crate::input::BRANCH_STATUS) {
+                    let temp = format!("@transfer_status_{}", temps.len());
+                    temps.push(temp.clone());
+                    for s in body.iter_mut() { rename_status(s, &temp); }
+                    Expr::Ident(temp)
+                } else { status.clone() };
+                let compare = |op, value: i64| Expr::Bin(op, Box::new(status.clone()), Box::new(Expr::IntLit(value.to_string())));
+                let mut handled = (false, false, false);
+                for control in controls {
+                    let Expr::Call(key, values) = control else { bail!("invalid I/O branch control") };
+                    let [target] = values.as_slice() else { bail!("invalid I/O branch label") };
+                    number(target)?;
+                    let cond = match key.as_str() {
+                        "@io_spec:end" => { handled.0 = true; compare(BinOp::Eq, -1) }
+                        "@io_spec:eor" => { handled.1 = true; compare(BinOp::Eq, -2) }
+                        _ => { handled.2 = true; compare(BinOp::Gt, 0) }
+                    };
+                    body.push(Stmt::If { cond, then_body: vec![Stmt::CallSub { name: "@goto".into(), args: vec![target.clone()] }], else_body: None });
+                }
+                if !user {
+                    let stop = |cond, message: &str| Stmt::If { cond, then_body: vec![Stmt::CallSub {
+                        name: "@error_stop".into(), args: vec![Expr::Str(message.into())] }], else_body: None };
+                    if !handled.0 { body.push(stop(compare(BinOp::Eq, -1), "end of file during READ")); }
+                    if !handled.1 { body.push(stop(compare(BinOp::Eq, -2), "end of record during READ")); }
+                    if !handled.2 { body.push(stop(compare(BinOp::Gt, 0), "input/output error")); }
+                }
+            }
+            Stmt::If { then_body, else_body, .. } => {
+                io_branches(then_body, temps)?;
+                if let Some(body) = else_body { io_branches(body, temps)?; }
+            }
+            Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => io_branches(body, temps)?,
+            Stmt::SelectCase { cases, default, .. } => {
+                for case in cases { io_branches(&mut case.body, temps)?; }
+                if let Some(body) = default { io_branches(body, temps)?; }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Expose ERR= of OPEN, CLOSE, INQUIRE and file positioning statements as an
+/// ordinary transfer before label resolution.
 fn inquiry_errors(body: &mut [Stmt], temps: &mut Vec<String>) -> Result<()> {
     for stmt in body {
         match stmt {
-            Stmt::CallSub{name,args} if name=="@io_inquire" => {
+            Stmt::CallSub{name,args} if name.starts_with("@io_") && args.iter().any(|a|matches!(a,Expr::Call(n,_) if n=="@io_spec:err")) => {
+                let operation=name.trim_start_matches("@io_").to_owned();
                 let errors:Vec<usize>=args.iter().enumerate().filter_map(|(i,a)|
                     matches!(a,Expr::Call(n,_) if n=="@io_spec:err").then_some(i)).collect();
-                if errors.len()>1 {bail!("inquire: duplicate err control");}
+                if errors.len()>1 {bail!("{operation}: duplicate err control");}
                 if let Some(&index)=errors.first() {
                     let Expr::Call(_,values)=args.remove(index) else {unreachable!()};
-                    let [target]=values.as_slice() else {bail!("invalid INQUIRE ERR label");};
+                    let [target]=values.as_slice() else {bail!("invalid {} ERR label",operation.to_uppercase());};
                     number(target)?;
                     let statuses:Vec<&Expr>=args.iter().filter_map(|a|match a {
                         Expr::Call(n,v) if n=="@io_spec:iostat" && v.len()==1=>Some(&v[0]),_=>None,
                     }).collect();
-                    if statuses.len()>1 {bail!("inquire: duplicate iostat control");}
+                    if statuses.len()>1 {bail!("{operation}: duplicate iostat control");}
                     let status=if let Some(value)=statuses.first() {(*value).clone()} else {
-                        let temp=format!("@inquire_err_status_{}",temps.len());temps.push(temp.clone());
+                        let temp=format!("@{operation}_err_status_{}",temps.len());temps.push(temp.clone());
                         args.push(Expr::Call("@io_spec:iostat".into(),vec![Expr::Ident(temp.clone())]));
                         Expr::Ident(temp)
                     };
@@ -621,6 +686,7 @@ fn inquiry_errors(body: &mut [Stmt], temps: &mut Vec<String>) -> Result<()> {
 fn unit(body: &mut Vec<Stmt>) -> Result<()> {
     let mut inquiry_temps=vec![];
     inquiry_errors(body,&mut inquiry_temps)?;
+    io_branches(body,&mut inquiry_temps)?;
     if !inquiry_temps.is_empty() {body.insert(0,Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:inquiry_temps});}
     let mut labels = HashSet::new();
     let mut targets = vec![];
@@ -741,14 +807,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn preserves_io_targets_after_validating_and_removing_label_markers() {
+    fn lowers_io_err_after_validating_and_removing_label_markers() {
         let source="program main\nopen(20,file='data.txt',status='old',action='read',err=1234)\n1234 continue\nend program main";
         let program =
             crate::parser::parse_with_src(source, &crate::lexer::lex(source), "labels.f90")
                 .unwrap();
         let program = resolve(program).unwrap();
-        assert!(program.body.iter().any(|s|matches!(s,Stmt::CallSub{name,args} if name=="@io_open"
-            && args.iter().any(|a|matches!(a,Expr::Call(n,v) if n=="@io_spec:err" && v==&vec![Expr::IntLit("1234".into())])))));
+        // ERR= becomes IOSTAT= into a temporary that a branch tests.
+        fn opens(body: &[Stmt]) -> Vec<&Vec<Expr>> {
+            body.iter().flat_map(|s| match s {
+                Stmt::CallSub { name, args } if name == "@io_open" => vec![args],
+                Stmt::Block { body } | Stmt::DoWhile { body, .. } => opens(body),
+                _ => vec![],
+            }).collect()
+        }
+        let open = opens(&program.body);
+        assert_eq!(open.len(), 1);
+        assert!(!open[0].iter().any(|a|matches!(a,Expr::Call(n,_) if n=="@io_spec:err")));
+        assert!(open[0].iter().any(|a|matches!(a,Expr::Call(n,v) if n=="@io_spec:iostat"
+            && matches!(v.as_slice(),[Expr::Ident(t)] if t.starts_with("@open_err_status_")))));
         assert!(!program.body.iter().any(|s|matches!(s,Stmt::CallSub{name,..} if matches!(name.as_str(),"@continue"|"@statement_label"))));
     }
 }

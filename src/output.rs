@@ -83,6 +83,33 @@ pub(crate) fn write_controls(
         }
     }
     let unit = unit.ok_or("WRITE requires UNIT")?;
+    let key = |o: &Expr| match o { Expr::Call(n, _) => n.trim_start_matches("@write_option:").to_owned(), _ => String::new() };
+    let value = |o: &Expr| match o { Expr::Call(_, v) => v[0].clone(), _ => unreachable!() };
+    // WRITE with ERR= writes into an IOSTAT variable, or a temporary, on
+    // which the label pass branches.
+    let mut marker = None;
+    if options.iter().any(|o| key(o) == "err") {
+        let user = options.iter().find(|o| key(o) == "iostat").map(&value);
+        let status = user.clone().unwrap_or_else(|| Expr::Ident(crate::input::BRANCH_STATUS.into()));
+        let mut args = vec![status.clone(), Expr::Logical(user.is_some())];
+        args.extend(options.iter().filter(|o| key(o) == "err").map(|o| Expr::Call("@io_spec:err".into(), vec![value(o)])));
+        marker = Some(Stmt::CallSub { name: crate::input::IO_BRANCHES.into(), args });
+        options.retain(|o| !matches!(key(o).as_str(), "iostat" | "err"));
+        options.push(Expr::Call("@write_option:iostat".into(), vec![status]));
+    }
+    let write = write_controls_resolved(unit, format, options, items)?;
+    Ok(match marker {
+        Some(marker) => Stmt::Block { body: vec![write, marker] },
+        None => write,
+    })
+}
+
+fn write_controls_resolved(
+    unit: Expr,
+    format: Option<Expr>,
+    options: Vec<Expr>,
+    items: Vec<Expr>,
+) -> std::result::Result<Stmt, &'static str> {
     // Without FMT the WRITE is unformatted: [unit, control, status, pos, items].
     let Some(format) = format else {
         let mut message = None;
@@ -115,6 +142,27 @@ pub(crate) fn write_controls(
 }
 
 type Symbols = HashMap<String, (TypeSpec, Vec<Expr>)>;
+
+/// Remove IOSTAT= and IOMSG= from a WRITE that either completes or stops the
+/// program, returning the statements that then set IOSTAT= to zero.
+pub(crate) fn status_controls(args: &mut Vec<Expr>) -> Result<Vec<Stmt>> {
+    let mut after = vec![];
+    let mut kept = vec![];
+    for (i, arg) in std::mem::take(args).into_iter().enumerate() {
+        match &arg {
+            Expr::Call(n, v) if i >= 2 && n == "@write_option:iostat" => after.push(match &v[0] {
+                Expr::Ident(name) => Stmt::Assign { name: name.clone(), value: int(0) },
+                Expr::Index(name, indices) | Expr::Call(name, indices) => Stmt::AssignIndex { name: name.clone(), indices: indices.clone(), value: int(0) },
+                _ => bail!("WRITE IOSTAT requires a scalar INTEGER variable"),
+            }),
+            Expr::Call(n, v) if i >= 2 && n == "@write_option:iomsg" => after.push(Stmt::CallSub {
+                name: crate::initialized::MAY_DEFINE.into(), args: vec![v[0].clone()] }),
+            _ => kept.push(arg),
+        }
+    }
+    *args = kept;
+    Ok(after)
+}
 
 // Most generated allocation/bounds checks contain no output. Do not build
 // their lexical environments merely to traverse code this pass cannot change.
@@ -680,8 +728,12 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                     }
                 }
             }
+            let mut status_after = vec![];
             let selected = if let Stmt::CallSub { name, args } = stmt {
                 if name=="@write" && matches!(&args[0],Expr::Ident(n) if matches!(symbols.get(n),Some((TypeSpec::Character(_),dims)) if dims.is_empty())) {
+                    // Internal output either completes or stops the program,
+                    // so IOSTAT= is zero afterwards and IOMSG= is unchanged.
+                    status_after=status_controls(args)?;
                     let Expr::Ident(target)=&args[0] else {unreachable!()};
                     let (TypeSpec::Character(length),_)=&symbols[target] else {unreachable!()};
                     if args[2..].iter().any(|e|matches!(e,Expr::Call(n,_) if n.starts_with("@write_option:"))) {
@@ -770,6 +822,7 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                     Stmt::CallSub {name:"@format_end".into(),args:vec![id(&handle)]}
                 });
                 if let Some(store)=internal_store {inner.push(store);}
+                inner.extend(status_after);
                 *stmt = Stmt::Block { body: inner };
                 continue;
             }

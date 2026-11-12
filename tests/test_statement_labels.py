@@ -78,12 +78,13 @@ end subroutine bad
 end program main
 """, "undefined statement label 10")
 
-    def test_err_branch_is_not_silently_ignored(self):
-        self.reject("""program main
+    def test_open_err_branch_is_taken(self):
+        self.check("""program main
 open(20,file='missing.txt',status='old',action='read',err=1234)
+write(*,*) 'opened'
 1234 write(*,*) 'handler'
 end program main
-""", "unsupported I/O control `err`")
+""", " handler\n")
 
 
 if __name__ == "__main__":

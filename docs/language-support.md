@@ -418,10 +418,20 @@ identifier outside statement context. Labelled output, input, assignments,
 single-line IF statements, and supported file operations use the same behavior
 as their unlabelled forms.
 
-Labels do not yet enable GOTO, labelled DO termination, FORMAT statements, or
-I/O control transfers through `ERR=` and `EOR=`. READ supports the forward
-`END=` transfers described under [File and standard input](#file-and-standard-input). Unsupported controls
-are rejected rather than ignored. Run `python tests/test_statement_labels.py`
+GOTO, labelled DO termination and FORMAT statements are supported. READ supports the forward
+`END=` transfers described under [File and standard input](#file-and-standard-input).
+`ERR=`, `EOR=` and `END=` may also be combined with each other and with
+IOSTAT= and IOMSG= on READ; `ERR=` is accepted on WRITE, OPEN, CLOSE,
+INQUIRE and file positioning statements. Each stores into the IOSTAT
+variable, or a temporary, and branches on it: END= at end of file, EOR= at end
+of record, ERR= on an error. Without IOSTAT=, a condition with no branch stops
+the program, so an end of file under ERR= alone still stops it. A formatted
+WRITE to a file or standard output with an explicit format reports an invalid
+format or a failed write in IOSTAT= and IOMSG=. List-directed and internal
+WRITE output either completes or stops the program, so for them IOSTAT= is
+zero afterwards and ERR= never branches. Run
+`python tests/test_io_err_branches.py` for these. Unsupported controls are
+rejected rather than ignored. Run `python tests/test_statement_labels.py`
 for interpreter/native O0/O2 checks with gfortran comparisons.
 
 ### Declaration diagnostics
@@ -4550,8 +4560,9 @@ element order, implied-DO lists, and derived-type objects and arrays,
 component by component unless a supported defined unformatted binding is present.
 READ and WRITE accept `pos=` (the byte position, counted from 1),
 IOSTAT (negative at end of file) and IOMSG; without IOSTAT, an end of file or
-error stops the program. REWIND repositions the file. COMPLEX values, ERR=,
-END= and unformatted sequential or direct access are not yet supported.
+error stops the program; ERR= and END= branch as described under
+[Statement labels](#statement-labels). REWIND repositions the file. COMPLEX
+values and unformatted sequential or direct access are not yet supported.
 
 Sequential formatted files support `OPEN(unit=20,file='data.txt',status='old',action='read')`,
 `READ(20,'(a)') text`, `BACKSPACE(20)`, `REWIND(20)`, and `CLOSE(20)`.

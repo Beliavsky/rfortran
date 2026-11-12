@@ -55,7 +55,7 @@ pub(crate) fn lower(
         if operation != "open" && operation!="inquire" && !matches!(key.as_str(), "unit" | "iostat" | "iomsg" | "err") && !(operation=="close" && key=="status") {
             bail!("{} currently supports UNIT, IOSTAT, IOMSG and ERR{}", operation.to_uppercase(), if operation == "close" { " and STATUS" } else { "" });
         }
-        if operation=="open" && matches!(key.as_str(),"name"|"opened"|"number"|"exist"|"named"|"err") {bail!("OPEN: unsupported I/O control `{key}`");}
+        if operation=="open" && matches!(key.as_str(),"name"|"opened"|"number"|"exist"|"named") {bail!("OPEN: unsupported I/O control `{key}`");}
         if controls.insert(key.clone(), value).is_some() {
             bail!("{operation}: duplicate {key} control");
         }

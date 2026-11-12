@@ -277,6 +277,8 @@ read (iu, *, end=10) x(1)
 read (iu, '(a)') line
 read (line, *) x(2)
 read (line, *, iostat=ios) x(3)
+read (iu, *, err=20) n
+20 continue
 read (*, *) n
 read *, n
 if (n > 0) read (iu, *) x(3)
@@ -304,7 +306,7 @@ end program p
         self.assertIn('OPEN in `load` has no IOSTAT= or ERR=, so failing to open the file stops the program', stderr)
         self.assertEqual(stderr.count('READ from a file in `load` has no IOSTAT=, ERR= or END='), 3, stderr)
         self.assertIn('READ from an internal file in `load` has no IOSTAT=, ERR= or END=, so text that is not a valid value', stderr)
-        for line in (10, 12, 15, 16, 20):
+        for line in (10, 12, 15, 16, 22):
             self.assertIn(f'example.f90:{line}:', stderr)
         code, stderr = self.check(program, ['-Werror=unhandled-io-error'])
         self.assertNotEqual(code, 0)

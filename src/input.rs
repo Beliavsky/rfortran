@@ -88,7 +88,7 @@ pub(crate) fn read_controls(
     }
     let mut unit = None;
     let mut format = None;
-    let mut option = None;
+    let mut options: Vec<(String, Expr)> = vec![];
     let mut named = false;
     let mut message = None;
     let mut stream_position = None;
@@ -129,14 +129,54 @@ pub(crate) fn read_controls(
                 if star {
                     return Err("only READ UNIT and FMT may use '*'");
                 }
-                if option.is_some() {
-                    return Err("READ currently supports one status or branch control");
-                }
-                option = Some((key, value));
+                options.push((key, value));
             }
         }
     }
     let unit = unit.ok_or("READ requires UNIT")?;
+    // ERR=, EOR=, and END= with another control, read into an IOSTAT
+    // variable (a temporary without IOSTAT=); the label pass then branches on
+    // it. A lone END= keeps its own structured lowering.
+    let branch = |key: &str| matches!(key, "err" | "end" | "eor");
+    let branches: Vec<(String, Expr)> = options.iter().filter(|(k, _)| branch(k)).cloned().collect();
+    let mut branches_marker = None;
+    if !branches.is_empty() && !(options.len() == 1 && options[0].0 == "end") {
+        let others: Vec<(String, Expr)> = options.iter().filter(|(k, _)| !branch(k)).cloned().collect();
+        if others.len() > 1 || others.first().is_some_and(|(k, _)| k != "iostat") {
+            return Err("READ ERR=, END= and EOR= currently combine only with IOSTAT and IOMSG");
+        }
+        let user = others.into_iter().next().map(|(_, v)| v);
+        let status = user.clone().unwrap_or_else(|| Expr::Ident(BRANCH_STATUS.into()));
+        let mut args = vec![status.clone(), Expr::Logical(user.is_some())];
+        args.extend(branches.into_iter().map(|(k, v)| Expr::Call(format!("@io_spec:{k}"), vec![v])));
+        branches_marker = Some(Stmt::CallSub { name: IO_BRANCHES.into(), args });
+        options = vec![("iostat".into(), status)];
+    }
+    if options.len() > 1 {
+        return Err("READ currently supports one status or branch control");
+    }
+    let option = options.pop();
+    let read = read_statement(unit, format, option, stream_position, message, items)?;
+    Ok(match branches_marker {
+        Some(marker) => Stmt::Block { body: vec![read, marker] },
+        None => read,
+    })
+}
+
+/// The status variable that a READ or WRITE with ERR=, END= or EOR= and no
+/// IOSTAT= reads into; the label pass gives each statement its own.
+pub(crate) const BRANCH_STATUS: &str = "@transfer_branch_status";
+/// Follows such a statement: [status, user IOSTAT given, branch controls].
+pub(crate) const IO_BRANCHES: &str = "@transfer_branches";
+
+fn read_statement(
+    unit: Expr,
+    format: Option<Expr>,
+    option: Option<(String, Expr)>,
+    stream_position: Option<Expr>,
+    message: Option<Expr>,
+    items: Vec<Expr>,
+) -> std::result::Result<Stmt, &'static str> {
     // Without FMT the READ is unformatted: [unit, control, status, pos, items].
     let Some(format) = format else {
         if option.as_ref().is_some_and(|(key, _)| key != "iostat") {
