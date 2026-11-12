@@ -7,6 +7,9 @@
 //! Each reference is replaced by the defining expression with the actual
 //! arguments in place of the dummies, converted to the function's type, so
 //! later passes see an ordinary expression of any type, COMPLEX included.
+//! CHARACTER has fixed lengths: an actual of a CHARACTER dummy, and the
+//! value of a CHARACTER function, are assigned to temporaries of the declared
+//! lengths before the statement, which pads or truncates them.
 use crate::ast::{Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};
@@ -14,6 +17,46 @@ use std::collections::{HashMap, HashSet};
 struct Definition {
     dummies: Vec<String>,
     value: Expr,
+    /// The declared CHARACTER type of the function, and of each dummy.
+    result: Option<TypeSpec>,
+    dummy_kinds: Vec<Option<TypeSpec>>,
+    /// The declared type of each dummy.
+    dummy_types: Vec<Option<TypeSpec>>,
+}
+
+/// A CHARACTER type with a declared length, which a value is converted to.
+fn character_length(kind: Option<&TypeSpec>) -> Option<TypeSpec> {
+    matches!(kind, Some(TypeSpec::Character(_) | TypeSpec::CharacterLength(_))).then(|| kind.unwrap().clone())
+}
+
+/// Statements computed before the statement that references a CHARACTER
+/// statement function, and a counter for their temporaries.
+struct Hoisted {
+    prefix: Vec<Stmt>,
+    serial: usize,
+    /// Whether actuals that reference functions are evaluated once, before
+    /// the statement, which a DO WHILE condition does not allow.
+    values: bool,
+}
+
+/// Whether `e` may reference a function, which may have side effects.
+fn references_function(e: &Expr) -> bool {
+    match e {
+        Expr::Call(..) | Expr::Index(..) => true,
+        Expr::Bin(_, a, b) => references_function(a) || references_function(b),
+        Expr::Un(_, a) => references_function(a),
+        _ => false,
+    }
+}
+
+impl Hoisted {
+    fn temporary(&mut self, kind: TypeSpec, value: Expr) -> Expr {
+        self.serial += 1;
+        let name = format!("@statement_function_value_{}", self.serial);
+        self.prefix.push(Stmt::VarDecl { kind, names: vec![name.clone()] });
+        self.prefix.push(Stmt::Assign { name: name.clone(), value });
+        Expr::Ident(name)
+    }
 }
 
 /// Whether `s` belongs to the specification part, where statement functions
@@ -26,6 +69,32 @@ fn specification(s: &Stmt) -> bool {
             | Stmt::DerivedType { .. } | Stmt::Accessibility { .. } | Stmt::GenericInterface { .. }
             | Stmt::OperatorInterface { .. }
     ) || matches!(s, Stmt::CallSub { name, .. } if name == "@data" || name == "@format_statement" || name == crate::equivalence::STATEMENT)
+}
+
+/// The dummies of the statement functions that a specification part seems
+/// to define, for passes before this one: those dummies are only names, not
+/// variables, whatever attributes the declarations of the names give.
+pub(crate) fn definition_dummies(body: &[Stmt]) -> HashSet<String> {
+    let scalars: HashSet<&str> = body.iter().flat_map(|s| match s {
+        Stmt::VarDecl { names, .. } => names.iter().map(String::as_str).collect(),
+        _ => vec![],
+    }).collect();
+    let arrays = declared_arrays(body);
+    let mut out = HashSet::new();
+    for s in body {
+        match s {
+            Stmt::AssignIndex { name, indices, .. } if scalars.contains(name.as_str()) && !arrays.contains(name)
+                && !indices.is_empty() && indices.iter().all(|i| matches!(i, Expr::Ident(_))) => {
+                out.extend(indices.iter().filter_map(|i| match i {
+                    Expr::Ident(n) => Some(n.clone()),
+                    _ => None,
+                }));
+            }
+            s if specification(s) => {}
+            _ => break,
+        }
+    }
+    out
 }
 
 fn substitute(e: &mut Expr, actuals: &HashMap<String, Expr>) {
@@ -45,26 +114,35 @@ fn substitute(e: &mut Expr, actuals: &HashMap<String, Expr>) {
             substitute(b, actuals);
         }
         Expr::Un(_, a) => substitute(a, actuals),
+        // A substring of a CHARACTER dummy, whose actual is a temporary.
+        Expr::Section { name, lower, upper, stride } => {
+            if let Some(Expr::Ident(actual)) = actuals.get(name.as_str()) {
+                *name = actual.clone();
+            }
+            for x in [lower, upper, stride].into_iter().flatten() {
+                substitute(x, actuals);
+            }
+        }
         _ => {}
     }
 }
 
 /// Replace references to statement functions in `e`, innermost first.
-fn expand(e: &mut Expr, definitions: &HashMap<String, Definition>) -> Result<()> {
+fn expand(e: &mut Expr, definitions: &HashMap<String, Definition>, hoisted: &mut Hoisted) -> Result<()> {
     match e {
         Expr::Call(_, args) | Expr::Index(_, args) => {
             for a in args.iter_mut() {
-                expand(a, definitions)?;
+                expand(a, definitions, hoisted)?;
             }
         }
         Expr::Bin(_, a, b) => {
-            expand(a, definitions)?;
-            expand(b, definitions)?;
+            expand(a, definitions, hoisted)?;
+            expand(b, definitions, hoisted)?;
         }
-        Expr::Un(_, a) => expand(a, definitions)?,
+        Expr::Un(_, a) => expand(a, definitions, hoisted)?,
         Expr::Section { lower, upper, stride, .. } => {
             for x in [lower, upper, stride].into_iter().flatten() {
-                expand(x, definitions)?;
+                expand(x, definitions, hoisted)?;
             }
         }
         _ => {}
@@ -74,26 +152,49 @@ fn expand(e: &mut Expr, definitions: &HashMap<String, Definition>) -> Result<()>
             if args.len() != d.dummies.len() {
                 bail!("statement function `{name}` has {} arguments, not {}", d.dummies.len(), args.len());
             }
-            let actuals = d.dummies.iter().cloned().zip(args.iter().cloned()).collect();
+            let mut actuals = HashMap::new();
+            for (((dummy, kind), declared), actual) in d.dummies.iter().zip(&d.dummy_kinds).zip(&d.dummy_types).zip(args.iter()) {
+                // An actual is evaluated once, however often the definition
+                // references its dummy.
+                let actual = match (kind, declared) {
+                    (Some(kind), _) => hoisted.temporary(kind.clone(), actual.clone()),
+                    (None, Some(declared)) if hoisted.values && references_function(actual) => {
+                        hoisted.temporary(declared.clone(), actual.clone())
+                    }
+                    _ => actual.clone(),
+                };
+                actuals.insert(dummy.clone(), actual);
+            }
             let mut value = d.value.clone();
             substitute(&mut value, &actuals);
-            *e = value;
+            // The statement functions that the definition references.
+            expand(&mut value, definitions, hoisted)?;
+            *e = match &d.result {
+                Some(kind) => hoisted.temporary(kind.clone(), value),
+                None => value,
+            };
         }
     }
     Ok(())
 }
 
-fn statements(body: &mut [Stmt], definitions: &HashMap<String, Definition>) -> Result<()> {
-    for s in body {
-        if matches!(s, Stmt::Subroutine { .. } | Stmt::Function { .. } | Stmt::Module { .. }) {
-            continue;
+fn statements(body: &mut Vec<Stmt>, definitions: &HashMap<String, Definition>, serial: &mut usize) -> Result<()> {
+    for mut s in std::mem::take(body) {
+        if !matches!(s, Stmt::Subroutine { .. } | Stmt::Function { .. } | Stmt::Module { .. }) {
+            let mut hoisted = Hoisted { prefix: vec![], serial: *serial, values: !matches!(s, Stmt::DoWhile { .. }) };
+            for e in crate::procedure_arguments::expressions(&mut s) {
+                expand(e, definitions, &mut hoisted)?;
+            }
+            *serial = hoisted.serial;
+            if !hoisted.prefix.is_empty() && matches!(s, Stmt::DoWhile { .. }) {
+                bail!("a CHARACTER statement function in a DO WHILE condition is not yet supported");
+            }
+            body.append(&mut hoisted.prefix);
+            for b in crate::procedure_arguments::children(&mut s) {
+                statements(b, definitions, serial)?;
+            }
         }
-        for e in crate::procedure_arguments::expressions(s) {
-            expand(e, definitions)?;
-        }
-        for b in crate::procedure_arguments::children(s) {
-            statements(b, definitions)?;
-        }
+        body.push(s);
     }
     Ok(())
 }
@@ -196,15 +297,18 @@ fn unit(body: &mut Vec<Stmt>, host: &HashSet<String>, modules: &mut Modules) -> 
                 && (!unknown_module || kinds.contains_key(name))
                 && !indices.is_empty() && indices.iter().all(|i| matches!(i, Expr::Ident(_))));
         if definition {
-            let Stmt::AssignIndex { name, indices, mut value } = s else { unreachable!() };
-            // A definition may use the statement functions before it.
-            expand(&mut value, &definitions)?;
-            let dummies = indices.into_iter().map(|i| match i {
+            let Stmt::AssignIndex { name, indices, value } = s else { unreachable!() };
+            // A definition may use the statement functions before it, which
+            // are expanded where it is referenced.
+            let dummies: Vec<String> = indices.into_iter().map(|i| match i {
                 Expr::Ident(n) => n,
                 _ => unreachable!(),
             }).collect();
+            let dummy_kinds = dummies.iter().map(|d| character_length(kinds.get(d))).collect();
+            let dummy_types = dummies.iter().map(|d| kinds.get(d).cloned()).collect();
+            let result = character_length(kinds.get(&name));
             let value = converted(value, kinds.get(&name));
-            definitions.insert(name, Definition { dummies, value });
+            definitions.insert(name, Definition { dummies, value, result, dummy_kinds, dummy_types });
             continue;
         }
         specifying &= specification(&s) || matches!(s, Stmt::Subroutine { .. } | Stmt::Function { .. } | Stmt::Module { .. });
@@ -219,7 +323,10 @@ fn unit(body: &mut Vec<Stmt>, host: &HashSet<String>, modules: &mut Modules) -> 
             }
         }
         body.retain(|s| !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
-        statements(body, &definitions)?;
+        // A dummy is only a name: POINTER and TARGET do not apply to it.
+        let dummies: HashSet<&String> = definitions.values().flat_map(|d| &d.dummies).collect();
+        body.retain(|s| !matches!(s, Stmt::DummyIntent { name, intent } if dummies.contains(name) && (intent == "pointer" || intent == "target")));
+        statements(body, &definitions, &mut 0)?;
     }
     Ok(())
 }

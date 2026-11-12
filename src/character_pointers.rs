@@ -121,9 +121,13 @@ impl Lower {
     /// The entities of a specification part that are converted.
     fn converted(&self, body: &[Stmt], params: &[String]) -> Scope {
         let attrs = attributes(body);
+        let placeholders = crate::statement_functions::definition_dummies(body);
         let mut out = Scope::new();
         let mut add = |n: &str, kind: &TypeSpec, array: bool| {
             let Some(l) = length(kind) else { return };
+            if placeholders.contains(n) {
+                return;
+            }
             if !self.lengths.contains(&l) {
                 return;
             }

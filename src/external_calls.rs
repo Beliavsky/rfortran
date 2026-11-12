@@ -1402,6 +1402,24 @@ fn entry_point(name: &str, params: &[String], body: &[Stmt], dummies: &[(TypeSpe
     };
     let (moved, kept): (Vec<Stmt>, Vec<Stmt>) = native.into_iter().partition(|s| automatic(s));
     native = kept;
+    // So is an automatic-length CHARACTER scalar, as `character(len(c)) d`:
+    // its length is computed where it is declared, which must be after the
+    // dummies are bound.
+    let automatic_length = |s: &Stmt| match s {
+        Stmt::VarDecl { kind: TypeSpec::CharacterLength(length), names } if !names.iter().any(|n| params.contains(n)) => {
+            let mut reads = false;
+            crate::procedure_arguments::visit_expr(&mut length.as_ref().clone(), &mut |e| {
+                if matches!(e, Expr::Ident(n) if params.contains(n)) {
+                    reads = true;
+                }
+            });
+            reads
+        }
+        _ => false,
+    };
+    let (lengths, kept): (Vec<Stmt>, Vec<Stmt>) = native.into_iter().partition(|s| automatic_length(s));
+    native = kept;
+    statements.splice(0..0, lengths);
     // Their bounds are evaluated with the other entry computations, into
     // locals. Each array is ALLOCATABLE, as automatic arrays of internal
     // procedures are, and is allocated after the bounds.
@@ -1611,7 +1629,10 @@ fn run(mut p: Program, complex_phase: bool) -> Result<Program> {
         let native_only = interface.is_some() && (assumed_size || !main_program && special || defined.is_some());
         let variable = params
             .iter()
-            .map(|p| special && !body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name == p && intent.starts_with("intent("))))
+            // Specialization copies an expression actual of a scalar dummy
+            // without INTENT that the procedure does not define.
+            .map(|p| special && !body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name == p && intent.starts_with("intent(")))
+                && (body.iter().any(|s| matches!(s, Stmt::ArrayDecl { name, .. } if name == p)) || defines(body, p)))
             .collect();
         definitions.insert(name.clone(), Definition { ranks, runtime_shape, variable, native: interface.is_some(), native_only, function });
     }

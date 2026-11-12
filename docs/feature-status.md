@@ -42,7 +42,25 @@ and the per-procedure standard entries in the
 
 ## Known wrong results
 
-None are known. The automatic-array, `LGE`/`LGT`/`LLE`/`LLT` and `ISHFTC` bugs
+Found with the gfortran test suite and fixed on 2026-11-12:
+
+- An actual argument of a statement function was evaluated at each reference
+  to its dummy, so a function with side effects in an actual, as in
+  `st7(fun2(10))` with `st7(i) = i + fun(i)`, ran more than once
+  (`multiple_eval` in torture `st_function.f90`). In a DO WHILE condition it
+  still is.
+- Compiled code read garbage or crashed when an internal procedure declared
+  the type of an external function, as in `integer fun` and `fun(fun(2))`:
+  the reference was compiled as an element of a scalar variable `fun`.
+- A default REAL literal kept double precision: for `a = 1.234`, `a == 1.234`
+  was false, and `dble(1.234)` and `d = 3.141592653589793` for DOUBLE
+  PRECISION `d` gave the double-precision value instead of the
+  single-precision one gfortran gives.
+- A CHARACTER statement function ignored its declared length and those of its
+  dummies, so with `character(8) foo; character(6) p; foo(p) = p // "World"`,
+  `foo("Hello")` was `HelloWorld` instead of `Hello Wo`.
+
+Before these, none were known. The automatic-array, `LGE`/`LGT`/`LLE`/`LLT` and `ISHFTC` bugs
 found on 2026-10-17 are fixed. The compiler now reports an error for a call it
 cannot generate code for, instead of using the value 0.
 

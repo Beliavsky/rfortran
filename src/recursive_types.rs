@@ -867,7 +867,16 @@ impl Lower {
         // Procedures, whose results are handles, and every unit, use the pools.
         // The objects come after the declarations; a main program's body
         // also holds the definitions of modules and procedures.
-        let at = out.iter().position(|s| !specification(s) && !matches!(s, Stmt::Module { .. } | Stmt::Function { .. } | Stmt::Subroutine { .. }))
+        // Statement function definitions, which look like assignments to
+        // elements of declared scalars, belong to the specification part.
+        let scalars: HashSet<&str> = out.iter().flat_map(|s| match s {
+            Stmt::VarDecl { names, .. } => names.iter().map(String::as_str).collect(),
+            Stmt::DerivedDecl { names, dims, .. } if dims.is_empty() => names.iter().map(String::as_str).collect(),
+            _ => vec![],
+        }).collect();
+        let definition = |s: &Stmt| matches!(s, Stmt::AssignIndex { name, indices, .. } if scalars.contains(name.as_str())
+            && !indices.is_empty() && indices.iter().all(|i| matches!(i, Expr::Ident(_))));
+        let at = out.iter().position(|s| !specification(s) && !definition(s) && !matches!(s, Stmt::Module { .. } | Stmt::Function { .. } | Stmt::Subroutine { .. }))
             .unwrap_or(out.len());
         out.splice(at..at, entry);
         *body = out;
