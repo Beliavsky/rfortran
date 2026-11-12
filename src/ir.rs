@@ -475,6 +475,31 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
             }
         }
     }
+    // A procedure, internal ones included, may declare the type of an
+    // external function that it references.
+    fn declared_functions(
+        body: &[Stmt],
+        fn_names: &std::collections::HashSet<String>,
+        out: &mut std::collections::HashMap<String, crate::ast::TypeSpec>,
+    ) {
+        for s in body {
+            if let Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } = s {
+                let mut invoked = std::collections::HashSet::new();
+                crate::procedure_arguments::invoked(body, &mut invoked);
+                for s in body {
+                    if let Stmt::VarDecl { kind, names } = s {
+                        for n in names {
+                            if fn_names.contains(n) && invoked.contains(n) {
+                                out.entry(n.clone()).or_insert_with(|| kind.clone());
+                            }
+                        }
+                    }
+                }
+                declared_functions(body, fn_names, out);
+            }
+        }
+    }
+    declared_functions(&program.body, &fn_names, &mut external_ret);
     let mut defines_modules: Vec<String> = Vec::new();
     let mut uses_modules: Vec<String> = Vec::new();
     for s in &program.body {
@@ -759,7 +784,10 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                         && !dowhile_body_vars.contains(var)
                         && !multiply_assigned_vars.contains(var)
                     {
-                        constants.insert(var.clone(), IExpr::RealLit(val.clone()));
+                        // DBLE keeps a DOUBLE PRECISION variable's kind, as above.
+                        let literal = IExpr::RealLit(val.clone());
+                        let double = stmts.iter().any(|s| matches!(s, IStmt::DeclVar(crate::ast::TypeSpec::DoublePrecision, n, _) if n == var));
+                        constants.insert(var.clone(), if double { IExpr::Call("dble".into(), vec![literal]) } else { literal });
                     }
                 }
                 IStmt::AssignBool(var, val) => {
@@ -2511,7 +2539,11 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                 }
                 IStmt::AssignRealLit(v, val) => {
                     *assign_counts.entry(v.clone()).or_default() += 1;
-                    single_literal_map.insert(v.clone(), IExpr::RealLit(val.clone()));
+                    // A REAL literal has no kind: DBLE keeps the DOUBLE PRECISION
+                    // variable's kind for output of a value exact in single precision.
+                    let literal = IExpr::RealLit(val.clone());
+                    let double = func.body.iter().any(|s| matches!(s, IStmt::DeclVar(crate::ast::TypeSpec::DoublePrecision, n, _) if n == v));
+                    single_literal_map.insert(v.clone(), if double { IExpr::Call("dble".into(), vec![literal]) } else { literal });
                 }
                 IStmt::AssignBool(v, val) => {
                     *assign_counts.entry(v.clone()).or_default() += 1;

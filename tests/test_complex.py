@@ -148,8 +148,8 @@ end
 complex(8)::z,w
 z=(1.7d308,1.7d308)
 w=sqrt(z)
-print *,abs(real(w)/1.d154-1.4325088230154572)<1.d-12
-print *,abs(aimag(w)/1.d154-.593364582712122)<1.d-12
+print *,abs(real(w)/1.d154-1.4325088230154572d0)<1.d-12
+print *,abs(aimag(w)/1.d154-.593364582712122d0)<1.d-12
 end
 """, "T\nT\n", reference=False)
 

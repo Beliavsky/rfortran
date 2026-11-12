@@ -2186,6 +2186,15 @@ fn expand(
                         }
                         copy_back.push(Stmt::AssignIndex {name:array.clone(),indices:captured,value:Expr::Ident(temp.clone())});
                         names.insert(p.clone(),temp);
+                    } else if intent.is_empty() && dims.is_empty() && !matches!(actual, Expr::Ident(_)) {
+                        // A dummy without INTENT may be associated with an
+                        // expression if the procedure does not define it, so it
+                        // gets a copy of the value, as an INTENT(IN) dummy would.
+                        *serial += 1;
+                        let temp = format!("@expression_actual_{serial}");
+                        prefix.push(Stmt::VarDecl { kind, names: vec![temp.clone()] });
+                        prefix.push(Stmt::Assign { name: temp.clone(), value: actual.clone() });
+                        names.insert(p.clone(), temp);
                     } else {
                         let Expr::Ident(a) = actual else {
                             bail!("writable dummy `{p}` requires a variable");

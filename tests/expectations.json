@@ -54,7 +54,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " real:  3.14159\n double precision:  3.14159265358979\n"
+      "program_stdout": " real:  3.14159\n double precision:  3.14159274101257\n"
     },
     "09_if_else": {
       "compiler_exit_code": 0,

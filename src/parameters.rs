@@ -1843,7 +1843,9 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             let value: f64 = number.replace(['d','D'], "e").parse()?;
             if !value.is_finite() { bail!("non-finite real literal"); }
             if double { *expr = real_literal(value, true); }
-            else if kind.is_some() { *expr = real_literal((value as f32) as f64, false); }
+            // A default REAL literal has single precision, so `1.1` compares
+            // equal to a REAL variable assigned `1.1` and `dble(1.1)` is not 1.1d0.
+            else if kind.is_some() || f64::from(value as f32) != value { *expr = real_literal((value as f32) as f64, false); }
         }
         Expr::Section { name, lower, upper, stride } => {
             for bound in [&mut *lower, &mut *upper, &mut *stride].into_iter().flatten() { rewrite_expr(bound, constants)?; }
@@ -1872,6 +1874,9 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             rewrite_expr(right, constants)?;
         }
         Expr::Un(_, inner) => rewrite_expr(inner, constants)?,
+        // A DOUBLE PRECISION literal is rewritten to DBLE of its value, which a
+        // later pass must not round to single precision as a default REAL.
+        Expr::Call(name, args) if name == "dble" && matches!(args.as_slice(), [Expr::RealLit(text)] if !text.contains(['d','D','_'])) => {}
         Expr::Call(name, args) | Expr::Index(name, args) => {
             if let Some(Expr::Call(tag,values))=constants.get(name) {
                 // An element of a multidimensional constant with constant subscripts.
