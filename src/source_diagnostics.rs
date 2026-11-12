@@ -175,6 +175,12 @@ pub(crate) fn user_names(message: &str) -> String {
             // as the variable.
             part.split("$of$").nth(1).unwrap_or(part)
         } else if i % 2 == 1 { crate::block_scopes::original(part) } else { part };
+        // An internal procedure renamed to keep it apart from another of the
+        // same name, by internal_procedures::disambiguate.
+        let part = match part.find(crate::internal_procedures::DISAMBIGUATED) {
+            Some(at) if i % 2 == 1 && part[at + crate::internal_procedures::DISAMBIGUATED.len()..].bytes().all(|b| b.is_ascii_digit()) => &part[..at],
+            _ => part,
+        };
         if i == 0 { part.to_owned() } else { format!("`{part}") }
     }).collect()
 }

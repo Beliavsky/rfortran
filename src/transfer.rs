@@ -233,3 +233,30 @@ pub(crate) fn resolve(mut p: crate::ast::Program) -> Result<crate::ast::Program>
     unit(&mut p.body)?;
     Ok(p)
 }
+
+/// Scalar TRANSFER again, once named kinds such as INT64 and module
+/// constants such as `dp` are resolved to numbers.
+fn scalar_unit(body: &mut [Stmt], host: &HashMap<String, TypeSpec>) {
+    let mut types = host.clone();
+    types.extend(self::types(body));
+    for s in body.iter_mut() {
+        if let Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } = s {
+            scalar_unit(body, &types);
+        }
+    }
+    let arrays = body.iter().filter_map(|s| match s { Stmt::ArrayDecl { name, .. } => Some(name.clone()), _ => None }).collect();
+    let lower = Lower { types: &types, arrays, declarations: vec![], serial: 0 };
+    fn walk(body: &mut [Stmt], lower: &Lower) {
+        for s in body.iter_mut() {
+            if matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. }) { continue; }
+            for e in crate::procedure_arguments::expressions(s) { lower.scalar(e); }
+            for b in children(s) { walk(b, lower); }
+        }
+    }
+    walk(body, &lower);
+}
+
+pub(crate) fn resolve_scalars(mut p: crate::ast::Program) -> crate::ast::Program {
+    scalar_unit(&mut p.body, &HashMap::new());
+    p
+}

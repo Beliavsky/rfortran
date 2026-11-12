@@ -40,6 +40,8 @@ pub(crate) fn prepare_program(
                                &prepared.origins, settings, &args.warnings)?;
     action_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
                            &prepared.origins, settings, &args.warnings)?;
+    merge_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
+                          &prepared.origins, settings, &args.warnings, args.standard)?;
     use_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
                         &prepared.origins, settings, &args.warnings)?;
     parameter_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
@@ -63,6 +65,7 @@ pub(crate) fn lower_program_body(
 ) -> Result<ast::Program> {
     (|| {
         do_variables::check(&program, src)?;
+        let program = internal_procedures::disambiguate(program);
         let program = host_storage::resolve(program)?;
         let program = protected::resolve(program)?;
         let program = pdt::resolve(program)?;
@@ -88,6 +91,7 @@ pub(crate) fn lower_program_body(
         let program = compile_profile::run("external_calls::resolve_complex", || external_calls::resolve_complex(program))?;
         let program = compile_profile::run("random_seed::resolve", || random_seed::resolve(program))?;
         let program = compile_profile::run("parameters::resolve", || parameters::resolve(program))?;
+        let program = transfer::resolve_scalars(program);
         let program = c_interop::resolve(program)?;
         let program = compile_profile::run("timing_intrinsics::resolve", || timing_intrinsics::resolve(program))?;
         let program = compile_profile::run("tokenize::resolve", || tokenize::resolve(program))?;

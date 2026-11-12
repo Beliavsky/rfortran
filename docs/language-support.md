@@ -364,7 +364,11 @@ checks with gfortran comparisons.
   intrinsics `DIMAG`, `DCONJG`, `DREAL` and `DCMPLX` are accepted.
 - Statement functions, such as `cabs1(z) = abs(dble(z)) + abs(dimag(z))`, are
   expanded where they are referenced, with any argument types, COMPLEX
-  included, and the result converted to the function's declared type.
+  included, and the result converted to the function's declared type. A
+  CHARACTER function and CHARACTER dummies have their declared lengths: the
+  actuals and the value are padded or truncated, as in an assignment. An
+  actual that references a function is evaluated once, except in a DO WHILE
+  condition. A dummy may be declared POINTER or TARGET; it is only a name.
 - An assignment converts between INTEGER, REAL and DOUBLE PRECISION; a real
   value assigned to an INTEGER variable is truncated toward zero, as by INT.
 - A local array may have the name of an intrinsic, such as `sum(2,2)`; its
@@ -3985,7 +3989,9 @@ NON_INTRINSIC requires a user module in the source group or a saved `.rmod` inte
 Run `python tests/test_intrinsic_env.py`.
 
 IEEE_ARITHMETIC (Fortran 2003) supports REAL kinds 4 and 8 through the elemental
-functions IEEE_VALUE, IEEE_IS_NAN, IEEE_IS_FINITE, IEEE_IS_NORMAL and IEEE_UNORDERED.
+functions IEEE_VALUE, IEEE_IS_NAN, IEEE_IS_FINITE, IEEE_IS_NORMAL, IEEE_UNORDERED
+and IEEE_NEXT_AFTER, whose arguments have the same kind; IEEE_NEXT_AFTER(X, Y)
+is X when X == Y and a NaN when either is a NaN.
 IEEE_CLASS_TYPE and the named class constants for signaling/quiet NaNs, signed
 infinities, normal/subnormal values and signed zeros are available; DENORMAL and
 SUBNORMAL spellings denote the same classes. IEEE_VALUE constructs representative

@@ -110,6 +110,8 @@ const CATEGORIES: &[&str] = &[
     "preconnected-unit",
     "function-io",
     "unhandled-io-error",
+    "merge-guard",
+    "merge-evaluation",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface, conversion, and module-default-public remain

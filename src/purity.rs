@@ -33,7 +33,7 @@ pub fn validate(program: &Program) -> Result<()> {
                 let intrinsic = crate::intrinsics::purity(name)==Some(crate::intrinsics::Purity::Pure)
                     || crate::real_intrinsics::decode(name).is_some()
                     || name.starts_with("@keyword:")
-                    || matches!(name.as_str(), "@integer_literal" | "@norm2" | "@minloc" | "@maxloc" | "@findloc" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction" | "@array_constructor" | "@literal_substring" | "@output_implied_do" | "@section_subscript" | "@no_value" | "@no_dim" | "@no_vector" | "@no_boundary" | "@no_pad" | "@no_order");
+                    || matches!(name.as_str(), "@integer_literal" | "@norm2" | "@minloc" | "@maxloc" | "@findloc" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction" | "@array_constructor" | "@literal_substring" | "@output_implied_do" | "@section_subscript" | "@no_value" | "@no_dim" | "@no_vector" | "@no_boundary" | "@no_pad" | "@no_order" | "@complex_literal");
                 if !locals.contains(name) && !known.get(name).map(|p| p.pure).unwrap_or(intrinsic) {
                     bail!("PURE procedure cannot call impure or unknown procedure `{name}`");
                 }
@@ -73,6 +73,15 @@ pub fn validate(program: &Program) -> Result<()> {
                 }
                 Stmt::CallSub {name,..} if name=="@saved_bind"=>bail!("PURE procedure cannot have saved or declaration-initialized local variables"),
                 _ => {}
+            }
+        }
+        // The locals of a host that its internal procedures share, which
+        // host_storage keeps in its module, are still the host's own.
+        if body.iter().any(|s| matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. })) {
+            for stmt in body {
+                if let Stmt::Use { module, only: Some(only), .. } = stmt {
+                    if module.starts_with(crate::host_storage::MODULE) { locals.extend(only.iter().cloned()); }
+                }
             }
         }
         let writable_locals=locals.clone();
@@ -138,6 +147,9 @@ pub fn validate(program: &Program) -> Result<()> {
                 Stmt::Print { .. } | Stmt::Read { .. } => bail!("PURE procedure cannot perform external I/O"),
                 Stmt::CallSub {name,..} if name == "@empty_read" => bail!("PURE procedure cannot perform external I/O"),
                 Stmt::CallSub {name,..} if name=="@stop" => bail!("PURE procedure cannot execute STOP"),
+                // The stub of a BIND(C) interface declared PURE: the C
+                // function is trusted to be pure, as the interface says.
+                Stmt::CallSub {name,..} if name=="@c_invoke" => {},
                 // ERROR STOP is permitted in PURE procedures since Fortran 2018.
                 // Its code expression still obeys ordinary purity restrictions.
                 Stmt::CallSub {name,args} if name=="@error_stop" => {
@@ -153,13 +165,17 @@ pub fn validate(program: &Program) -> Result<()> {
                     }
                 }
                 Stmt::CallSub {name,args} if name=="@write" => {
+                    // A CHARACTER variable, element or substring.
                     let target=match &args[0] {
-                        Expr::Ident(n) | Expr::Index(n,_) | Expr::Call(n,_) if characters.contains(n) => n,
+                        Expr::Ident(n) | Expr::Index(n,_) | Expr::Call(n,_) | Expr::Section{name:n,..} if characters.contains(n) => n,
                         _ => bail!("PURE procedure cannot perform external I/O"),
                     };
                     writable(target)?;
                     if let Expr::Index(_,indices) | Expr::Call(_,indices)=&args[0] {
                         for index in indices {expression(index,&locals,known)?;}
+                    }
+                    if let Expr::Section{lower,upper,stride,..}=&args[0] {
+                        for bound in [lower,upper,stride].into_iter().flatten() {expression(bound,&locals,known)?;}
                     }
                     for arg in &args[1..] {expression(arg,&locals,known)?;}
                 }
@@ -214,7 +230,8 @@ pub fn validate(program: &Program) -> Result<()> {
                         expression(arg, &locals, known)?;
                         if intent != "intent(in)" {
                             match arg {
-                                Expr::Ident(n) | Expr::Index(n, _) | Expr::Call(n, _) => writable(n)?,
+                                // A variable, element or section.
+                                Expr::Ident(n) | Expr::Index(n, _) | Expr::Call(n, _) | Expr::Section { name: n, .. } => writable(n)?,
                                 _ => bail!("output argument of PURE subroutine `{name}` must be writable"),
                             }
                         }
@@ -256,6 +273,8 @@ pub fn validate(program: &Program) -> Result<()> {
                 Stmt::VarDecl {names,..} => objects.extend(names.iter().cloned()),
                 Stmt::ArrayDecl {name,..} => { objects.insert(name.clone()); },
                 Stmt::InitializedDecl {entities,..} => objects.extend(entities.iter().map(|(n,_)|n.clone())),
+                // The host's variables that host_storage keeps in its module.
+                Stmt::Use {module,only:Some(only),..} if module.starts_with(crate::host_storage::MODULE) => objects.extend(only.iter().cloned()),
                 Stmt::Function {name,..} | Stmt::Subroutine {name,..} => { objects.remove(name); },
                 _ => {},
             }

@@ -1123,7 +1123,7 @@ fn lex_with(input: &str, collapse: bool) -> Vec<Token> {
             };
             // The statement of a logical IF, as EXIT in `if (c) exit`, also
             // starts after the condition's closing parenthesis.
-            let after_condition = i > 0 && matches!(tokens[i - 1].kind, TokenKind::RParen) && same(i - 1, i) && {
+            let after_condition = |i: usize| i > 0 && matches!(tokens[i - 1].kind, TokenKind::RParen) && same(i - 1, i) && {
                 let mut depth = 0i32;
                 let mut k = i - 1;
                 loop {
@@ -1133,7 +1133,11 @@ fn lex_with(input: &str, collapse: bool) -> Vec<Token> {
                 }
                 depth == 0 && k > 0 && matches!(tokens[k - 1].kind, TokenKind::KwIf) && statement_head(&tokens, input, k - 1)
             };
-            if (statement_head(&tokens, input, i) || after_condition) && !assignment { continue; }
+            if (statement_head(&tokens, input, i) || after_condition(i)) && !assignment { continue; }
+            // STOP in an ERROR STOP statement, as in `if (s == 0) error stop 'zero'`.
+            if matches!(tokens[i].kind, TokenKind::KwStop) && !assignment && i > 0 && same(i - 1, i)
+                && matches!(&tokens[i - 1].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("error"))
+                && (statement_head(&tokens, input, i - 1) || after_condition(i - 1)) { continue; }
             // A later word of a statement's leading keyword phrase, as PRECISION
             // in `double precision :: precision`, CASE in `select case (x)` or
             // DOUBLE in `pure double precision function f(x)`.

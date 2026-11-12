@@ -142,12 +142,27 @@ fn formals(body: &[Stmt], params: &[String]) -> Vec<Stmt> {
     }
     result
 }
+/// The local arrays of a procedure body, which a native call passes by
+/// descriptors bound at the call.
+fn local_arrays(body: &[Stmt], params: &[String]) -> HashMap<String, (TypeSpec, usize)> {
+    body.iter()
+        .filter_map(|s| match s {
+            Stmt::ArrayDecl { kind, name, dims } if !params.contains(name) => Some((name.clone(), (kind.clone(), dims.len()))),
+            _ => None,
+        })
+        .collect()
+}
 fn rewrite_calls(
     body: &mut Vec<Stmt>,
     current: &Procedure,
     procedures: &HashMap<String, Procedure>,
+    locals: &HashMap<String, (TypeSpec, usize)>,
+    serial: &mut usize,
 ) -> Result<()> {
-    for s in body {
+    let mut index = 0;
+    while index < body.len() {
+        let mut prefix = vec![];
+        let s = &mut body[index];
         if let Stmt::CallSub { name, args } = s {
             if let Some(callee) = procedures.get(name) {
                 if args.len() != callee.params.len() {
@@ -168,8 +183,34 @@ fn rewrite_calls(
                             break;
                         };
                         let Some(source) = current.borrowed.get(a) else {
-                            possible = false;
-                            break;
+                            // A local array of this body: bind a descriptor
+                            // for it here, as the wrapper does for a dummy.
+                            let Some((kind, rank)) = locals.get(a) else {
+                                possible = false;
+                                break;
+                            };
+                            if *rank != dest.rank || !crate::pointers::same_kind(kind, &dest.kind) {
+                                possible = false;
+                                break;
+                            }
+                            *serial += 1;
+                            let stem = format!("{}_local_{serial}", current.native);
+                            let fields: Vec<String> = ["data", "flags", "name"].iter().map(|f| format!("{stem}_{f}")).collect();
+                            prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: fields.clone() });
+                            prefix.push(Stmt::CallSub { name: "@ptr_bind".into(), args: fields.iter().map(|f| id(f)).chain([id(a)]).collect() });
+                            forwarded.extend(fields.iter().map(|f| id(f)));
+                            forwarded.extend([int(1), int(0)]);
+                            for axis in 1..=dest.rank {
+                                forwarded.extend([
+                                    call("lbound", vec![id(a), int(axis as i64)]),
+                                    call("size", vec![id(a), int(axis as i64)]),
+                                    (1..axis)
+                                        .map(|i| call("size", vec![id(a), int(i as i64)]))
+                                        .reduce(|x, y| Expr::Bin(crate::ast::BinOp::Mul, Box::new(x), Box::new(y)))
+                                        .unwrap_or_else(|| int(1)),
+                                ]);
+                            }
+                            continue;
                         };
                         if source.rank != dest.rank {
                             bail!("rank mismatch in recursive argument `{p}`");
@@ -214,18 +255,23 @@ fn rewrite_calls(
                 if possible {
                     *name = callee.native.clone();
                     *args = forwarded;
+                } else {
+                    prefix.clear();
                 }
             }
         }
         let mut error = None;
         children(s, &mut |b| {
             if error.is_none() {
-                error = rewrite_calls(b, current, procedures).err();
+                error = rewrite_calls(b, current, procedures, locals, serial).err();
             }
         });
         if let Some(error) = error {
             return Err(error);
         }
+        let added = prefix.len();
+        body.splice(index..index, prefix);
+        index += added + 1;
     }
     Ok(())
 }
@@ -480,7 +526,8 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
                     // automatic arrays here using their runtime bounds.
                     let mut shapes = crate::allocatables::Shapes::new();
                     crate::heap::automatic(&mut native_body, &mut shapes)?;
-                    rewrite_calls(&mut native_body, procedure, procedures)?;
+                    let locals = local_arrays(&native_body, params);
+                    rewrite_calls(&mut native_body, procedure, procedures, &locals, &mut 0)?;
                     generated.push(Stmt::Subroutine {
                         name: procedure.native.clone(),
                         params: native_params,

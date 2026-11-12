@@ -666,6 +666,24 @@ output statements, CLOSE, INQUIRE, OPEN of a scratch file, and main programs
 are not reported. Regression checks for these five warnings:
 `python tests/test_io_warnings.py`.
 
+The standard allows MERGE to evaluate both TSOURCE and FSOURCE, whatever
+MASK is, and gfortran does. `-Wmerge-guard`, in `-Wall`, warns about an
+argument that may be invalid when the mask does not select it, because the
+mask tests what the argument depends on: `merge(a(i), 0, i > 0)` (a
+subscript), `merge(1/n, 0, n /= 0)` (a divisor), and `merge(x, 0.0,
+present(x))` (PRESENT, ASSOCIATED or ALLOCATED). A name used in a subscript
+of the mask itself, as `i` in `merge(a(i), 0, a(i) > 0)`, does not count.
+`-Wmerge-evaluation`, opt-in, warns about an argument that computes
+something, such as `x + 1`, `-x` or `f(x)`, which is computed even when it is
+not selected. Constants, variables, components, elements and sections with
+constant or variable subscripts, constructors of such values, and NULL() are
+not reported, nor are MERGE with a constant mask and initializations, which
+are evaluated when compiling. An argument reported by `-Wmerge-guard` is not
+also reported by `-Wmerge-evaluation`. Both suggest an IF construct and,
+unless `-std` selects a standard before Fortran 2023, a conditional
+expression `(mask ? tsource : fsource)`. Regression checks:
+`python tests/test_merge_warnings.py`.
+
 `-Woptional-argument` warns when an OPTIONAL dummy is referenced without a
 proven `PRESENT` guard. For example, `if (present(s2))` does not prove that `s1`
 is present; the warning points to the source line which uses `s1`. The check

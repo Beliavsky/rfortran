@@ -1050,6 +1050,69 @@ fn names_in(body: &[Stmt], out: &mut HashSet<String>) {
     }
 }
 
+/// The suffix, before a serial number, of an internal procedure renamed by
+/// `disambiguate`.
+pub(crate) const DISAMBIGUATED: &str = "_rfort_internal_";
+
+/// The names of the file's procedures, with how often each is defined.
+fn procedure_names(body: &[Stmt], counts: &mut HashMap<String, usize>) {
+    for s in body {
+        match s {
+            Stmt::Function { name, body, .. } | Stmt::Subroutine { name, body, .. } => {
+                *counts.entry(name.clone()).or_default() += 1;
+                procedure_names(body, counts);
+            }
+            Stmt::Module { body, .. } => procedure_names(body, counts),
+            _ => {}
+        }
+    }
+}
+
+/// Rename the internal procedures of procedure bodies within `body`.
+fn rename_internal(body: &mut [Stmt], counts: &HashMap<String, usize>, serial: &mut usize) {
+    for s in body.iter_mut() {
+        match s {
+            Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => {
+                let shared: Vec<String> = body
+                    .iter()
+                    .filter_map(|s| match s {
+                        Stmt::Function { name, .. } | Stmt::Subroutine { name, .. } if counts.get(name).is_some_and(|&n| n > 1) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                for name in shared {
+                    *serial += 1;
+                    let unique = format!("{name}{DISAMBIGUATED}{serial}");
+                    for s in body.iter_mut() {
+                        if let Stmt::Function { name: n, .. } | Stmt::Subroutine { name: n, .. } = s {
+                            if *n == name {
+                                *n = unique.clone();
+                            }
+                        }
+                    }
+                    crate::procedure_arguments::rename(body, &name, &unique);
+                }
+                rename_internal(body, counts, serial);
+            }
+            Stmt::Module { body, .. } => rename_internal(body, counts, serial),
+            _ => {}
+        }
+    }
+}
+
+/// Give internal procedures of procedures unique names when the file defines
+/// another procedure of the same name, as `lead_trimmed` contained in each
+/// of several functions. Passes that know procedures by name, such as the
+/// lowering of COMPLEX and derived-type arrays, then keep them apart.
+pub(crate) fn disambiguate(mut p: Program) -> Program {
+    let mut counts = HashMap::new();
+    procedure_names(&p.body, &mut counts);
+    if counts.values().any(|&n| n > 1) {
+        rename_internal(&mut p.body, &counts, &mut 0);
+    }
+    p
+}
+
 pub(crate) fn resolve(mut p: Program) -> Result<Program> {
     fn maximum(body: &[Stmt]) -> usize {
         let own = declarations(body)

@@ -1028,6 +1028,23 @@ impl Resolver {
                                 let logical=scalar(&TypeSpec::Logical);
                                 match arg_types.first() {Some(Ty::Array(_,rank))=>Ty::Array(Box::new(logical),*rank),_=>logical}
                             }
+                            "transpose" if args.len() == 1 => match arg_types.first() {
+                                Some(Ty::Array(t, 2)) => Ty::Array(t.clone(), 2),
+                                _ => Ty::Unknown,
+                            },
+                            "matmul" if args.len() == 2 => match arg_types.as_slice() {
+                                [Ty::Array(a, ra), Ty::Array(b, rb)] if matches!((ra, rb), (2, 2) | (2, 1) | (1, 2)) => {
+                                    let element = binary_type(&BinOp::Mul, (**a).clone(), (**b).clone());
+                                    if element == Ty::Unknown { Ty::Unknown } else { Ty::Array(Box::new(element), if *ra == 2 && *rb == 2 { 2 } else { 1 }) }
+                                }
+                                _ => Ty::Unknown,
+                            },
+                            // Scalar inquiries of the kind of their argument.
+                            "huge" | "tiny" | "epsilon" if args.len() == 1 => match arg_types.first() {
+                                Some(Ty::Array(t, _)) => (**t).clone(),
+                                Some(t) => t.clone(),
+                                None => Ty::Unknown,
+                            },
                             _ if crate::real_intrinsics::keys(n).is_some() => {
                                 let first=arg_types.first().cloned().unwrap_or(Ty::Unknown);
                                 let result=if n=="exponent" {scalar(&TypeSpec::Integer(None))}else{match first {Ty::Array(t,_)=>*t,t=>t}};

@@ -629,6 +629,22 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
         }
         Expr::Call(n, args) => {
             for e in args.iter_mut() { dynamic_expression(e, scope, output, serial)?; }
+            // An input specifier of OPEN, CLOSE or INQUIRE, whose trailing
+            // blanks do not matter, takes a copy in a buffer of its capacity.
+            let input_specifier = n.strip_prefix("@io_spec:").is_some_and(|key| matches!(key,
+                "file" | "status" | "action" | "access" | "form" | "position" | "blank" | "delim" | "pad"
+                    | "decimal" | "round" | "sign" | "encoding" | "asynchronous"));
+            if input_specifier && args.len() == 1 && runtime_character(&args[0]) {
+                if let Some(cap) = capacity(&args[0], scope) {
+                    *serial += 1;
+                    let buffer = format!("@io_specifier_text_{serial}");
+                    scope.characters.insert(buffer.clone(), cap);
+                    scope.symbols.insert(buffer.clone(), (TypeSpec::Character(Some(cap)), vec![]));
+                    declare_character(&buffer, cap, output);
+                    output.push(Stmt::CallSub { name: "@character_assign".into(), args: vec![ident(&buffer), args[0].clone(), int(cap)] });
+                    args[0] = ident(&buffer);
+                }
+            }
             if !matches!(n.as_str(), "trim" | "adjustl" | "adjustr" | "@substring") && args.iter().any(runtime_character) {
                 bail!("`{n}` does not yet support runtime-length CHARACTER arguments");
             }

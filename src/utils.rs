@@ -219,6 +219,8 @@ pub fn print_help() {
     println!("  -Wpreconnected-unit Warn about READ from unit 5 and WRITE to units 6 and 0 (in -Wextra)");
     println!("  -Wfunction-io       Warn about functions that do I/O on an external unit (in -Wstyle)");
     println!("  -Wunhandled-io-error Warn about OPEN and READ without IOSTAT= in procedures (opt-in)");
+    println!("  -Wmerge-guard       Warn about MERGE arguments the mask guards, as in merge(a(i), 0, i > 0) (in -Wall)");
+    println!("  -Wmerge-evaluation  Warn about MERGE arguments computed whether or not the mask selects them (opt-in)");
     println!("  -Wno-<category>      Disable a warning category");
     println!("  -Werror, --Werror    Treat enabled warnings as errors");
     println!("  -Werror=<category>  Enable a warning category and treat it as an error");

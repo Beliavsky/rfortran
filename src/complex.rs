@@ -726,7 +726,7 @@ impl Lower {
             Expr::Call(n, a)
                 if matches!(
                     n.as_str(),
-                    "reshape" | "transpose" | "pack" | "sum" | "product" | "matmul" | "merge"
+                    "reshape" | "transpose" | "pack" | "sum" | "product" | "matmul" | "merge" | "spread"
                 ) =>
             {
                 let Some(mut i) = a.first().map(|e| self.info(e, s)).transpose()?.flatten() else {
@@ -788,6 +788,27 @@ impl Lower {
                         };
                     }
                     "pack" => i.dims = vec![call("count", vec![a[1].clone()])],
+                    "spread" => {
+                        // DIM and NCOPIES, by keyword or position.
+                        let mut dim = None;
+                        let mut copies = None;
+                        for (position, e) in a.iter().enumerate().skip(1) {
+                            match crate::named_arguments::keyword(e) {
+                                Some(("dim", value)) => dim = Some(value),
+                                Some(("ncopies", value)) => copies = Some(value),
+                                Some(_) => {}
+                                None if position == 1 => dim = Some(e),
+                                None if position == 2 => copies = Some(e),
+                                None => {}
+                            }
+                        }
+                        let (Some(dim), Some(copies)) = (dim, copies) else { return Ok(None) };
+                        let Ok(dim) = crate::parameters::integer_constant(dim) else { return Ok(None) };
+                        if dim < 1 || dim as usize > i.dims.len() + 1 {
+                            bail!("invalid SPREAD DIM");
+                        }
+                        i.dims.insert(dim as usize - 1, copies.clone());
+                    }
                     _ => {}
                 }
                 Ok(Some(i))
@@ -1142,7 +1163,7 @@ impl Lower {
                 }
                 (call("@array_constructor", r), call("@array_constructor", i))
             }
-            Expr::Call(n, a) if matches!(n.as_str(), "reshape" | "transpose" | "pack" | "sum") => {
+            Expr::Call(n, a) if matches!(n.as_str(), "reshape" | "transpose" | "pack" | "sum" | "spread") => {
                 let p = self.pair(a[0].clone(), s, out)?;
                 let mut ra = vec![p.re];
                 let mut ia = vec![p.im];
@@ -1210,6 +1231,14 @@ impl Lower {
                 } else {
                     (sub(rr, ii), add(ri, ir))
                 }
+            }
+            // MERGE of the parts, with the same mask.
+            Expr::Call(n, a) if n == "merge" && a.len() == 3 && !crate::named_arguments::has_keywords(&a) => {
+                let p = self.pair(a[0].clone(), s, out)?.converted(k);
+                let q = self.pair(a[1].clone(), s, out)?.converted(k);
+                let mut mask = a[2].clone();
+                self.expression(&mut mask, s, out)?;
+                (call("merge", vec![p.re, q.re, mask.clone()]), call("merge", vec![p.im, q.im, mask]))
             }
             Expr::Call(n, a) if n == "conjg" => {
                 let p = self.pair(a[0].clone(), s, out)?;
@@ -2148,6 +2177,19 @@ impl Lower {
                 Stmt::CallSub{name,args} if name=="@undefine" && matches!(args.as_slice(),[Expr::Ident(n)] if scope.get(n).is_some_and(|i|complex_kind(&i.kind).is_some()))=>{
                     let Expr::Ident(n)=&args[0] else {unreachable!()};
                     for part in ["re","im"] {prefix.push(Stmt::CallSub{name:"@undefine".into(),args:vec![id(&format!("{n}%{part}"))]});}
+                    return Ok(());
+                },
+                // ALLOCATE of one COMPLEX array with SOURCE= is the
+                // allocation, then an assignment of the source.
+                Stmt::CallSub{name,args} if name=="@allocate" && args.len()==2
+                    && matches!(&args[0],Expr::Call(n,_) | Expr::Index(n,_) if scope.get(n).is_some_and(|i|complex_kind(&i.kind).is_some()))
+                    && matches!(&args[1],Expr::Call(k,v) if k=="@keyword:source" && v.len()==1)=>{
+                    let (Expr::Call(n,_) | Expr::Index(n,_))=&args[0] else {unreachable!()};
+                    let Expr::Call(_,v)=&args[1] else {unreachable!()};
+                    let mut assignment=vec![Stmt::Assign{name:n.clone(),value:v[0].clone()}];
+                    prefix.push(Stmt::CallSub{name:name.clone(),args:vec![args[0].clone()]});
+                    self.body(&mut assignment,&scope,&[])?;
+                    prefix.extend(assignment);
                     return Ok(());
                 },
                 Stmt::CallSub{name,args} if matches!(name.as_str(),"@allocate"|"@deallocate"|"@nullify")=>{},

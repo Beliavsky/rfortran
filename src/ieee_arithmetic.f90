@@ -4,7 +4,7 @@ module ieee_arithmetic
 implicit none
 private
 public :: ieee_class_type, ieee_value, ieee_is_nan, ieee_is_finite, ieee_is_normal
-public :: ieee_unordered
+public :: ieee_unordered, ieee_next_after
  type ieee_class_type
  integer :: code
  end type
@@ -47,6 +47,9 @@ end interface
 interface ieee_unordered
 module procedure ieee_unordered4, ieee_unordered8
 end interface
+interface ieee_next_after
+module procedure ieee_next_after4, ieee_next_after8
+end interface
 contains
 elemental function ieee_value4(x,class) result(res)
 real(kind=4), intent(in) :: x
@@ -76,6 +79,19 @@ logical :: res
 real(kind=4), intent(in) :: y
 res = x /= x .or. y /= y
 end function
+! The neighbor of X in the direction of Y; X when they are equal.
+elemental function ieee_next_after4(x,y) result(res)
+real(kind=4), intent(in) :: x
+real(kind=4), intent(in) :: y
+real(kind=4) :: res
+if (x /= x .or. y /= y) then
+res = x + y
+else if (x == y) then
+res = x
+else
+res = nearest(x, y - x)
+end if
+end function
 elemental function ieee_value8(x,class) result(res)
 real(kind=8), intent(in) :: x
 type(ieee_class_type), intent(in) :: class
@@ -103,5 +119,18 @@ real(kind=8), intent(in) :: x
 logical :: res
 real(kind=8), intent(in) :: y
 res = x /= x .or. y /= y
+end function
+! The neighbor of X in the direction of Y; X when they are equal.
+elemental function ieee_next_after8(x,y) result(res)
+real(kind=8), intent(in) :: x
+real(kind=8), intent(in) :: y
+real(kind=8) :: res
+if (x /= x .or. y /= y) then
+res = x + y
+else if (x == y) then
+res = x
+else
+res = nearest(x, y - x)
+end if
 end function
 end module
