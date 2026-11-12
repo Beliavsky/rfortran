@@ -481,7 +481,9 @@ mod tests {
     use super::*;
     #[test]
     fn implemented_intrinsics_have_keyword_association() {
-        for name in crate::intrinsics::REAL_MATH.iter().map(|(n,_)|*n)
+        // `rfort_*` entries are runtime routines that intrinsics are rewritten
+        // to, not names a program can call with keywords.
+        for name in crate::intrinsics::REAL_MATH.iter().map(|(n,_)|*n).filter(|n|!n.starts_with("rfort_"))
             .chain(crate::intrinsics::REAL_PREDICATES.iter().copied())
             .chain(crate::bit_intrinsics::NAMES.iter().copied())
             .chain(["tokenize","split","random_number","random_seed","move_alloc","cpu_time","system_clock","date_and_time","get_environment_variable","getcwd","get_command_argument","abs","dble","kind","mod","modulo","new_line",

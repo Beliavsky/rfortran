@@ -1151,10 +1151,15 @@ impl Lowerer {
                 }
                 shape
             } else {
-                for e in &indices {
-                    constant(e).context(
+                for (axis, (e, extent)) in indices.iter().zip(dims).enumerate() {
+                    let index = constant(e).context(
                         "FORALL destination subscripts must be known for every iteration",
                     )?;
+                    // `indices` defers an out-of-range rank-one subscript to run
+                    // time, but every iteration of this FORALL writes it.
+                    if !(1..=*extent).contains(&index) {
+                        bail!("array `{name}` dimension {}: subscript {index} outside 1:{extent}", axis + 1);
+                    }
                 }
                 let mut flattened = indices.clone();
                 self.indices(name, &mut flattened, dims)?;
