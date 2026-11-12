@@ -1823,7 +1823,14 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
         Expr::IntLit(text) if text.contains('_') => {
             let (number,suffix) = text.split_once('_').unwrap();
             let kind = kind_number(suffix,constants)?;
-            if !matches!(kind,1|2|4|8) { bail!("unsupported integer literal kind {kind}; supported kinds are 1, 2, 4 and 8"); }
+            // An INTEGER(16) literal keeps its digits, which 128-bit
+            // assignment and arithmetic read as they did a bare literal.
+            if kind == 16 {
+                number.parse::<i128>().context("integer literal exceeds the supported 128-bit range")?;
+                *expr = Expr::IntLit(number.to_string());
+                return Ok(());
+            }
+            if !matches!(kind,1|2|4|8) { bail!("unsupported integer literal kind {kind}; supported kinds are 1, 2, 4, 8 and 16"); }
             let value = number.parse::<i64>().context("integer literal exceeds the supported 64-bit range")?;
             *expr = typed_integer(value,kind as u8)?;
         }

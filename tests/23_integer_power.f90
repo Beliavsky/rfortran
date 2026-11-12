@@ -2,10 +2,11 @@
 ! echo: 34
 program test_integer_power
     implicit none
-    integer :: base, exponent
+    integer(8) :: base
+    integer :: exponent
     read(*,*) base
     read(*,*) exponent
-    print *, "constant:", 5**2, 3**34
+    print *, "constant:", 5**2, 3_8**34
     print *, "runtime:", base**exponent
     print *, "zero and one:", base**0, base**1
     print *, "negative:", base**(-2), (-1)**(-3), (-1)**(-4)
