@@ -25,6 +25,12 @@
 //!
 //! `-Wfunction-io`, in -Wstyle: a function that executes input/output on an
 //! external unit, a side effect that keeps it from being PURE.
+//!
+//! `-Wunhandled-io-error`, opt-in: in a procedure, an OPEN without IOSTAT= or
+//! ERR=, or a READ from a file or an internal file without IOSTAT=, ERR= or
+//! END=. An error then stops the program instead of letting the procedure
+//! or its caller decide. READ from standard input, output statements, CLOSE,
+//! INQUIRE, scratch files and main programs are not reported.
 use crate::lexer::{Token, TokenKind};
 use crate::open_warnings::{constants, items};
 use crate::sema::SemaSettings;
@@ -36,6 +42,7 @@ const RECURSIVE: &str = "recursive-io";
 const LEAK: &str = "unit-leak";
 const PRECONNECTED: &str = "preconnected-unit";
 const FUNCTION_IO: &str = "function-io";
+const UNHANDLED: &str = "unhandled-io-error";
 
 /// The unit of a data transfer statement.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -341,7 +348,8 @@ pub(crate) fn check(
     let quiet = opt_in(settings);
     let (preconnected, preconnected_error) = crate::unused::selected(PRECONNECTED, false, &quiet, options);
     let (function_io, function_io_error) = crate::unused::selected(FUNCTION_IO, false, &quiet, options);
-    if !(recursive || leak || preconnected || function_io) { return Ok(()); }
+    let (unhandled, unhandled_error) = crate::unused::selected(UNHANDLED, false, &quiet, options);
+    if !(recursive || leak || preconnected || function_io || unhandled) { return Ok(()); }
 
     let tokens = crate::lexer::lex(src);
     if tokens.is_empty() { return Ok(()); }
@@ -520,6 +528,50 @@ pub(crate) fn check(
                 secondary: vec![],
                 notes: vec!["a function with side effects cannot be PURE, and referencing it in an input/output statement on the same unit is recursive input/output, which is not allowed; consider a subroutine".into()],
             });
+        }
+    }
+
+    if unhandled {
+        // END= lexes as an END token, not a name.
+        let handled = |controls: &[&[Token]], names: &[&str]| controls.iter().any(|i| names.iter().any(|n| keyword(i, n))
+            || (names.contains(&"end") && matches!(i, [t, Token { kind: TokenKind::Eq, .. }, ..] if src[t.span.clone()].eq_ignore_ascii_case("end"))));
+        for (u, unit) in units.iter().enumerate().filter(|(_, u)| matches!(u.kind, Kind::Function | Kind::Subroutine)) {
+            let mut found: Vec<(usize, String, &str)> = vec![];
+            for &si in &unit.statements {
+                let head = action(&tokens, &ranges[si]);
+                if !matches!(&tokens[head].kind, TokenKind::FileControl(c) if c == "open") { continue; }
+                if !matches!(tokens.get(head + 1).map(|t| &t.kind), Some(TokenKind::LParen)) { continue; }
+                let controls = items(&tokens, head + 1);
+                if handled(&controls, &["iostat", "err"]) { continue; }
+                let scratch = controls.iter().any(|i| keyword(i, "status")
+                    && matches!(i.get(2).map(|t| &t.kind), Some(TokenKind::Str(v)) if v.trim().eq_ignore_ascii_case("scratch")));
+                if scratch { continue; }
+                found.push((head, format!("OPEN in {} has no IOSTAT= or ERR=, so failing to open the file stops the program", label(unit)),
+                    "add iostat= and an iomsg= variable, then handle a nonzero status here or return it to the caller"));
+            }
+            for io in ios[u].iter().filter(|io| !io.writes) {
+                if matches!(io.dest, Dest::Input) { continue; }
+                if !matches!(tokens.get(io.head + 1).map(|t| &t.kind), Some(TokenKind::LParen)) { continue; }
+                let controls = items(&tokens, io.head + 1);
+                if handled(&controls, &["iostat", "err", "end"]) { continue; }
+                let (what, cause) = if io.dest == Dest::Internal {
+                    ("an internal file", "text that is not a valid value")
+                } else {
+                    ("a file", "an end of file or invalid data")
+                };
+                found.push((io.head, format!("READ from {what} in {} has no IOSTAT=, ERR= or END=, so {cause} stops the program", label(unit)),
+                    "add iostat=, then handle a nonzero status here or return it to the caller; is_iostat_end tells end of file from other errors"));
+            }
+            for (at, message, note) in found {
+                reports.push(Report {
+                    category: UNHANDLED,
+                    error: unhandled_error,
+                    at,
+                    message: format!("{message} [{UNHANDLED}]"),
+                    secondary: vec![],
+                    notes: vec![note.into()],
+                });
+            }
         }
     }
 

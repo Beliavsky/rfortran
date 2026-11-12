@@ -109,6 +109,7 @@ const CATEGORIES: &[&str] = &[
     "unit-leak",
     "preconnected-unit",
     "function-io",
+    "unhandled-io-error",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface, conversion, and module-default-public remain

@@ -1,5 +1,6 @@
 """-Wrecursive-io (on by default), -Wunit-leak (in -Wall),
--Wpreconnected-unit (in -Wextra) and -Wfunction-io (in -Wstyle).
+-Wpreconnected-unit (in -Wextra), -Wfunction-io (in -Wstyle) and
+-Wunhandled-io-error (opt-in).
 
 Run after cargo build --bin rfort: python tests/test_io_warnings.py
 Set RFORT_TEST_COMPILER to check another compiler build.
@@ -257,6 +258,57 @@ end
         self.assertIn('function `f` performs', stderr)
         internal = 'module m\ncontains\nfunction f(x) result(s)\nreal, intent(in) :: x\ncharacter(len=12) :: s\nwrite (s,"(f12.3)") x\nend function f\nend module m\n'
         self.assertNotIn('[function-io]', self.check(internal, ['-Wfunction-io'])[1])
+
+    def test_unhandled_io_error(self):
+        program = '''module m
+implicit none
+contains
+subroutine load(file, x, n)
+character(len=*), intent(in) :: file
+real, intent(inout) :: x(3)
+integer, intent(out) :: n
+integer :: iu, s, ios
+character(len=20) :: line
+open (newunit=iu, file=file, status="old")
+open (newunit=s, status="scratch")
+read (iu, *) n
+read (iu, *, end=10) x(1)
+10 continue
+read (iu, '(a)') line
+read (line, *) x(2)
+read (line, *, iostat=ios) x(3)
+read (*, *) n
+read *, n
+if (n > 0) read (iu, *) x(3)
+write (iu, *) x
+close (iu)
+close (s)
+end subroutine load
+end module m
+program p
+use m
+implicit none
+real :: x(3)
+integer :: n, iu
+open (newunit=iu, file="f")
+read (iu, *) n
+call load("f", x, n)
+end program p
+'''
+        # Opt-in: -Wall, -Wextra and -Wstyle leave it off.
+        code, stderr = self.check(program, ['-Wall', '-Wextra', '-Wstyle'])
+        self.assertNotIn('[unhandled-io-error]', stderr)
+        code, stderr = self.check(program, ['-Wunhandled-io-error'])
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(stderr.count('[unhandled-io-error]'), 5, stderr)
+        self.assertIn('OPEN in `load` has no IOSTAT= or ERR=, so failing to open the file stops the program', stderr)
+        self.assertEqual(stderr.count('READ from a file in `load` has no IOSTAT=, ERR= or END='), 3, stderr)
+        self.assertIn('READ from an internal file in `load` has no IOSTAT=, ERR= or END=, so text that is not a valid value', stderr)
+        for line in (10, 12, 15, 16, 20):
+            self.assertIn(f'example.f90:{line}:', stderr)
+        code, stderr = self.check(program, ['-Werror=unhandled-io-error'])
+        self.assertNotEqual(code, 0)
+        self.assertIn('error: OPEN in `load`', stderr)
 
 
 if __name__ == '__main__':

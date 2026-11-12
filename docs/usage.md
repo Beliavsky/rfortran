@@ -653,7 +653,17 @@ portable spelling, is not reported.
 executes input/output on an external unit, once per function. Such a side
 effect keeps the function from being PURE, and referencing it in an
 input/output statement on the same unit is recursive input/output. Writing to
-an internal file is not reported. Regression checks for these four warnings:
+an internal file is not reported.
+
+`-Wunhandled-io-error` is opt-in, enabled by neither `-Wall` nor `-Wextra`.
+In a function or subroutine, it warns about an OPEN without IOSTAT= or ERR=,
+and a READ from a file or an internal file without IOSTAT=, ERR= or END=.
+Without one, a missing file, an end of file or invalid data stops the
+program, which takes the decision away from the procedure's caller. An
+internal READ such as `read (text, *) x`, converting text to a number, is the
+common case. END= alone counts as handling a READ. READ from standard input,
+output statements, CLOSE, INQUIRE, OPEN of a scratch file, and main programs
+are not reported. Regression checks for these five warnings:
 `python tests/test_io_warnings.py`.
 
 `-Woptional-argument` warns when an OPTIONAL dummy is referenced without a

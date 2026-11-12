@@ -218,6 +218,7 @@ pub fn print_help() {
     println!("  -Wunit-leak         Warn about a NEWUNIT= unit of a local variable never closed (in -Wall)");
     println!("  -Wpreconnected-unit Warn about READ from unit 5 and WRITE to units 6 and 0 (in -Wextra)");
     println!("  -Wfunction-io       Warn about functions that do I/O on an external unit (in -Wstyle)");
+    println!("  -Wunhandled-io-error Warn about OPEN and READ without IOSTAT= in procedures (opt-in)");
     println!("  -Wno-<category>      Disable a warning category");
     println!("  -Werror, --Werror    Treat enabled warnings as errors");
     println!("  -Werror=<category>  Enable a warning category and treat it as an error");
