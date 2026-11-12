@@ -137,6 +137,8 @@ mod leak_warnings;
 mod allocation_warnings;
 mod action_warnings;
 mod merge_warnings;
+mod function_warnings;
+mod redundant_use;
 mod use_warnings;
 mod parameter_warnings;
 mod kind_warnings;

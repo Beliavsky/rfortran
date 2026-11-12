@@ -112,6 +112,10 @@ const CATEGORIES: &[&str] = &[
     "unhandled-io-error",
     "merge-guard",
     "merge-evaluation",
+    "old-array-constructor",
+    "quote-style",
+    "could-be-function",
+    "redundant-use",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface, conversion, and module-default-public remain
@@ -177,6 +181,8 @@ const STYLE: &[&str] = &[
     "missing-intent",
     "implicit-typing",
     "function-io",
+    "old-array-constructor",
+    "redundant-use",
 ];
 fn canonical(name: &str) -> &str {
     match name {
@@ -193,7 +199,8 @@ pub fn validate_options(options: &[String]) -> Result<()> {
             .unwrap_or(option);
         let name = canonical(name);
         let line_length = name.strip_prefix("line-length=").is_some_and(|n| n.parse::<usize>().is_ok_and(|n| n > 0));
-        if !CATEGORIES.contains(&name) && !line_length && !matches!(name, "unused" | "unused-private" | "extra" | "style") {
+        let quote_style = matches!(name, "quote-style=double" | "quote-style=single");
+        if !CATEGORIES.contains(&name) && !line_length && !quote_style && !matches!(name, "unused" | "unused-private" | "extra" | "style") {
             bail!("unknown warning option `{option}`");
         }
     }

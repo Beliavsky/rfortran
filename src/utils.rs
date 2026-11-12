@@ -221,6 +221,10 @@ pub fn print_help() {
     println!("  -Wunhandled-io-error Warn about OPEN and READ without IOSTAT= in procedures (opt-in)");
     println!("  -Wmerge-guard       Warn about MERGE arguments the mask guards, as in merge(a(i), 0, i > 0) (in -Wall)");
     println!("  -Wmerge-evaluation  Warn about MERGE arguments computed whether or not the mask selects them (opt-in)");
+    println!("  -Wold-array-constructor Warn about array constructors written (/ ... /) instead of [ ... ] (in -Wstyle)");
+    println!("  -Wquote-style[=double|single] Warn about CHARACTER literals in the other kind of quotes; default double (opt-in)");
+    println!("  -Wcould-be-function Warn about subroutines whose only effect is to define one INTENT(OUT) argument (opt-in)");
+    println!("  -Wredundant-use     Warn about USE statements and ONLY names that the host or an earlier USE already imports (in -Wstyle)");
     println!("  -Wno-<category>      Disable a warning category");
     println!("  -Werror, --Werror    Treat enabled warnings as errors");
     println!("  -Werror=<category>  Enable a warning category and treat it as an error");

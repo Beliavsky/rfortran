@@ -16,6 +16,16 @@ fn intents(params: &[String], body: &[Stmt]) -> Vec<String> {
 }
 
 pub fn validate(program: &Program) -> Result<()> {
+    validate_only(program, None)
+}
+
+/// Check only the PURE procedure `target` of `program`, with what the
+/// program declares about the other procedures.
+pub(crate) fn validate_procedure(program: &Program, target: &Stmt) -> Result<()> {
+    validate_only(program, Some(target as *const Stmt))
+}
+
+fn validate_only(program: &Program, only: Option<*const Stmt>) -> Result<()> {
     fn procedures(body: &[Stmt], known: &mut HashMap<String, Procedure>) {
         for s in body {
             match s {
@@ -265,7 +275,7 @@ pub fn validate(program: &Program) -> Result<()> {
             })();
         result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
-    fn walk(body: &[Stmt], known: &HashMap<String, Procedure>, inherited_characters: &HashSet<String>, inherited_objects: &HashSet<String>) -> Result<()> {
+    fn walk(body: &[Stmt], known: &HashMap<String, Procedure>, inherited_characters: &HashSet<String>, inherited_objects: &HashSet<String>, only: Option<*const Stmt>) -> Result<()> {
         let mut characters=inherited_characters.clone();
         let mut objects=inherited_objects.clone();
         for stmt in body {
@@ -300,7 +310,7 @@ pub fn validate(program: &Program) -> Result<()> {
             };
             let known = local_known.as_ref().unwrap_or(known);
             match stmt {
-                Stmt::Function { name, pure: true, elemental, return_type, params, body, .. } => {
+                Stmt::Function { name, pure: true, elemental, return_type, params, body, .. } if only.is_none_or(|p| std::ptr::eq(p, stmt)) => {
                     if *elemental { crate::elemental::validate(name,params,return_type,body)?; }
                     let mut locals: HashSet<String> = params.iter().cloned().collect();
                     locals.insert(name.clone());
@@ -312,7 +322,7 @@ pub fn validate(program: &Program) -> Result<()> {
                     }).map(|(p,_)|p.clone()).collect();
                     check(body, &locals, &readonly, known, &characters, &objects)?;
                 }
-                Stmt::Subroutine { name, pure: true, elemental, params, body, .. } => {
+                Stmt::Subroutine { name, pure: true, elemental, params, body, .. } if only.is_none_or(|p| std::ptr::eq(p, stmt)) => {
                     if *elemental { crate::elemental::validate_subroutine(name,params,body)?; }
                     let declared = intents(params, body);
                     if declared.iter().any(|i| !matches!(i.as_str(), "intent(in)" | "intent(out)" | "intent(inout)")) {
@@ -321,13 +331,13 @@ pub fn validate(program: &Program) -> Result<()> {
                     let readonly = params.iter().zip(&declared).filter(|(_, i)| i.as_str() == "intent(in)").map(|(p, _)| p.clone()).collect();
                     check(body, &params.iter().cloned().collect(), &readonly, known, &characters, &objects)?;
                 }
-                Stmt::Module { body, .. } => walk(body, known, &characters, &objects)?,
+                Stmt::Module { body, .. } => walk(body, known, &characters, &objects, only)?,
                 _ => {}
             }
             // A contained PURE procedure must itself be checked, even when
             // its host is impure or the contained procedure is never called.
             if let Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } = stmt {
-                walk(body, known, &characters, &objects)?;
+                walk(body, known, &characters, &objects, only)?;
             }
         }
         Ok(())
@@ -338,7 +348,7 @@ pub fn validate(program: &Program) -> Result<()> {
     })]);
     known.insert("tokenize".into(),Procedure{pure:true,intents:Some(vec!["intent(in)".into(),"intent(in)".into(),"intent(out)".into(),"intent(out)".into()]),optional:vec![false,false,false,true]});
     procedures(&program.body, &mut known);
-    walk(&program.body, &known, &HashSet::new(), &HashSet::new())
+    walk(&program.body, &known, &HashSet::new(), &HashSet::new(), only)
 }
 
 #[cfg(test)]

@@ -154,6 +154,10 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wdeclaration-order` | No | No | Procedures that declare a dummy argument after a local variable or the function result, or the result after a local, and declarations that mix the groups, such as `real :: x, tmp` with dummy `x`; a local needed in a dummy's or the result's declaration, such as a named constant used as a bound or kind, may come first |
 | `-Wargument-order` | No | No | Argument lists with a required INTENT(IN) argument after an INTENT(OUT) or INTENT(INOUT) one, or a required argument after an OPTIONAL one, with the reordered list suggested; see [Style warnings](#style-warnings) |
 | `-Wdo-while-true` | No | No | `do while (.true.)`, an endless loop, with `do` suggested |
+| `-Wold-array-constructor` | No | No | Array constructors written `(/ ... /)`, with the statement rewritten using `[ ... ]`; not reported when `-std` selects a standard before Fortran 2003 |
+| `-Wquote-style[=double\|single]` | No | No | CHARACTER literals in the other kind of quotes than the preferred one, double by default, with the statement rewritten; not in `-Wstyle`; see [Style warnings](#style-warnings) |
+| `-Wredundant-use` | No | No | USE statements, or names in their ONLY lists, that the host or an earlier USE in the scope already imports, such as a module procedure repeating its module's `use iso_fortran_env, only: int32`; see [Style warnings](#style-warnings) |
+| `-Wcould-be-function` | No | No | Subroutines whose only effect is to define one INTENT(OUT) argument, with a PURE function suggested; not in `-Wstyle`; see [Style warnings](#style-warnings) |
 | `-Wfunction-result` | No | No | FUNCTION statements with the result type in the prefix, such as `real function f(x)`, or without a RESULT clause, with the preferred `function f(x) result(y)` form suggested |
 | `-Wcould-be-conditional` | No | No | IF blocks whose two or three branches each assign one value to the same variable, with a Fortran 2023 conditional expression suggested, such as `y = (x > 0 ? sqrt(x) : -1.0)` |
 | `-Wcould-be-one-line-if` | No | No | IF blocks holding a single action statement, with the one-line IF suggested when it fits the line length, such as `if (x > 0) x = sqrt(x)` |
@@ -974,7 +978,8 @@ Fortran: Style and Usage*. Each is opt-in and can also be selected alone, and
   `-Wsemicolon`, `-Wtrailing-whitespace`, `-Wunnamed-exit`, `-Wgoto`, `-Wobsolescent`, `-Wstop-in-procedure`,
   `-Wassumed-size`, `-Wredundant-implicit`, `-Wname-case`,
   `-Wfunction-result`, `-Wduplicate-constant`, `-Wdeclaration-order`,
-  `-Wargument-order` and `-Wdo-while-true`;
+  `-Wargument-order`, `-Wdo-while-true`, `-Wold-array-constructor` and
+  `-Wredundant-use`;
 - the existing checks `-Windentation`, `-Wuse-without-only`,
   `-Wmodule-default-public`, `-Wliteral-kind`, `-Wdefault-real`,
   `-Wcould-be-parameter`, `-Wmissing-intent` and `-Wimplicit-typing`.
@@ -1000,6 +1005,35 @@ Notes on individual checks:
   skips comparisons with an exact zero, such as `if (sigma == 0)`.
 - `-Wline-length` uses 132 characters, the free-form limit before Fortran
   2023 and the gfortran default; `-Wline-length=100` sets another limit.
+- `-Wquote-style`, outside `-Wstyle` since projects differ, prefers double
+  quotes; `-Wquote-style=single` prefers single quotes. A literal is reported
+  only when it contains no quote of the preferred kind, so `'say "hi"'`
+  keeps its single quotes under the default, and a doubled quote becomes a
+  single one, as `'it''s'` becomes `"it's"`. Literals with a kind prefix,
+  such as `c_char_'x'`, and literals continued across lines are not
+  reported. Regression checks for this, `-Wold-array-constructor` and
+  `-Wcould-be-function`: `python tests/test_source_style_warnings.py`.
+- `-Wredundant-use` reports a USE in a procedure that imports, under the
+  same local names, entities its host already imports from that module: a
+  module for its procedures, a procedure for its internal procedures, and a
+  main program for the procedures after its CONTAINS. It also reports a USE
+  repeating an earlier one in the same scope. It suggests deleting the
+  statement, or the ONLY list without the repeated names; when nothing else
+  in the host uses them, a note says that removing the host's import instead
+  keeps them local. A rename to another local name, a USE without ONLY after
+  one with ONLY, interface bodies (which inherit nothing from their host) and
+  external procedures are not reported. Intrinsic modules are checked too.
+- `-Wcould-be-function`, also outside `-Wstyle`, reports a subroutine with
+  one INTENT(OUT) argument and only INTENT(IN) arguments otherwise that
+  rfort's check for PURE procedures accepts: no input/output, no STOP, no
+  SAVE, no definition of module or host variables, and no impure calls.
+  `subroutine area(w, h, a)` becomes `pure function area(w, h) result(a)`,
+  and `call area(w, h, a)` becomes `a = area(w, h)`; an array result needs
+  an explicit shape or the ALLOCATABLE attribute. Subroutines named in
+  generic, operator or assignment interfaces or type-bound bindings, passed
+  as actual arguments, or with alternate returns or OPTIONAL, POINTER, VALUE
+  or procedure dummies are not reported, nor those that reference
+  procedures of intrinsic modules the purity check does not know.
   `-Wtabs`, `-Wline-length` and `-Wtrailing-whitespace` check free-form
   source only, as does the trailing-semicolon part of `-Wsemicolon`.
 - `-Wduplicate-constant` compares the files compiled together, and

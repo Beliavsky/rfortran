@@ -48,6 +48,14 @@
 //!   Host-associated and USE-associated names are compared with their
 //!   declarations, and components with their declarations in types.
 //!
+//! - `old-array-constructor`: an array constructor written `(/ ... /)`
+//!   rather than `[ ... ]`, which Fortran 2003 introduced; not reported when
+//!   `-std` selects an earlier standard.
+//! - `quote-style`, opt-in and not in -Wstyle: a CHARACTER literal in the
+//!   other kind of quotes than `-Wquote-style=double` (the default) or
+//!   `-Wquote-style=single` prefers, when it contains no quote of the
+//!   preferred kind. A doubled quote, as in `'it''s'`, becomes a single one.
+//!
 //! The checks read the tokens of each statement and a stack of open
 //! constructs shared with -Windentation.
 use crate::indentation_warnings::{classify, words, Kind, Role};
@@ -61,7 +69,7 @@ pub(crate) const CATEGORIES: &[&str] = &[
     "keyword-case", "tabs", "line-length", "unnamed-exit", "goto", "obsolescent", "stop-in-procedure", "assumed-size",
     "redundant-implicit", "name-case", "function-result", "could-be-one-line-if", "one-line-if",
     "could-be-intent-in", "unused-only", "semicolon", "trailing-whitespace", "declaration-order", "argument-order",
-    "do-while-true",
+    "do-while-true", "old-array-constructor",
 ];
 
 struct Warning {
@@ -1595,6 +1603,90 @@ fn analyze(src: &str, tokens: &[Token], own_len: usize, fixed_form: bool, line_l
     out
 }
 
+/// The preferred quote of `quote-style`, if it is enabled, and whether as
+/// an error. `-Wquote-style` alone prefers double quotes.
+fn quote_style(settings: &SemaSettings, options: &[String]) -> (Option<char>, bool) {
+    let (mut enabled, mut error) = crate::unused::selected("quote-style", false, settings, options);
+    let mut quote = '"';
+    for option in options {
+        let (on, as_error, name) = match option.strip_prefix("no-") {
+            Some(n) => (false, false, n),
+            None => match option.strip_prefix("error=") { Some(n) => (true, true, n), None => (true, false, option.as_str()) },
+        };
+        if let Some(style) = name.strip_prefix("quote-style=") {
+            quote = if style == "single" { '\'' } else { '"' };
+            enabled = on;
+            error |= as_error;
+        }
+    }
+    (enabled.then_some(quote), error)
+}
+
+/// `old-array-constructor` and `quote-style`, for each statement, with the
+/// statement rewritten when it is on one line.
+fn literal_checks(src: &str, tokens: &[Token], own_len: usize, quote: Option<char>) -> Vec<Warning> {
+    let mut out = vec![];
+    let mut i = 0;
+    while i < tokens.len() && tokens[i].span.start < own_len {
+        let all = crate::declaration_warnings::statement_tokens(tokens, tokens[i].span.start, usize::MAX, src);
+        i += all.len().max(1);
+        let ts: Vec<&Token> = all.iter().filter(|t| !t.span.is_empty()).collect();
+        let (Some(first), Some(last)) = (ts.first(), ts.last()) else { continue };
+        let one_line = !src[first.span.start..last.span.end].contains('\n');
+        // The statement with some tokens replaced, for a suggestion.
+        let rewritten = |changes: &[(Range<usize>, String)]| {
+            let mut text = String::new();
+            let mut from = first.span.start;
+            for (span, replacement) in changes {
+                text.push_str(&src[from..span.start]);
+                text.push_str(replacement);
+                from = span.end;
+            }
+            text.push_str(&src[from..last.span.end]);
+            text
+        };
+        let constructors: Vec<(Range<usize>, String)> = ts.iter().filter_map(|t| match t.kind {
+            TokenKind::LBracket if text(src, t).starts_with('(') => Some((t.span.clone(), "[".to_owned())),
+            TokenKind::RBracket if text(src, t).ends_with(')') => Some((t.span.clone(), "]".to_owned())),
+            _ => None,
+        }).collect();
+        if !constructors.is_empty() {
+            let opening = constructors.iter().filter(|(_, r)| r == "[").count();
+            let message = if opening <= 1 { "array constructor written `(/ ... /)`; write `[ ... ]` [old-array-constructor]".to_owned() }
+                else { format!("{opening} array constructors written `(/ ... /)`; write `[ ... ]` [old-array-constructor]") };
+            let mut warning = Warning { category: "old-array-constructor", message,
+                labels: constructors.iter().map(|(span, r)| (span.clone(), format!("use {r}"))).collect(), related: vec![], notes: vec![] };
+            if one_line { warning = warning.note(format!("suggestion: {}", rewritten(&constructors))); }
+            out.push(warning);
+        }
+        if let Some(preferred) = quote {
+            let other = if preferred == '"' { '\'' } else { '"' };
+            let mut changes = vec![];
+            for t in &ts {
+                let TokenKind::Str(value) = &t.kind else { continue };
+                let written = text(src, t);
+                // A literal on one line, in the other quotes, without a
+                // kind prefix, and without the preferred quote inside.
+                if written.len() < 2 || !written.starts_with(other) || !written.ends_with(other) || written.contains('\n') || value.contains(preferred) {
+                    continue;
+                }
+                changes.push((t.span.clone(), format!("{preferred}{value}{preferred}")));
+            }
+            if !changes.is_empty() {
+                let (name, word, instead) = if preferred == '"' { ("double", "single", "single") } else { ("single", "double", "double") };
+                let message = if changes.len() == 1 { format!("CHARACTER literal in {word} quotes, where {name} quotes are preferred [quote-style]") }
+                    else { format!("{} CHARACTER literals in {word} quotes, where {name} quotes are preferred [quote-style]", changes.len()) };
+                let mut warning = Warning { category: "quote-style", message,
+                    labels: changes.iter().map(|(span, r)| (span.clone(), format!("write {r}"))).collect(), related: vec![], notes: vec![] };
+                if one_line { warning = warning.note(format!("suggestion: {}", rewritten(&changes))); }
+                warning = warning.note(format!("-Wquote-style={instead} prefers {instead} quotes"));
+                out.push(warning);
+            }
+        }
+    }
+    out
+}
+
 /// Whether `line-length` is enabled, with its limit, and whether as an error.
 fn line_length(settings: &SemaSettings, options: &[String]) -> (Option<usize>, bool) {
     let (mut enabled, mut error) = crate::unused::selected("line-length", false, settings, options);
@@ -1621,17 +1713,33 @@ pub(crate) fn check(
     settings: &SemaSettings,
     options: &[String],
     fixed_form: bool,
+    standard: Option<crate::standards::Standard>,
 ) -> Result<()> {
     // Opt-in: -Wall does not enable these.
     let mut opt_in = settings.clone();
     opt_in.wall = false;
     let controls: Vec<(&str, (bool, bool))> = CATEGORIES.iter().map(|c| (*c, crate::unused::selected(c, false, &opt_in, options))).collect();
     let (limit, limit_error) = line_length(&opt_in, options);
-    let enabled = |c: &str| if c == "line-length" { limit.is_some() } else { controls.iter().any(|(n, (on, _))| *n == c && *on) };
-    let as_error = |c: &str| if c == "line-length" { limit_error } else { controls.iter().any(|(n, (_, e))| *n == c && *e) };
-    if !CATEGORIES.iter().any(|c| enabled(c)) { return Ok(()); }
+    let (quote, quote_error) = quote_style(&opt_in, options);
+    // Square brackets are Fortran 2003.
+    let brackets = standard.is_none_or(|s| s >= "f2003".parse().unwrap());
+    let enabled = |c: &str| match c {
+        "line-length" => limit.is_some(),
+        "quote-style" => quote.is_some(),
+        "old-array-constructor" => brackets && controls.iter().any(|(n, (on, _))| *n == c && *on),
+        _ => controls.iter().any(|(n, (on, _))| *n == c && *on),
+    };
+    let as_error = |c: &str| match c {
+        "line-length" => limit_error,
+        "quote-style" => quote_error,
+        _ => controls.iter().any(|(n, (_, e))| *n == c && *e),
+    };
+    if !CATEGORIES.iter().any(|c| enabled(c)) && quote.is_none() { return Ok(()); }
     let tokens: Vec<Token> = crate::lexer::lex_source(src);
     let mut warnings = analyze(src, &tokens, own_len, fixed_form, limit, enabled("tabs"));
+    if enabled("old-array-constructor") || quote.is_some() {
+        warnings.extend(literal_checks(src, &tokens, own_len, quote));
+    }
     warnings.retain(|w| enabled(w.category));
     if warnings.is_empty() { return Ok(()); }
     warnings.sort_by_key(|w| w.labels.first().map_or(0, |l| l.0.start));

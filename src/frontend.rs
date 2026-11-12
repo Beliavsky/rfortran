@@ -42,6 +42,10 @@ pub(crate) fn prepare_program(
                            &prepared.origins, settings, &args.warnings)?;
     merge_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
                           &prepared.origins, settings, &args.warnings, args.standard)?;
+    function_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
+                             &prepared.origins, settings, &args.warnings)?;
+    redundant_use::check(&prepared.program, &prepared.source, src.len(), filename,
+                         &prepared.origins, settings, &args.warnings)?;
     use_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
                         &prepared.origins, settings, &args.warnings)?;
     parameter_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
@@ -51,7 +55,7 @@ pub(crate) fn prepare_program(
                                 args.is_fixed_form(input))?;
     return_warnings::check(&prepared.source, src.len(), filename, &prepared.origins, settings, &args.warnings)?;
     style_warnings::check(&prepared.source, src.len(), filename, &prepared.origins, settings, &args.warnings,
-                          args.is_fixed_form(input))?;
+                          args.is_fixed_form(input), args.standard)?;
     if args.standard.is_some() {
         standards::check(&prepared.program, &prepared.source, &lexer::lex(&prepared.source), filename,
                          Some(&prepared.origins), args.standard, settings.werror)?;
