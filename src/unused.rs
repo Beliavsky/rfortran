@@ -105,6 +105,10 @@ const CATEGORIES: &[&str] = &[
     "constant-condition",
     "constant-condition-all",
     "do-while-true",
+    "recursive-io",
+    "unit-leak",
+    "preconnected-unit",
+    "function-io",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface, conversion, and module-default-public remain
@@ -133,6 +137,7 @@ const EXTRA: &[&str] = &[
     "intrinsic-shadow",
     "keyword-name",
     "fixed-unit",
+    "preconnected-unit",
 ];
 /// The categories that -Wstyle enables: the style rules of Clerman and
 /// Spector's "Modern Fortran: Style and Usage" that rfort checks.
@@ -168,6 +173,7 @@ const STYLE: &[&str] = &[
     "could-be-parameter",
     "missing-intent",
     "implicit-typing",
+    "function-io",
 ];
 fn canonical(name: &str) -> &str {
     match name {

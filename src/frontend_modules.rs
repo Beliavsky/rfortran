@@ -132,6 +132,7 @@ mod implicit_warnings;
 mod reachability;
 mod format_warnings;
 mod open_warnings;
+mod io_warnings;
 mod leak_warnings;
 mod allocation_warnings;
 mod action_warnings;

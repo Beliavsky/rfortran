@@ -1080,7 +1080,7 @@
     },
     "155_scalar_character_arguments": {
       "compiler_exit_code": 0,
-      "compiler_stderr": "",
+      "compiler_stderr": "warning: WRITE on standard output in `assert_eq2` can run while another input/output statement on the same unit is in progress [recursive-io]\n   \u250c\u2500 tests\\155_scalar_character_arguments.f90:15:4\n   \u2502\n 5 \u2502 print *, assert_eq2(3, 3, 'first check')\n   \u2502          ---------- `assert_eq2` is referenced during this PRINT\n 6 \u2502 print *, assert_eq2(n2=4, string='second check', n1=4)\n   \u2502          ---------- `assert_eq2` is referenced during this PRINT\n   \u00b7\n15 \u2502    write (*,*) 'nrerror: an assert_eq failed with this tag:', string\n   \u2502    ^^^^^\n   \u2502\n   = recursive input/output on an external unit is not allowed; gfortran stops with \"Recursive I/O not allowed\"\n   = evaluate the function before the statement, or write to an internal file in the function\n   = -Wno-recursive-io disables this warning\n\n",
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 3\n 4\n"

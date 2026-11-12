@@ -30,7 +30,7 @@ enum Unit {
     Other,
 }
 
-fn statements<'a>(src: &str, tokens: &'a [Token]) -> Vec<&'a [Token]> {
+pub(crate) fn statements<'a>(src: &str, tokens: &'a [Token]) -> Vec<&'a [Token]> {
     let mut out = vec![];
     let mut start = 0;
     for i in 1..=tokens.len() {
@@ -44,7 +44,7 @@ fn statements<'a>(src: &str, tokens: &'a [Token]) -> Vec<&'a [Token]> {
 
 /// Named constants with an integer literal value; a name given two values is
 /// left out.
-fn constants(src: &str, tokens: &[Token]) -> HashMap<String, Option<i64>> {
+pub(crate) fn constants(src: &str, tokens: &[Token]) -> HashMap<String, Option<i64>> {
     let mut out: HashMap<String, Option<i64>> = HashMap::new();
     for s in statements(src, tokens) {
         if !s.iter().any(|t| matches!(&t.kind, TokenKind::Ident(n) if n == "parameter")) { continue; }
@@ -61,7 +61,7 @@ fn constants(src: &str, tokens: &[Token]) -> HashMap<String, Option<i64>> {
 }
 
 /// The control list items of the statement whose `(` is at `open`.
-fn items(tokens: &[Token], open: usize) -> Vec<&[Token]> {
+pub(crate) fn items(tokens: &[Token], open: usize) -> Vec<&[Token]> {
     let mut out = vec![];
     let mut depth = 0;
     let mut start = open + 1;

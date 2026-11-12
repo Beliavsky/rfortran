@@ -119,7 +119,8 @@ pub fn print_help() {
     println!("  -Wall, --Wall        Enable common warnings (some advice remains opt-in)");
     println!("  -Wextra, --Wextra    Enable additional opt-in advice:");
     println!("                      missing-intent, shadow, shadow-dummy-argument, dead-store,");
-    println!("                      unchecked-status, intrinsic-shadow, keyword-name, fixed-unit");
+    println!("                      unchecked-status, intrinsic-shadow, keyword-name, fixed-unit,");
+    println!("                      preconnected-unit");
     println!("                      As in gfortran, it does not imply -Wall; use -Wall -Wextra");
     println!("  -std=<revision>     Check implemented features: f90, f95, f2003, f2008, f2018, f2023");
     println!("                      Default: permissive; revision checks are partial");
@@ -213,6 +214,10 @@ pub fn print_help() {
     println!("  -Wallocation-state  Warn about DEALLOCATE of an unallocated or ALLOCATE of an allocated local (on by default)");
     println!("  -Waction-mismatch   Warn about READ from a unit opened for WRITE or WRITE to one opened for READ (on by default)");
     println!("  -Wfixed-unit        Warn about OPEN of a constant unit in a procedure; suggest NEWUNIT= (opt-in)");
+    println!("  -Wrecursive-io      Warn about I/O in a function referenced by I/O on the same unit (on by default)");
+    println!("  -Wunit-leak         Warn about a NEWUNIT= unit of a local variable never closed (in -Wall)");
+    println!("  -Wpreconnected-unit Warn about READ from unit 5 and WRITE to units 6 and 0 (in -Wextra)");
+    println!("  -Wfunction-io       Warn about functions that do I/O on an external unit (in -Wstyle)");
     println!("  -Wno-<category>      Disable a warning category");
     println!("  -Werror, --Werror    Treat enabled warnings as errors");
     println!("  -Werror=<category>  Enable a warning category and treat it as an error");

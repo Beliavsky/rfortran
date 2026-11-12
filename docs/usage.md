@@ -616,6 +616,46 @@ opens the same constant unit, the warning names it. The note suggests
 revision before Fortran 2008. Disable with `-Wno-fixed-unit`, promote with
 `-Werror=fixed-unit`, or use `!#allow(fixed-unit)` / `!#deny(fixed-unit)`.
 
+`-Wrecursive-io` is **on by default**. It warns about an input/output
+statement in a procedure that a function referenced by another input/output
+statement can reach, directly or through the procedures it calls, when both
+use the same external unit. Such recursive input/output is not allowed
+(Fortran 2018, 12.12), and gfortran stops with "Recursive I/O not allowed".
+`PRINT`, `*` and unit 6 are standard output, and `READ *`, `READ(*,...)` and
+unit 5 standard input. Writing to an internal file or to another unit is
+allowed and not reported, nor is a function evaluated before the statement,
+as in `y = f(x)` followed by `print *, y`. The warning appears once for each
+inner statement, with a label at each reference that can reach it. Disable
+with `-Wno-recursive-io` or `!#allow(recursive-io)`; promote with
+`-Werror=recursive-io`.
+
+`-Wunit-leak` is enabled by `-Wall`. It warns about an
+`open(newunit=u, ...)` in a procedure, where `u` is a local INTEGER variable
+that is not SAVE (or initialized), a dummy argument or the function result,
+and the procedure has no CLOSE of `u`. The file stays connected to a unit
+whose number is lost when the procedure returns, and each call connects
+another; calling it again with the same FILE= connects one file to two units.
+A variable used other than as a unit, for example assigned to a module
+variable or passed to a procedure, and procedures with internal procedures,
+are not checked. Main programs are exempt, since their units are closed when
+the program ends.
+
+`-Wpreconnected-unit` is enabled by `-Wextra`. It warns about READ from unit
+5 and WRITE to unit 6 or 0, given as an integer literal or a named constant.
+Which units are preconnected, and to what, is processor dependent; `*`, and
+INPUT_UNIT, OUTPUT_UNIT and ERROR_UNIT of ISO_FORTRAN_ENV (Fortran 2003), are
+portable. The note suggests them, or for a named constant, defining it as the
+ISO_FORTRAN_ENV name. A unit the program OPENs is exempt. With `-std=` before
+Fortran 2003 the note suggests only `*`, and unit 0, which then has no
+portable spelling, is not reported.
+
+`-Wfunction-io` is enabled by `-Wstyle`. It warns about a function that
+executes input/output on an external unit, once per function. Such a side
+effect keeps the function from being PURE, and referencing it in an
+input/output statement on the same unit is recursive input/output. Writing to
+an internal file is not reported. Regression checks for these four warnings:
+`python tests/test_io_warnings.py`.
+
 `-Woptional-argument` warns when an OPTIONAL dummy is referenced without a
 proven `PRESENT` guard. For example, `if (present(s2))` does not prove that `s1`
 is present; the warning points to the source line which uses `s1`. The check
