@@ -536,10 +536,11 @@ selector is a COMPLEX expression supports `r%re` and `r%im`.
 
 This is an initial subset: kind 16, default initialization of COMPLEX components, implicit COMPLEX declarations, persistent initialized
 complex locals, and user-defined complex ELEMENTAL procedures are not implemented.
-List-directed output covers COMPLEX arrays with fixed or runtime extents,
-including sections such as `z(k:n)` and `s(3, :)`, ALLOCATABLE arrays and
-assumed-shape dummies; sections of assumed-shape COMPLEX dummies of rank two or
-more remain unsupported. `python tests/test_output_item_fixes.py` covers this.
+List-directed and formatted output cover COMPLEX arrays with fixed or runtime
+extents, including sections such as `z(k:n)` and `s(3, :)`, ALLOCATABLE arrays
+and assumed-shape dummies. Sections of multidimensional assumed-shape COMPLEX
+dummies, as `a(2, :)` or `b(2, :, :)`, may be assigned, printed and passed as
+actual arguments. `python tests/test_output_item_fixes.py` covers this.
 
 Run `python tests/test_complex.py` after building. The seven external probes in
 `tests/ofort/complex-selection.json` cover constructors, parts, magnitude,

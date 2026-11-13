@@ -348,6 +348,10 @@ pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> 
             // Heap backing storage is flat; its descriptor retains source rank.
             let rank=crate::allocatables::axes(n,shapes).map_or(dims.len(),|axes|axes.len());
             if args.len()!=rank {bail!("array element actual `{n}` requires {rank} subscripts");}
+            // A section subscript, as in `a(2, :)`, selects an array.
+            if args.iter().any(|a|matches!(a,Expr::Section{..}) || matches!(a,Expr::Call(tag,_) if matches!(tag.as_str(),"@section_subscript"|"@vector_subscript"))) {
+                bail!("scalar actual argument must not be an array section");
+            }
             Ok(kind.clone())
         }
         Expr::Call(n, args) if matches!(n.as_str(), "dble" | "real" | "int") && args.len() == 1 => {

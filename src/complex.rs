@@ -913,6 +913,30 @@ impl Lower {
         let im = self.primitive(component_type(p.kind), p.dims.clone(), p.im, s, out);
         Pair { re, im, ..p }
     }
+    /// Capture the extents of a runtime-sized array and declare `index`, a
+    /// position in array element order. Returns the element count and the
+    /// subscripts of the element at `index`.
+    fn runtime_elements(&mut self, name: &str, index: &str, dims: &[Expr], s: &mut Scope, out: &mut Vec<Stmt>) -> Result<(Expr, Vec<Expr>)> {
+        let mut extents = vec![];
+        for (axis, d) in dims.iter().enumerate() {
+            let n = format!("{name}_extent_{axis}");
+            // An extent such as `size(a, 1)` names the COMPLEX array itself.
+            let mut d = d.clone();
+            self.expression(&mut d, s, out)?;
+            out.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![n.clone()] });
+            out.push(Stmt::Assign { name: n.clone(), value: d });
+            extents.push(id(&n));
+        }
+        out.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![index.into()] });
+        let length = extents.iter().cloned().fold(int(1), mul);
+        let mut ordinal = sub(id(index), int(1));
+        let mut indices = vec![];
+        for d in &extents {
+            indices.push(add(call("mod", vec![ordinal.clone(), d.clone()]), int(1)));
+            ordinal = bin(BinOp::Div, ordinal, d.clone());
+        }
+        Ok((length, indices))
+    }
     fn helper(&mut self, name: &str, k: u8, args: Vec<Expr>) -> Expr {
         self.helpers.insert((name.into(), k));
         call(&format!("@complex_{name}${k}"), args)
@@ -1031,10 +1055,21 @@ impl Lower {
                 if s.get(&n).is_some_and(|v| !v.dims.is_empty()) =>
             {
                 self.indices(&mut a, s, out)?;
-                (
-                    call(&format!("{n}%re"), a.clone()),
-                    call(&format!("{n}%im"), a),
-                )
+                // A section subscript names its array, as `a(2, :)` does `a`:
+                // each part's sections name that part.
+                let part = |suffix: &str| {
+                    let mut a = a.clone();
+                    let name = format!("{n}{suffix}");
+                    for e in &mut a {
+                        crate::procedure_arguments::visit_expr(e, &mut |e| {
+                            if let Expr::Section { name: section, .. } = e {
+                                if *section == n { *section = name.clone(); }
+                            }
+                        });
+                    }
+                    call(&name, a)
+                };
+                (part("%re"), part("%im"))
             }
             Expr::Call(n, a) if n == "@complex_literal" => {
                 if a.len() != 2 {
@@ -1904,29 +1939,34 @@ impl Lower {
                     let length = p.dims.iter().cloned().fold(int(1), mul);
                     if crate::parameters::integer_constant(&length).is_err() {
                         // A runtime-sized array, as a section with variable
-                        // bounds: two implied-DOs over its element strings,
-                        // the first element and then the rest, each after a
-                        // blank as for the fixed-size elements below.
-                        let mut extents = vec![];
-                        for (axis, d) in p.dims.iter().enumerate() {
-                            let n = format!("{name}_extent_{axis}");
-                            out.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![n.clone()] });
-                            out.push(Stmt::Assign { name: n.clone(), value: d.clone() });
-                            extents.push(id(&n));
-                        }
-                        out.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![index.clone()] });
-                        let length = extents.iter().cloned().fold(int(1), mul);
-                        let mut ordinal = sub(id(&index), int(1));
-                        let mut indices = vec![];
-                        for d in &extents {
-                            indices.push(add(call("mod", vec![ordinal.clone(), d.clone()]), int(1)));
-                            ordinal = bin(BinOp::Div, ordinal, d.clone());
-                        }
+                        // bounds. Its element strings are written to an
+                        // ALLOCATABLE buffer by an ordinary loop first: an
+                        // inlined CHARACTER function inside an output
+                        // implied-DO would be evaluated before the loop. Then
+                        // two implied-DOs write the buffer, the first element
+                        // and then the rest, each after a blank as for the
+                        // fixed-size elements below.
+                        let (length, indices) = self.runtime_elements(&name, &index, &p.dims, s, out)?;
                         let element = |e: &Expr| {
                             let Expr::Ident(n) = e else { unreachable!() };
                             call(n, indices.clone())
                         };
-                        let text = call("trim", vec![self.helper("string", p.kind, vec![element(&p.re), element(&p.im)])]);
+                        let string = self.helper("string", p.kind, vec![element(&p.re), element(&p.im)]);
+                        out.push(Stmt::DummyIntent { name: name.clone(), intent: "allocatable".into() });
+                        out.push(Stmt::ArrayDecl { kind: TypeSpec::Character(Some(96)), name: name.clone(), dims: vec![id("@deferred_extent")] });
+                        out.push(Stmt::If {
+                            cond: call("allocated", vec![id(&name)]),
+                            then_body: vec![Stmt::CallSub { name: "@deallocate".into(), args: vec![id(&name)] }],
+                            else_body: None,
+                        });
+                        out.push(Stmt::CallSub { name: "@allocate".into(), args: vec![call(&name, vec![length.clone()])] });
+                        out.push(Stmt::Do {
+                            var: index.clone(),
+                            start: int(1),
+                            end: length.clone(),
+                            body: vec![Stmt::AssignIndex { name: name.clone(), indices: vec![id(&index)], value: string }],
+                        });
+                        let text = call("trim", vec![call(&name, vec![id(&index)])]);
                         let first = if previous_character { vec![Expr::Str(" ".into()), text.clone()] } else { vec![text.clone()] };
                         let loop_over = |start: Expr, end: Expr, items: Vec<Expr>| {
                             let mut args = vec![id(&index), start, end, int(1)];
@@ -1989,6 +2029,18 @@ impl Lower {
                     let p = self.frozen(p, s, out);
                     self.serial += 1;
                     let name = format!("@complex_output_{}", self.serial);
+                    let length = p.dims.iter().cloned().fold(int(1), mul);
+                    if crate::parameters::integer_constant(&length).is_err() {
+                        // A runtime-sized array: an implied-DO over its parts.
+                        let index = format!("{name}_index");
+                        let (loop_end, indices) = self.runtime_elements(&name, &index, &p.dims, s, out)?;
+                        let element = |e: &Expr| {
+                            let Expr::Ident(n) = e else { unreachable!() };
+                            call(n, indices.clone())
+                        };
+                        values.push(call("@output_implied_do", vec![id(&index), int(1), loop_end, int(1), element(&p.re), element(&p.im)]));
+                        continue;
+                    }
                     let dimensions = p.dims.clone();
                     let k = p.kind;
                     out.push(Stmt::DerivedDecl {

@@ -1,5 +1,6 @@
 """ELEMENTAL functions of array constructors in formatted PRINT, list-directed
-output of COMPLEX sections and runtime-sized COMPLEX arrays, and implied-DO
+and formatted output of COMPLEX sections and runtime-sized COMPLEX arrays,
+sections of multidimensional assumed-shape COMPLEX dummies, and implied-DO
 indices with an INTEGER type-spec (Fortran 2008)."""
 from pathlib import Path
 import subprocess
@@ -74,6 +75,123 @@ end program main
  empty end
  (1.50000000,-0.500000000) (1.50000000,-0.500000000)
  (1.00000000,0.00000000) (2.00000000,0.00000000) (4.00000000,0.00000000) (5.00000000,0.00000000)
+""", reference=False)
+
+    def test_sections_of_complex_dummies(self):
+        # Rows, columns and strided sections of rank-2 and rank-3
+        # assumed-shape COMPLEX dummies, assigned to automatic and ALLOCATABLE
+        # arrays, printed and passed on; and rows of a fixed-size REAL matrix
+        # assigned to an ALLOCATABLE vector.
+        self.check("""module m
+implicit none
+contains
+subroutine take(v)
+complex, intent(in) :: v(:)
+print '(*(f0.1,:,1x))', v
+end subroutine take
+subroutine rows(a)
+complex, intent(in) :: a(:,:)
+complex :: r(size(a,2)), c(size(a,1))
+complex, allocatable :: w(:)
+r = a(2,:)
+print '(*(f0.1,:,1x))', r
+c = a(:,3)
+print '(*(f0.1,:,1x))', c
+w = a(1,1:3:2) * 2
+print '(*(f0.1,:,1x))', w
+print '(*(f0.1,:,1x))', a(2,:)
+call take(a(1,:))
+end subroutine rows
+subroutine cube(b)
+complex(8), intent(in) :: b(:,:,:)
+complex(8) :: p(size(b,2), size(b,3))
+p = b(2,:,:)
+print '(*(f0.1,:,1x))', p
+end subroutine cube
+end module m
+program main
+use m
+implicit none
+complex :: a(2,3)
+complex(8) :: b(2,2,2)
+real :: x(2,3)
+real, allocatable :: q(:)
+integer :: i
+a = reshape([(cmplx(i, -i), i = 1, 6)], [2, 3])
+b = reshape([(cmplx(i, 10*i, kind=8), i = 1, 8)], [2, 2, 2])
+call rows(a)
+call cube(b)
+x = reshape([(real(i), i = 1, 6)], [2, 3])
+q = x(2,:)
+print '(*(f0.1,:,1x))', q
+q = 2 * real(x(1,2:3))
+print '(*(f0.1,:,1x))', q
+end program main
+""", """2.0 -2.0 4.0 -4.0 6.0 -6.0
+5.0 -5.0 6.0 -6.0
+2.0 -2.0 10.0 -10.0
+2.0 -2.0 4.0 -4.0 6.0 -6.0
+1.0 -1.0 3.0 -3.0 5.0 -5.0
+2.0 20.0 4.0 40.0 6.0 60.0 8.0 80.0
+2.0 4.0 6.0
+6.0 10.0
+""")
+
+    def test_complex_dummy_sections_in_output_lists(self):
+        self.check("""module m
+implicit none
+contains
+subroutine show(a, x)
+complex, intent(in) :: a(:,:)
+real, intent(in) :: x(:)
+integer :: i
+do i = 1, size(a, 1)
+   print '(i0,*(1x,f0.1))', i, a(i,:), x(1)
+   print '(i0,*(1x,g0))', i, a(i,2:), size(a)
+end do
+end subroutine show
+end module m
+program p
+use m
+implicit none
+complex :: c(2,3)
+real :: y(2) = 5
+integer :: i
+c = reshape([(cmplx(i, -i), i = 1, 6)], [2, 3])
+call show(c, y)
+end program p
+""", """1 1.0 -1.0 3.0 -3.0 5.0 -5.0 5.0
+1 3.00000000 -3.00000000 5.00000000 -5.00000000 6
+2 2.0 -2.0 4.0 -4.0 6.0 -6.0 5.0
+2 4.00000000 -4.00000000 6.00000000 -6.00000000 6
+""")
+        # List-directed, with other items in the list, in a loop.
+        self.check("""module m
+implicit none
+contains
+subroutine show(a, x)
+complex, intent(in) :: a(:,:)
+real, intent(in) :: x(:)
+integer :: i
+do i = 1, size(a, 1)
+   print *, i, a(i,:i+1), x(1)
+   print '(i0,*(1x,g0))', i, a(i,2:), size(a)
+end do
+end subroutine show
+end module m
+program p
+use m
+implicit none
+complex :: c(2,3)
+real :: y(2) = 5
+integer :: i
+c = reshape([(cmplx(i, -i), i = 1, 6)], [2, 3])
+call show(c, y)
+end program p
+""", """ 1 (1.00000000,-1.00000000) (3.00000000,-3.00000000) 5.0
+ 1 3.00000000 -3.00000000 5.00000000 -5.00000000 6
+ 2 (2.00000000,-2.00000000) (4.00000000,-4.00000000) (6.00000000,-6.00000000) 5.0
+ 2 4.00000000 -4.00000000 6.00000000 -6.00000000 6
 """, reference=False)
 
     def test_typed_implied_do_index(self):

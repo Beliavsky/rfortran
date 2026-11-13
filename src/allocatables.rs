@@ -383,8 +383,8 @@ fn conform_axes(a: &[Expr], b: &[Expr], guards: &mut Vec<Stmt>) -> Result<()> {
 }
 
 // Preserve logical rank checks before runtime arrays become flat packed views.
-// The type and constant extents of a section of a fixed-size array with
-// constant subscripts, such as `a(:, 1:2)`, of rank two or more.
+// The type and constant extents of a section of a fixed-size array of rank
+// two or more with constant subscripts, such as `a(:, 1:2)` or `a(2, :)`.
 fn fixed_section_shape(e:&Expr,shapes:&Shapes)->Option<(TypeSpec,Vec<i64>)> {
     let Expr::Call(n,args)=e else {return None};
     let (kind,dims)=shapes.get(n)?;
@@ -405,7 +405,7 @@ fn fixed_section_shape(e:&Expr,shapes:&Shapes)->Option<(TypeSpec,Vec<i64>)> {
             _ => {constant(arg)?;}
         }
     }
-    (extents.len()>1).then(||(kind.clone(),extents))
+    (args.len()>1 && !extents.is_empty()).then(||(kind.clone(),extents))
 }
 
 fn logical_shape(
@@ -1429,18 +1429,23 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     continue;
                 }
             }
-            // A section of a fixed-size array assigned to a multidimensional
-            // heap array is first copied to a fixed-size temporary, whose
-            // shape the reallocation below can read.
+            // A section of a multidimensional fixed-size array in a value
+            // assigned to a heap array, as `r = 2 * x(2, :)`, is first copied
+            // to a fixed-size temporary, whose shape the assignment can read.
             if let Stmt::Assign{name,value}=&mut s {
-                if shapes.contains_key(&format!("@heap:{name}")) && axes(name,&shapes).is_some_and(|a|a.len()>1) {
-                    if let Some((kind,extents))=fixed_section_shape(value,&shapes) {
+                if shapes.contains_key(&format!("@heap:{name}")) && axes(name,&shapes).is_some() {
+                    let mut copies=vec![];
+                    crate::procedure_arguments::visit_expr(value,&mut |e| {
+                        let Some((kind,extents))=fixed_section_shape(e,&shapes) else {return};
                         *serial+=1;
                         let temp=format!("@section_copy_{serial}");
                         let dims:Vec<Expr>=extents.into_iter().map(int).collect();
+                        copies.push((kind,temp.clone(),dims,std::mem::replace(e,id(&temp))));
+                    });
+                    for (kind,temp,dims,section) in copies {
                         shapes.insert(temp.clone(),(kind.clone(),dims.clone()));
                         out.push(Stmt::ArrayDecl{kind,name:temp.clone(),dims});
-                        out.push(Stmt::Assign{name:temp.clone(),value:std::mem::replace(value,id(&temp))});
+                        out.push(Stmt::Assign{name:temp,value:section});
                     }
                 }
             }
