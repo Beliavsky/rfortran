@@ -308,18 +308,41 @@ fn dims(n: &str, v: &Info) -> Vec<Expr> {
         })
         .collect()
 }
+// The extent of a triplet section along an axis declared with constant
+// bounds, when the section's bounds and stride are constant.
+fn section_extent(section: &Expr, declared: &Expr) -> Option<i64> {
+    let Expr::Section { lower, upper, stride, .. } = section else { return None };
+    let constant = |e: &Expr| crate::parameters::integer_constant(e).ok();
+    let (lo, hi) = match declared {
+        Expr::Call(tag, a) if tag == "@declared_bounds" && a.len() == 2 => (constant(&a[0])?, constant(&a[1])?),
+        d => (1, constant(d)?),
+    };
+    let step = match stride.as_deref() { Some(e) => constant(e)?, None => 1 };
+    if step == 0 { return None; }
+    let start = match lower.as_deref() { Some(e) => constant(e)?, None => if step > 0 { lo } else { hi } };
+    let end = match upper.as_deref() { Some(e) => constant(e)?, None => if step > 0 { hi } else { lo } };
+    let length = if (step > 0 && end >= start) || (step < 0 && end <= start) {
+        (i128::from(end) - i128::from(start)) / i128::from(step) + 1
+    } else { 0 };
+    i64::try_from(length).ok()
+}
 fn selection_dims(n: &str, args: &[Expr], v: &Info, s: &Scope, l: &Lower) -> Result<Vec<Expr>> {
     if args.len() != v.dims.len() {
         bail!("array `{n}` requires {} subscripts", v.dims.len());
     }
     let mut result = vec![];
-    for e in args {
-        if matches!(e,Expr::Call(tag,_) if tag=="@section_subscript") {
-            result.push(call(
-                "size",
-                vec![call(n, args.to_vec()), int(result.len() as i64 + 1)],
-            ));
-        } else if let Some(i) = l.info(e, s)? {
+    for (e, dim) in args.iter().zip(&v.dims) {
+        if let Expr::Call(tag, items) = e.clone() {
+            if tag == "@section_subscript" {
+                let fixed = items.first().and_then(|section| section_extent(section, dim));
+                result.push(fixed.map_or_else(|| call(
+                    "size",
+                    vec![call(n, args.to_vec()), int(result.len() as i64 + 1)],
+                ), int));
+                continue;
+            }
+        }
+        if let Some(i) = l.info(e, s)? {
             result.extend(i.dims);
         }
     }
@@ -444,23 +467,8 @@ impl Lower {
                     Expr::Call(tag,a) if tag=="@section_subscript" => a.first().unwrap_or(index),
                     _ => index,
                 };
-                if let Expr::Section {lower,upper,stride,..} = section {
-                    let bounds = match &v.dims[axis] {
-                        Expr::Call(tag,a) if tag=="@declared_bounds" && a.len()==2 =>
-                            crate::parameters::integer_constant(&a[0]).ok().zip(crate::parameters::integer_constant(&a[1]).ok()),
-                        d => crate::parameters::integer_constant(d).ok().map(|n|(1,n)),
-                    };
-                    let fixed = (|| {
-                        let (lo,hi)=bounds?;
-                        let step=stride.as_deref().map(crate::parameters::integer_constant).transpose().ok()?.unwrap_or(1);
-                        if step==0 {return None;}
-                        let start=lower.as_deref().map(crate::parameters::integer_constant).transpose().ok()?.unwrap_or(if step>0 {lo}else{hi});
-                        let end=upper.as_deref().map(crate::parameters::integer_constant).transpose().ok()?.unwrap_or(if step>0 {hi}else{lo});
-                        let length=if (step>0 && end>=start)||(step<0 && end<=start) {
-                            (i128::from(end)-i128::from(start))/i128::from(step)+1
-                        } else {0};
-                        i64::try_from(length).ok().map(int)
-                    })();
+                if let Expr::Section {..} = section {
+                    let fixed = section_extent(section,&v.dims[axis]).map(int);
                     dimensions.push(fixed.unwrap_or_else(||call("size", vec![
                         call(&format!("{tag}{}re",record_part_separator(&key,s)),args.clone()), int(dimensions.len() as i64+1)])));
                 } else if let Some(index) = self.info(index,s)? { dimensions.extend(index.dims); }
@@ -510,7 +518,8 @@ impl Lower {
             Expr::Str(n) => scalar(TypeSpec::Character(Some(n.len()))),
             Expr::Section { name, .. } => Ok(s.get(name).map(|v| Info {
                 kind: v.kind.clone(),
-                dims: vec![call("size", vec![e.clone()])],
+                dims: vec![v.dims.first().filter(|_| v.dims.len() == 1).and_then(|d| section_extent(e, d))
+                    .map_or_else(|| call("size", vec![e.clone()]), int)],
             })),
             Expr::Un(UnOp::Not, a) => Ok(self.info(a, s)?.map(|mut i| {
                 i.kind = TypeSpec::Logical;
@@ -1894,7 +1903,41 @@ impl Lower {
                     let index = format!("@complex_output_index_{}", self.serial);
                     let length = p.dims.iter().cloned().fold(int(1), mul);
                     if crate::parameters::integer_constant(&length).is_err() {
-                        bail!("list-directed output of runtime-sized COMPLEX arrays is not yet supported");
+                        // A runtime-sized array, as a section with variable
+                        // bounds: two implied-DOs over its element strings,
+                        // the first element and then the rest, each after a
+                        // blank as for the fixed-size elements below.
+                        let mut extents = vec![];
+                        for (axis, d) in p.dims.iter().enumerate() {
+                            let n = format!("{name}_extent_{axis}");
+                            out.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![n.clone()] });
+                            out.push(Stmt::Assign { name: n.clone(), value: d.clone() });
+                            extents.push(id(&n));
+                        }
+                        out.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![index.clone()] });
+                        let length = extents.iter().cloned().fold(int(1), mul);
+                        let mut ordinal = sub(id(&index), int(1));
+                        let mut indices = vec![];
+                        for d in &extents {
+                            indices.push(add(call("mod", vec![ordinal.clone(), d.clone()]), int(1)));
+                            ordinal = bin(BinOp::Div, ordinal, d.clone());
+                        }
+                        let element = |e: &Expr| {
+                            let Expr::Ident(n) = e else { unreachable!() };
+                            call(n, indices.clone())
+                        };
+                        let text = call("trim", vec![self.helper("string", p.kind, vec![element(&p.re), element(&p.im)])]);
+                        let first = if previous_character { vec![Expr::Str(" ".into()), text.clone()] } else { vec![text.clone()] };
+                        let loop_over = |start: Expr, end: Expr, items: Vec<Expr>| {
+                            let mut args = vec![id(&index), start, end, int(1)];
+                            args.extend(items);
+                            call("@output_implied_do", args)
+                        };
+                        values.push(loop_over(int(1), call("min", vec![length.clone(), int(1)]), first));
+                        values.push(loop_over(int(2), length, vec![Expr::Str(" ".into()), text]));
+                        previous_character = true;
+                        previous_complex = true;
+                        continue;
                     }
                     out.push(Stmt::ArrayDecl {
                         kind: TypeSpec::Character(Some(96)),

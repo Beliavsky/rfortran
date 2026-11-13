@@ -536,7 +536,10 @@ selector is a COMPLEX expression supports `r%re` and `r%im`.
 
 This is an initial subset: kind 16, default initialization of COMPLEX components, implicit COMPLEX declarations, persistent initialized
 complex locals, and user-defined complex ELEMENTAL procedures are not implemented.
-List-directed array output currently requires fixed extents.
+List-directed output covers COMPLEX arrays with fixed or runtime extents,
+including sections such as `z(k:n)` and `s(3, :)`, ALLOCATABLE arrays and
+assumed-shape dummies; sections of assumed-shape COMPLEX dummies of rank two or
+more remain unsupported. `python tests/test_output_item_fixes.py` covers this.
 
 Run `python tests/test_complex.py` after building. The seven external probes in
 `tests/ofort/complex-selection.json` cover constructors, parts, magnitude,
@@ -1238,6 +1241,10 @@ numeric/LOGICAL storage. Controls are captured on entry to each implied-DO;
 constant positive/negative strides, dependent nested bounds, mixed scalar items,
 and empty iteration ranges are supported. Each index uses local storage and
 retains its declared INTEGER kind. The enclosing index variable is unchanged.
+A Fortran 2008 index type-spec, as in `[(i**2, integer :: i = 1, n)]` or
+`integer(int64) :: j`, makes the index local to the implied-DO: it needs no
+declaration, and a variable of the same name in the enclosing scope keeps its
+value. `-std` before `f2008` reports it.
 A temporary captures every result before destination writes; too many elements
 or a final shape mismatch produce a runtime error.
 

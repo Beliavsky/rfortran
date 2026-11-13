@@ -1002,6 +1002,20 @@ Primary: Expr = {
         let mut args=vec![Expr::Ident(var),start,end,step.unwrap_or(Expr::IntLit("1".into()))];
         args.extend(items);Expr::Call("@output_implied_do".into(),args)
     },
+    // Fortran 2008: an index with an INTEGER type-spec is local to the
+    // implied-DO; typed_implied_do gives it a declared variable of its own.
+    LPAREN <items:ExprList> COMMA <kind:ImpliedDoKind> DCOLON <var:Ident> EQ <start:RhsExpr> COMMA <end:RhsExpr> <step:ImpliedDoStep?> RPAREN => {
+        let index=Expr::Call(format!("{}{kind}",crate::typed_implied_do::TAG),vec![Expr::Ident(var)]);
+        let mut args=vec![index,start,end,step.unwrap_or(Expr::IntLit("1".into()))];
+        args.extend(items);Expr::Call("@output_implied_do".into(),args)
+    },
+};
+
+// The kind of an implied-DO index type-spec: empty for default INTEGER.
+ImpliedDoKind: String = {
+    KW_INTEGER => String::new(),
+    KW_INTEGER LPAREN KW_KIND EQ <kind: RhsExpr> RPAREN => crate::ast::kind_text(kind),
+    KW_INTEGER LPAREN <kind: RhsExpr> RPAREN => crate::ast::kind_text(kind),
 };
 
 ReadControls: Vec<Expr> = { <first:ReadControl> <rest:(COMMA <ReadControl>)*> => {

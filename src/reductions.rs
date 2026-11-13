@@ -2098,7 +2098,7 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 }
                 for e in args[1..].iter_mut() {
                     if constructor_expression(e) && !crate::output::contains_implied_do(e) {
-                        argument(e, &symbols.variables, &mut prefix, serial)?;
+                        argument_with_elementals(e, &symbols.variables, &mut prefix, serial, &symbols.elementals)?;
                     }
                 }
                 for s in &prefix {

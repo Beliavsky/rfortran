@@ -442,6 +442,9 @@ impl Checker<'_> {
             Expr::Call(n, args) => {
                 if matches!(n.as_str(),"@multiple_subscript"|"@multiple_triplet") {self.feature("multiple_subscripts",offset);}
                 if n=="@conditional" {self.require("conditional expressions and arguments",2023,offset);}
+                if n=="@output_implied_do" && matches!(args.first(),Some(Expr::Ident(i)) if i.starts_with(crate::typed_implied_do::LOCAL)) {
+                    self.require("implied-DO index type-specs",2008,offset);
+                }
                 if matches!(
                     n.as_str(),
                     "@typed_constructor" | "@typed_character_constructor"

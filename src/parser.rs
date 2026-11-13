@@ -828,6 +828,7 @@ pub fn parse_with_origins(
     {
         Ok(mut p) => {
             crate::field_subscripts::resolve(&mut p);
+            crate::typed_implied_do::resolve(&mut p);
             if let Err((msg, at)) = check_implicit_statements(&p.body)
                 .and_then(|_| crate::entries::resolve(&mut p).map_err(|msg| (msg, None)))
                 .and_then(|_| resolve_dimension_statements(&mut p.body)
