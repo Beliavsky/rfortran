@@ -700,6 +700,7 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
             let mut unit_check = None;
             let mut control_prefix = vec![];
             let mut internal_store = None;
+            let mut internal_width = None;
             // Format into a scalar record, then copy it back through the usual
             // checked array assignment. Capture subscripts before output items
             // are evaluated, and never read the destination's old contents.
@@ -722,6 +723,32 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                                 control_prefix.push(Stmt::VarDecl{kind:kind.clone(),names:vec![target.clone()]});
                                 internal_store=Some(Stmt::AssignIndex{name:array,indices:captured,value:id(&target)});
                                 symbols.insert(target.clone(),(kind,vec![]));
+                                args[0]=id(&target);
+                            }
+                        }
+                    }
+                    // A substring is a record of its own length. Format into a
+                    // scalar of the variable's length, with the substring's
+                    // length as the record width, then copy the record back.
+                    if let Expr::Section{name:variable,lower,upper,stride:None}=&args[0] {
+                        if let Some((TypeSpec::Character(Some(length)),dims))=symbols.get(variable) {
+                            if dims.is_empty() {
+                                let length=*length;
+                                *serial+=1;
+                                let target=format!("@internal_record_{serial}");
+                                let (first,last,width)=(format!("@internal_first_{serial}"),format!("@internal_last_{serial}"),format!("@internal_width_{serial}"));
+                                let variable=variable.clone();
+                                control_prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![first.clone(),last.clone(),width.clone()]});
+                                control_prefix.push(assign(&first,lower.as_deref().cloned().unwrap_or(int(1))));
+                                control_prefix.push(assign(&last,upper.as_deref().cloned().unwrap_or(int(length as i64))));
+                                control_prefix.push(assign(&width,Expr::Call("max".into(),vec![bin(BinOp::Add,bin(BinOp::Sub,id(&last),id(&first)),int(1)),int(0)])));
+                                let kind=TypeSpec::Character(Some(length));
+                                control_prefix.push(Stmt::VarDecl{kind:kind.clone(),names:vec![target.clone()]});
+                                internal_store=Some(Stmt::AssignIndex{name:variable.clone(),
+                                    indices:vec![Expr::Section{name:variable,lower:Some(Box::new(id(&first))),upper:Some(Box::new(id(&last))),stride:None}],
+                                    value:Expr::Section{name:target.clone(),lower:Some(Box::new(int(1))),upper:Some(Box::new(id(&width))),stride:None}});
+                                symbols.insert(target.clone(),(kind,vec![]));
+                                internal_width=Some(id(&width));
                                 args[0]=id(&target);
                             }
                         }
@@ -810,7 +837,7 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                     Some(&handle),
                 ).map_err(|e|crate::source_diagnostics::at(e,location))?;
                 inner.push(if let Some((target,length))=internal {
-                    Stmt::CallSub {name:"@internal_format_end".into(),args:vec![id(&target),id(&handle),int(length as i64)]}
+                    Stmt::CallSub {name:"@internal_format_end".into(),args:vec![id(&target),id(&handle),internal_width.take().unwrap_or(int(length as i64))]}
                 } else if let Some(unit)=unit_check {
                     // A file unit, or a variable that may name standard output.
                     let file=Stmt::CallSub {name:"@format_end_file".into(),args:vec![id(&handle),unit.clone()]};

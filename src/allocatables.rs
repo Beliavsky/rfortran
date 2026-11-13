@@ -383,6 +383,31 @@ fn conform_axes(a: &[Expr], b: &[Expr], guards: &mut Vec<Stmt>) -> Result<()> {
 }
 
 // Preserve logical rank checks before runtime arrays become flat packed views.
+// The type and constant extents of a section of a fixed-size array with
+// constant subscripts, such as `a(:, 1:2)`, of rank two or more.
+fn fixed_section_shape(e:&Expr,shapes:&Shapes)->Option<(TypeSpec,Vec<i64>)> {
+    let Expr::Call(n,args)=e else {return None};
+    let (kind,dims)=shapes.get(n)?;
+    if dims.len()!=args.len() || axes(n,shapes).is_some() || allocated(n,shapes).is_some()
+        || matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_)) {return None;}
+    let constant=|e:&Expr|crate::parameters::integer_constant(e).ok();
+    let mut extents=vec![];
+    for (arg,dim) in args.iter().zip(dims) {
+        match arg {
+            Expr::Call(tag,items) if tag=="@section_subscript" => {
+                let Some(Expr::Section{lower,upper,stride,..})=items.first() else {return None};
+                let first=lower.as_deref().map_or(Some(1),constant)?;
+                let last=upper.as_deref().map_or_else(||constant(dim),constant)?;
+                let step=stride.as_deref().map_or(Some(1),constant)?;
+                if step==0 {return None;}
+                extents.push(((last-first)/step+1).max(0));
+            }
+            _ => {constant(arg)?;}
+        }
+    }
+    (extents.len()>1).then(||(kind.clone(),extents))
+}
+
 fn logical_shape(
     e: &Expr,
     shapes: &Shapes,
@@ -1402,6 +1427,21 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     lower(&mut assignment,&shapes,serial,checks)?;
                     out.extend(assignment);
                     continue;
+                }
+            }
+            // A section of a fixed-size array assigned to a multidimensional
+            // heap array is first copied to a fixed-size temporary, whose
+            // shape the reallocation below can read.
+            if let Stmt::Assign{name,value}=&mut s {
+                if shapes.contains_key(&format!("@heap:{name}")) && axes(name,&shapes).is_some_and(|a|a.len()>1) {
+                    if let Some((kind,extents))=fixed_section_shape(value,&shapes) {
+                        *serial+=1;
+                        let temp=format!("@section_copy_{serial}");
+                        let dims:Vec<Expr>=extents.into_iter().map(int).collect();
+                        shapes.insert(temp.clone(),(kind.clone(),dims.clone()));
+                        out.push(Stmt::ArrayDecl{kind,name:temp.clone(),dims});
+                        out.push(Stmt::Assign{name:temp.clone(),value:std::mem::replace(value,id(&temp))});
+                    }
                 }
             }
             // Intrinsic assignment to a whole heap-backed numeric/LOGICAL array

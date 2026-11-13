@@ -4087,6 +4087,11 @@ as `write(names(i),'(i8)') i`, including multidimensional arrays and allocatable
 components such as `write(self%columns(i),"('C',i0)") i`. Element subscripts are
 captured before formatting, and the completed record is copied back through
 checked array assignment. See `tests/programs/xinternal_write_element.f90`.
+A substring of a scalar CHARACTER variable with a declared length, including
+one with run-time bounds such as `write(buf(k:),'(i0)') n`, is a record of the
+substring's length: its bounds are captured first, the substring is padded
+with blanks, and output past its end is a record overflow;
+`python tests/test_actual_and_record_fixes.py` covers this.
 Whole arrays as internal files, IOSTAT and other
 WRITE control options remain unsupported. List-directed internal WRITE (`write(s,*) n`) writes each
 item as G0 after a blank.

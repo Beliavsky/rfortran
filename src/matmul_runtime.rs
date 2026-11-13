@@ -96,6 +96,8 @@ struct Lowering<'a> {
     declarations: Vec<Stmt>,
     before: Vec<Stmt>,
     after: Vec<Stmt>,
+    // The program's procedures, whose actual arguments need storage.
+    procedures: &'a HashSet<String>,
 }
 
 impl Lowering<'_> {
@@ -291,14 +293,38 @@ impl Lowering<'_> {
         Some((name, Array { kind, rank, runtime }))
     }
 
+    // A user procedure, which may be named `@module$<module>$<name>` by now,
+    // or an external one without a definition here.
+    fn procedure(&self, name: &str) -> bool {
+        !self.arrays.contains_key(name) && (self.procedures.contains(name) || !name.starts_with('@'))
+    }
+
+    // Products passed directly as actual arguments of a procedure.
+    fn actuals(&mut self, args: &mut [Expr]) {
+        for arg in args.iter_mut().filter(|a| matches!(a, Expr::Call(n, _) if n == "matmul")) {
+            self.product_call(arg, true);
+        }
+    }
+
     fn expression(&mut self, e: &mut Expr) {
         visit_expr(e, &mut |e| {
+            match e {
+                Expr::Call(name, args) if self.procedures.contains(name.as_str()) && !self.arrays.contains_key(name) => self.actuals(args),
+                _ => self.product_call(e, false),
+            }
+        });
+    }
+
+    // Compute a product before the statement. A constant-size product keeps
+    // its fixed-size lowering unless it is an actual argument (`force`),
+    // which needs storage of its own.
+    fn product_call(&mut self, e: &mut Expr, force: bool) {
+        {
             let Expr::Call(name, args) = e else { return };
             if name != "matmul" || self.arrays.contains_key(name) || args.len() != 2 {
                 return;
             }
-            // Constant-size products keep their fixed-size lowering.
-            if !args.iter().any(|arg| self.shape(arg).is_some_and(|s| s.2)) {
+            if !force && !args.iter().any(|arg| self.shape(arg).is_some_and(|s| s.2)) {
                 return;
             }
             // Discard operand temporaries if the product cannot be formed.
@@ -309,7 +335,7 @@ impl Lowering<'_> {
                 let mut arrays = self.arrays.clone();
                 arrays.insert(a.clone(), Array { runtime: true, ..x });
                 arrays.insert(b.clone(), Array { runtime: true, ..y });
-                let mut inner = Lowering { arrays: &arrays, serial: self.serial, declarations: vec![], before: vec![], after: vec![] };
+                let mut inner = Lowering { arrays: &arrays, serial: self.serial, declarations: vec![], before: vec![], after: vec![], procedures: self.procedures };
                 product = inner.product(&a, &b).map(|result| (result, inner.declarations, inner.before, inner.after));
             }
             let Some((result, declarations, before, after)) = product else {
@@ -322,27 +348,32 @@ impl Lowering<'_> {
             self.before.extend(before);
             self.after.splice(0..0, after);
             *e = result;
-        });
+        }
     }
 }
 
-fn scope(body: &mut Vec<Stmt>, inherited: &Arrays, serial: &mut usize) {
+fn scope(body: &mut Vec<Stmt>, inherited: &Arrays, serial: &mut usize, procedures: &HashSet<String>) {
     let arrays = declarations(body, inherited);
     let mut declarations = vec![];
-    statements(body, &arrays, serial, &mut declarations);
+    statements(body, &arrays, serial, &mut declarations, procedures);
     // Declarations follow the USE and IMPLICIT statements that start the scope.
     let start = body.iter().position(|s| !matches!(s, Stmt::Use { .. } | Stmt::Implicit(_) | Stmt::SourceLocation(_))).unwrap_or(body.len());
     body.splice(start..start, declarations);
 }
 
-fn statements(body: &mut Vec<Stmt>, arrays: &Arrays, serial: &mut usize, declarations: &mut Vec<Stmt>) {
+fn statements(body: &mut Vec<Stmt>, arrays: &Arrays, serial: &mut usize, declarations: &mut Vec<Stmt>, procedures: &HashSet<String>) {
     let mut output = Vec::with_capacity(body.len());
     for mut s in std::mem::take(body) {
         match &mut s {
-            Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Block { body } => scope(body, arrays, serial),
-            Stmt::Module { body, .. } => scope(body, &Arrays::new(), serial),
+            Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Block { body } => scope(body, arrays, serial, procedures),
+            Stmt::Module { body, .. } => scope(body, &Arrays::new(), serial, procedures),
             _ => {
-                let mut lowering = Lowering { arrays, serial, declarations: vec![], before: vec![], after: vec![] };
+                let mut lowering = Lowering { arrays, serial, declarations: vec![], before: vec![], after: vec![], procedures };
+                if let Stmt::CallSub { name, args } = &mut s {
+                    if lowering.procedure(name) {
+                        lowering.actuals(args);
+                    }
+                }
                 // A DO WHILE condition is evaluated on every iteration.
                 if !matches!(s, Stmt::DoWhile { .. }) {
                     for e in expressions(&mut s) {
@@ -352,7 +383,7 @@ fn statements(body: &mut Vec<Stmt>, arrays: &Arrays, serial: &mut usize, declara
                 let (before, after) = (lowering.before, lowering.after);
                 declarations.extend(lowering.declarations);
                 for child in children(&mut s) {
-                    statements(child, arrays, serial, declarations);
+                    statements(child, arrays, serial, declarations, procedures);
                 }
                 output.extend(before);
                 output.push(s);
@@ -367,6 +398,21 @@ fn statements(body: &mut Vec<Stmt>, arrays: &Arrays, serial: &mut usize, declara
 
 pub(crate) fn resolve(mut program: Program) -> Result<Program> {
     let mut serial = 0;
-    scope(&mut program.body, &Arrays::new(), &mut serial);
+    let mut procedures = HashSet::new();
+    collect_procedures(&program.body, &mut procedures);
+    scope(&mut program.body, &Arrays::new(), &mut serial, &procedures);
     Ok(program)
+}
+
+fn collect_procedures(body: &[Stmt], procedures: &mut HashSet<String>) {
+    for s in body {
+        match s {
+            Stmt::Function { name, body, .. } | Stmt::Subroutine { name, body, .. } => {
+                procedures.insert(name.clone());
+                collect_procedures(body, procedures);
+            }
+            Stmt::Module { body, .. } => collect_procedures(body, procedures),
+            _ => {}
+        }
+    }
 }
