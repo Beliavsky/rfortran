@@ -1355,13 +1355,17 @@ fn single_value(e: &IExpr, real_kind: &HashMap<String, bool>, func_meta: &HashMa
 
 // Formatting tests whether a real has an exact INTEGER(8) representation.
 // Conversion must not trap for large finite values, infinities or NaNs. Also
-// exclude 2**63: converting i64::MAX back to f64 rounds up to that value.
-fn print_integer_candidate(b: &mut FunctionBuilder, value: ir::Value) -> (ir::Value, ir::Value) {
+// exclude 2**63: converting i64::MAX back to f64 rounds up to that value. A
+// single-precision value is written as an integer only up to 2**24, where
+// every integer is exact: 2.5e10 rounds to 24999999488, whose digits beyond
+// single precision are not meaningful.
+fn print_integer_candidate(b: &mut FunctionBuilder, value: ir::Value, double: bool) -> (ir::Value, ir::Value) {
     let integer=b.ins().fcvt_to_sint_sat(ir::types::I64,value);
     let back=b.ins().fcvt_from_sint(ir::types::F64,integer);
     let equal=b.ins().fcmp(ir::condcodes::FloatCC::Equal,value,back);
-    let upper=b.ins().f64const(9223372036854775808.0);
-    let below=b.ins().fcmp(ir::condcodes::FloatCC::LessThan,value,upper);
+    let magnitude=b.ins().fabs(value);
+    let upper=b.ins().f64const(if double {9223372036854775808.0} else {16777217.0});
+    let below=b.ins().fcmp(ir::condcodes::FloatCC::LessThan,magnitude,upper);
     let integral=b.ins().band(equal,below);
     // Negative zero is written as `-0.0`, not as the integer 0.
     let bits=b.ins().bitcast(ir::types::I64,ir::MemFlags::new(),value);
@@ -1381,7 +1385,7 @@ fn print_numeric_value(b: &mut FunctionBuilder, ex: &Externs, ptr_ty: ir::Type, 
             ex.call_printf(b, &[ex.fmt_s, text]);
         }
         CgVal::F64(value) => {
-            let (integer,integral) = print_integer_candidate(b,value);
+            let (integer,integral) = print_integer_candidate(b,value,double);
             let int_slot = b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot, 64, 0));
             let int_text = b.ins().stack_addr(ptr_ty, int_slot, 0);
             ex.call_sprintf(b, &[int_text, ex.fmt_i64_dot0, integer]);
@@ -1458,7 +1462,11 @@ fn print_expr(
         IExpr::RealLit(s) => {
             let v = s.parse::<f64>().unwrap_or(0.0);
             let fv = b.ins().f64const(v);
-            let (trunc,is_int) = print_integer_candidate(b,fv);
+            // A value exactly representable in single precision, as a folded
+            // REAL constant is, prints as REAL; a longer literal as DOUBLE.
+            let single = f64::from(v as f32) == v;
+            let double = s.len() > 8 && !single;
+            let (trunc,is_int) = print_integer_candidate(b,fv,double);
             let buf_int = b.create_sized_stack_slot(ir::StackSlotData::new(
                 ir::StackSlotKind::ExplicitSlot,
                 64,
@@ -1473,10 +1481,7 @@ fn print_expr(
             ));
             let p_f = b.ins().stack_addr(ptr_ty, buf_f, 0);
 
-            // A value exactly representable in single precision, as a folded
-            // REAL constant is, prints as REAL; a longer literal as DOUBLE.
-            let single = f64::from(v as f32) == v;
-            let nd = b.ins().iconst(types::I32, if s.len() > 8 && !single { 15 } else { 6 });
+            let nd = b.ins().iconst(types::I32, if double { 15 } else { 6 });
             ex.call_gcvt(b, &[fv, nd, p_f]);
             let p_sel = b.ins().select(is_int, p_int, p_f);
             ex.call_printf(b, &[ex.fmt_s, p_sel]);
@@ -1517,7 +1522,7 @@ fn print_expr(
             } else if let Some(ss) = reals.get(id) {
                 let a = storage_addr(b, ptr_ty, *ss);
                 let fv = b.ins().load(types::F64, MemFlags::new(), a, 0);
-                let (trunc,is_int) = print_integer_candidate(b,fv);
+                let (trunc,is_int) = print_integer_candidate(b,fv,*real_kind.get(id).unwrap_or(&false));
                 let buf_int = b.create_sized_stack_slot(ir::StackSlotData::new(
                     ir::StackSlotKind::ExplicitSlot,
                     64,
@@ -1578,7 +1583,7 @@ fn print_expr(
                         let a = storage_addr(b, ptr_ty, *ss);
                         let addr = b.ins().iadd(a, off);
                         let fv = b.ins().load(ir::types::F64, MemFlags::new(), addr, 0);
-                        let (trunc,cmp) = print_integer_candidate(b,fv);
+                        let (trunc,cmp) = print_integer_candidate(b,fv,*real_kind.get(name.as_str()).unwrap_or(&false));
                         let buf_int = b.create_sized_stack_slot(ir::StackSlotData::new(
                             ir::StackSlotKind::ExplicitSlot,
                             64,
@@ -2027,7 +2032,7 @@ fn print_expr(
                     RetKind::F64 => {
                         if !res.is_empty() {
                             let x = res[0];
-                            let (trunc,is_int) = print_integer_candidate(b,x);
+                            let (trunc,is_int) = print_integer_candidate(b,x,meta.double);
                             let buf_int = b.create_sized_stack_slot(ir::StackSlotData::new(
                                 ir::StackSlotKind::ExplicitSlot,
                                 64,

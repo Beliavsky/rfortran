@@ -175,6 +175,11 @@ pub fn link(objects: &[PathBuf], out: &Path, cli: &Cli) -> Result<()> {
             command.args(["-flavor", "link"]);
         }
         command.args(["/NOLOGO", "/SUBSYSTEM:CONSOLE"]);
+        // Procedure locals are on the stack, at 8 bytes per numeric element,
+        // so a local array of a million elements outgrows the default 1 MiB.
+        // Reserving address space commits no memory until it is used; worker
+        // threads, created with the default size, get the same reserve.
+        command.arg("/STACK:268435456");
         let mut output_arg = std::ffi::OsString::from("/OUT:");
         output_arg.push(out);
         command.arg(output_arg).args(objects).arg(&format_runtime);

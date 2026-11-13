@@ -117,6 +117,154 @@ impl SequenceView {
     }
 }
 
+/// Marks an actual whose explicit-shape dummy becomes a view of the actual's
+/// storage with the dummy's own extents (sequence association).
+const EXPLICIT_VIEW: &str = "@explicit_view";
+/// Marks an actual already shown at run time to have its dummy's extents.
+const EXPLICIT_SAME: &str = "@explicit_same";
+
+/// The lower bound and extent of an explicit-shape dimension.
+fn explicit_bounds(d: &Expr) -> (Expr, Expr) {
+    let one = Expr::IntLit("1".into());
+    let (lower, upper) = match d {
+        Expr::Call(n, a) if n == "@declared_bounds" && a.len() == 2 => (a[0].clone(), a[1].clone()),
+        _ => (one.clone(), d.clone()),
+    };
+    if lower == one { return (lower, upper); }
+    let extent = Expr::Bin(BinOp::Add, Box::new(Expr::Bin(BinOp::Sub, Box::new(upper), Box::new(lower.clone()))), Box::new(one));
+    (lower, extent)
+}
+
+/// A numeric or LOGICAL explicit-shape array dummy that a view can represent.
+fn viewable_dummy(p: &str, r: &Routine) -> Option<(TypeSpec, Vec<Expr>)> {
+    if r.elemental || r.body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name == p
+        && matches!(intent.as_str(), "pointer" | "allocatable" | "target" | "optional" | "value"))
+        || matches!(s, Stmt::CallSub { name, .. } if name == "@c_invoke")) {
+        return None;
+    }
+    let (kind, dims) = r.body.iter().find_map(|s| match s {
+        Stmt::ArrayDecl { kind, name, dims } if name == p => Some((kind.clone(), dims.clone())),
+        _ => None,
+    })?;
+    // Generated markers such as @deferred_extent; module variables have
+    // global names that the caller can use as well.
+    let runtime_marker = |e: &Expr| matches!(e, Expr::Ident(n) if n.starts_with('@') && !n.starts_with("@module$"));
+    let explicit = !dims.is_empty() && dims.iter().all(|d| match d {
+        Expr::Call(n, a) if n == "@declared_bounds" => a.len() == 2 && !runtime_marker(&a[0]) && !runtime_marker(&a[1]),
+        d => !runtime_marker(d),
+    });
+    (explicit && dims.len() <= crate::pointers::MAX_RANK
+        && matches!(kind, TypeSpec::Integer(_) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Logical))
+        .then_some((kind, dims))
+}
+
+/// Write `e`, an expression of the callee's dummies, in terms of the actuals.
+fn in_caller(e: &Expr, params: &[String], args: &[Expr]) -> Option<Expr> {
+    let mut e = e.clone();
+    let mut missing = false;
+    crate::procedure_arguments::visit_expr(&mut e, &mut |e| match e {
+        Expr::Ident(n) => if let Some(i) = params.iter().position(|p| p.eq_ignore_ascii_case(n)) {
+            match args.get(i) { Some(a) => *e = a.clone(), None => missing = true }
+        },
+        Expr::Index(n, _) | Expr::Call(n, _) => if let Some(i) = params.iter().position(|p| p.eq_ignore_ascii_case(n)) {
+            match args.get(i) { Some(Expr::Ident(a)) => *n = a.clone(), _ => missing = true }
+        },
+        _ => {}
+    });
+    (!missing).then_some(e)
+}
+
+/// The declarations and module bindings that a caller needs to evaluate the
+/// callee's dummy extents, as `k(m)` for a module variable `m` that the
+/// caller does not otherwise use; None when it needs none.
+fn extent_module_bindings(r: &Routine, shapes: &Shapes) -> Option<Vec<Stmt>> {
+    let mut used = HashSet::new();
+    for s in &r.body {
+        if let Stmt::ArrayDecl { name, dims, .. } = s {
+            if !r.params.contains(name) { continue; }
+            for d in dims {
+                crate::procedure_arguments::visit_expr(&mut d.clone(), &mut |e| if let Expr::Ident(n) = e { used.insert(n.clone()); });
+            }
+        }
+    }
+    let mut out = vec![];
+    for s in &r.body {
+        let Stmt::CallSub { name, args } = s else { continue };
+        let Some(Expr::Ident(n)) = args.first() else { continue };
+        if name != "@module_bind" || !used.contains(n) || r.params.contains(n) || shapes.contains_key(n) { continue; }
+        let Some(kind) = r.body.iter().find_map(|d| match d {
+            Stmt::VarDecl { kind, names } if names.contains(n) => Some(kind.clone()),
+            _ => None,
+        }) else { continue };
+        out.push(Stmt::VarDecl { kind, names: vec![n.clone()] });
+        out.push(s.clone());
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// A call whose explicit-shape array dummies cannot all simply alias their
+/// whole-array actuals: a dummy may have other extents than its actual, as in
+/// `real :: x(10,10)` passed to `dst(ni,nj)`. Each such actual is marked for a
+/// view of its storage. When the extents can only be compared at run time,
+/// the call keeps the alias where they agree and uses the view otherwise.
+fn explicit_view_call(name: &str, args: &[Expr], r: &Routine, shapes: &Shapes) -> Result<Option<Stmt>> {
+    if args.iter().any(|a| matches!(a, Expr::Call(n, _) if n == EXPLICIT_VIEW || n == EXPLICIT_SAME)) { return Ok(None); }
+    let bin = |op, a: Expr, b: Expr| Expr::Bin(op, Box::new(a), Box::new(b));
+    let mut differ = vec![];
+    let mut unknown = vec![];
+    let mut conditions = vec![];
+    'params: for (i, p) in r.params.iter().enumerate() {
+        let Some(Expr::Ident(a)) = args.get(i) else { continue };
+        let Some((kind, dims)) = viewable_dummy(p, r) else { continue };
+        let Some((actual_kind, actual_dims)) = shapes.get(a) else { continue };
+        if actual_dims.len() != dims.len() || !crate::pointers::same_kind(actual_kind, &kind)
+            || ["@pointer:", "@borrowed_pointer:", "@heap:", "@axes:"].iter().any(|k| shapes.contains_key(&format!("{k}{a}"))) {
+            continue;
+        }
+        let mut same = true;
+        let mut known = true;
+        let mut axes = vec![];
+        let (mut needed, mut available) = (Some(1i64), Some(1i64));
+        for (axis, (formal, actual)) in dims.iter().zip(actual_dims).enumerate() {
+            // An extent that the caller cannot express keeps the alias and
+            // its run-time shape check.
+            let Some(formal) = in_caller(&explicit_bounds(formal).1, &r.params, args) else { continue 'params };
+            let actual_extent = if matches!(actual, Expr::Ident(n) if n.starts_with('@')) { None } else { Some(explicit_bounds(actual).1) };
+            let constant = |e: &Expr| crate::parameters::integer_constant(e).ok();
+            needed = needed.zip(constant(&formal)).map(|(n, f)| n.saturating_mul(f.max(0)));
+            available = available.zip(actual_extent.as_ref().and_then(constant)).map(|(n, a)| n.saturating_mul(a.max(0)));
+            match (constant(&formal), actual_extent.as_ref().and_then(constant)) {
+                (Some(f), Some(a)) => if f.max(0) != a { same = false },
+                _ if actual_extent.as_ref() == Some(&formal) => {},
+                _ => {
+                    known = false;
+                    let size = Expr::Call("size".into(), vec![Expr::Ident(a.clone()), Expr::IntLit((axis + 1).to_string())]);
+                    axes.push(bin(BinOp::Eq, Expr::Call("max".into(), vec![formal, Expr::IntLit("0".into())]), size));
+                }
+            }
+        }
+        if let (Some(needed), Some(available)) = (needed, available) {
+            if needed > available {
+                bail!("explicit-shape dummy `{p}` of `{}` has {needed} elements, more than the {available} of its actual argument `{a}`",
+                    name.rsplit('$').next().unwrap_or(name));
+            }
+        }
+        if same && known { continue; }
+        if !same { differ.push(i); } else { unknown.push(i); conditions.extend(axes); }
+    }
+    if differ.is_empty() && unknown.is_empty() { return Ok(None); }
+    let mark = |tag: &str, e: &Expr| Expr::Call(tag.into(), vec![e.clone()]);
+    let mut view = args.to_vec();
+    for &i in differ.iter().chain(&unknown) { view[i] = mark(EXPLICIT_VIEW, &args[i]); }
+    let view_call = Stmt::CallSub { name: name.into(), args: view };
+    if unknown.is_empty() { return Ok(Some(view_call)); }
+    let mut same = args.to_vec();
+    for &i in &differ { same[i] = mark(EXPLICIT_VIEW, &args[i]); }
+    for &i in &unknown { same[i] = mark(EXPLICIT_SAME, &args[i]); }
+    let cond = conditions.into_iter().reduce(|a, b| bin(BinOp::And, a, b)).unwrap();
+    Ok(Some(Stmt::If { cond, then_body: vec![Stmt::CallSub { name: name.into(), args: same }], else_body: Some(vec![view_call]) }))
+}
+
 /// A whole view passed to a user procedure passes its first element, so the
 /// callee in turn receives the rest of the array (sequence association).
 fn bind_sequence_actuals(name: &str, args: &mut [Expr], views: &HashMap<String, SequenceView>) {
@@ -1677,6 +1825,21 @@ fn expand(
                 if args.len() > r.params.len() {
                     bail!("too many arguments to `{name}`");
                 }
+                if let Some(bindings) = extent_module_bindings(r, &shapes) {
+                    // Dummy extents are evaluated in the caller, before the
+                    // callee binds its module variables: bind them here too.
+                    let mut body = bindings;
+                    body.push(Stmt::CallSub { name: name.clone(), args: args.clone() });
+                    expand(&mut body, &shapes, routines, procedures, functions, function_lower, active, serial)?;
+                    *s = Stmt::Block { body };
+                    continue;
+                }
+                if let Some(rewritten) = explicit_view_call(name, args, r, &shapes)? {
+                    let mut body = vec![rewritten];
+                    expand(&mut body, &shapes, routines, procedures, functions, function_lower, active, serial)?;
+                    *s = Stmt::Block { body };
+                    continue;
+                }
                 let optional: HashSet<_> = r
                     .body
                     .iter()
@@ -1735,6 +1898,7 @@ fn expand(
                 let mut undefine = vec![];
                 let mut copy_back = vec![];
                 let mut shape_checks = Vec::new();
+                let mut explicit_views: Vec<(String,String,TypeSpec,Vec<Expr>,String,Vec<String>)> = Vec::new();
                 let mut dummy_lowers: HashMap<String,Vec<Expr>> = HashMap::new();
                 let mut dummy_shape_setup = vec![];
                 for (i, p) in r.params.iter().enumerate() {
@@ -1746,6 +1910,11 @@ fn expand(
                         }
                         absent.insert(p.clone());
                         continue;
+                    };
+                    let (actual, explicit_view) = match actual {
+                        Expr::Call(tag, a) if tag == EXPLICIT_VIEW && a.len() == 1 => (&a[0], true),
+                        Expr::Call(tag, a) if tag == EXPLICIT_SAME && a.len() == 1 => (&a[0], false),
+                        _ => (actual, false),
                     };
                     let recovered_actual = if r.body.iter().any(|s| matches!(s,
                         Stmt::DummyIntent {name, intent} if name == p && intent == "allocatable")) {
@@ -1804,6 +1973,33 @@ fn expand(
                         } else if !matches!((&kind,&actual_kind),(TypeSpec::Integer(a),TypeSpec::Integer(b)) if a.unwrap_or(4)==b.unwrap_or(4)) && kind != actual_kind {
                             bail!("type mismatch for dummy `{p}`");
                         }
+                    }
+                    if explicit_view {
+                        // The dummy becomes a borrowed POINTER over the
+                        // actual's storage and initialization flags, with the
+                        // dummy's own bounds; its descriptor is completed once
+                        // all actuals are associated.
+                        let Expr::Ident(a)=actual else {bail!("explicit-shape view of `{p}` requires a whole array");};
+                        *serial+=1;
+                        let view=format!("@explicit_view_{serial}");
+                        let field=|f:&str|format!("{view}_{f}");
+                        let mut fields:Vec<String>=["data","flags","name","state","origin"].iter().map(|f|field(f)).collect();
+                        for axis in 0..dims.len() {
+                            for f in ["lower","extent","stride"] {fields.push(field(&format!("{f}{axis}")));}
+                        }
+                        prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:fields.clone()});
+                        prefix.push(Stmt::CallSub{name:"@ptr_bind".into(),args:fields[..3].iter().map(|f|Expr::Ident(f.clone())).chain([Expr::Ident(a.clone())]).collect()});
+                        prefix.push(Stmt::Assign{name:fields[3].clone(),value:Expr::IntLit("1".into())});
+                        prefix.push(Stmt::Assign{name:fields[4].clone(),value:Expr::IntLit("0".into())});
+                        let deferred=vec![Expr::Ident("@deferred_extent".into());dims.len()];
+                        local.insert(p.clone(),(kind.clone(),deferred.clone()));
+                        local.insert(format!("@pointer:{p}"),(TypeSpec::Logical,vec![]));
+                        local.insert(view.clone(),(kind.clone(),deferred.clone()));
+                        local.insert(format!("@pointer:{view}"),(TypeSpec::Logical,vec![]));
+                        local.insert(format!("@borrowed_pointer:{view}"),(TypeSpec::Logical,vec![]));
+                        names.insert(p.clone(),view.clone());
+                        explicit_views.push((p.clone(),view,kind.clone(),dims.clone(),a.clone(),fields));
+                        continue;
                     }
                     local.insert(p.clone(),(kind.clone(),dims.clone()));
                     if assumed_character || !dims.is_empty() && matches!(kind,TypeSpec::CharacterAssumed) {
@@ -2218,6 +2414,24 @@ fn expand(
                     crate::subroutines::expr(&mut formal,&names);
                     prefix.push(Stmt::If{cond:Expr::Bin(crate::ast::BinOp::Ne,Box::new(formal),Box::new(actual)),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str(format!("explicit-shape dummy `{param}` requires a matching actual shape"))]}],else_body:None});
                 }
+                for (p,_,_,dims,actual,fields) in &explicit_views {
+                    let id=|n:&String|Expr::Ident(n.clone());
+                    let bin=|op,a:Expr,b:Expr|Expr::Bin(op,Box::new(a),Box::new(b));
+                    let mut stride=Expr::IntLit("1".into());
+                    for (axis,d) in dims.iter().enumerate() {
+                        let (mut lower,mut extent)=explicit_bounds(d);
+                        crate::subroutines::expr(&mut lower,&names);
+                        crate::subroutines::expr(&mut extent,&names);
+                        let [l,e,st]=[&fields[5+3*axis],&fields[6+3*axis],&fields[7+3*axis]];
+                        prefix.push(Stmt::Assign{name:l.clone(),value:lower});
+                        prefix.push(Stmt::Assign{name:e.clone(),value:Expr::Call("max".into(),vec![extent,Expr::IntLit("0".into())])});
+                        prefix.push(Stmt::Assign{name:st.clone(),value:stride.clone()});
+                        stride=bin(BinOp::Mul,id(st),id(e));
+                    }
+                    let size=Expr::Call("size".into(),vec![Expr::Ident(actual.clone())]);
+                    prefix.push(Stmt::If{cond:bin(BinOp::Gt,stride,size),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),
+                        args:vec![Expr::Str(format!("explicit-shape dummy `{p}` of `{name}` is larger than its actual argument"))]}],else_body:None});
+                }
                 prefix.extend(undefine);
                 let mut cloned = r.body.clone();
                 cloned.splice(0..0,dummy_shape_setup);
@@ -2333,6 +2547,22 @@ fn expand(
                 crate::subroutines::rename(&mut cloned, &names, &r.params, serial)?;
                 bind_scalar_views(&mut cloned,&scalar_views)?;
                 bind_sequence_views(&mut cloned,&sequence_views)?;
+                // After renaming, which gives the dummy's uses the view's name.
+                for (p,view,kind,dims,_,fields) in &explicit_views {
+                    let first=cloned.iter().position(|s|!matches!(s,Stmt::SourceLocation(_)|Stmt::VarDecl{..}|Stmt::ArrayDecl{..}|Stmt::InitializedDecl{..}
+                        |Stmt::DummyIntent{..}|Stmt::Implicit(_)|Stmt::Use{..}|Stmt::DerivedDecl{..}|Stmt::DerivedType{..})).unwrap_or(cloned.len());
+                    let mut declared=vec![
+                        Stmt::ArrayDecl{kind:kind.clone(),name:view.clone(),dims:vec![Expr::Ident("@deferred_extent".into());dims.len()]},
+                        Stmt::DummyIntent{name:view.clone(),intent:"pointer".into()},
+                        Stmt::DummyIntent{name:view.clone(),intent:format!("@borrowed_descriptor:{}",fields.join(","))},
+                    ];
+                    let out=intents.get(p).is_some_and(|i|i=="intent(out)");
+                    cloned.splice(first..first,std::mem::take(&mut declared));
+                    if out {
+                        let first=first+3;
+                        cloned.insert(first,Stmt::CallSub{name:"@borrowed_out".into(),args:vec![Expr::Ident(view.clone())]});
+                    }
+                }
                 fn bind_c_views(body:&mut Vec<Stmt>,views:&HashMap<String,Expr>) {
                     for s in body {
                         if let Stmt::CallSub{name,args}=s {

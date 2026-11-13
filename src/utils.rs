@@ -176,6 +176,7 @@ pub fn print_help() {
     println!("  -Wmaybe-uninitialized Warn about local scalars that may be read before being assigned (in -Wextra)");
     println!("  -Wunchecked-conformance Warn about array dummies combined without checking their sizes (in -Wextra)");
     println!("  -Wconformance       Warn about calls whose array sizes break a procedure's requirements (in -Wall)");
+    println!("  -Wsequence-association Warn about arrays passed to explicit-shape dummies of another shape (in -Wextra)");
     println!("  -Wmaybe-nonconforming Warn about operations on arrays whose sizes from PACK or ALLOCATE may differ (in -Wextra)");
     println!("  -Wmaybe-out-of-bounds Warn about constant subscripts of PACK results (in -Wextra)");
     println!("  -Wconstant-condition Warn about conditions whose values are known at compile time (in -Wextra)");

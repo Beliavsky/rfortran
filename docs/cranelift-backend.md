@@ -22,7 +22,11 @@ maximizing numerical execution speed.
 These are general backend engineering benefits rather than built-in support
 for Fortran. See [Cranelift's design and goals](https://cranelift.dev/).
 Producing executables still requires a linker and the appropriate platform
-libraries.
+libraries. Procedure locals live on the stack at 8 bytes per numeric element,
+so Windows executables reserve a 256 MiB stack (address space only, committed
+as it is used) instead of the default 1 MiB; worker threads of parallel DO
+CONCURRENT get the same reserve. On Linux and macOS the stack limit comes from
+the environment, for example `ulimit -s`.
 
 ## Comparison with other backends
 

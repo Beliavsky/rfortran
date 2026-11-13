@@ -106,7 +106,9 @@ print *, d, e, 0.1d0
 print *, z, -z, 1.0/z
 end program
 """
-        expected = ' 1.0e-6 25000000000.0 -3.25e-7 1.5 100.0 123457.0\n 1.0e-10 0.333333333333333 0.1\n 0.0 -0.0 Infinity\n'
+        # 2.5e10 is a default REAL literal, so single precision: written with
+        # 6 significant digits, not as the integer 24999999488 it rounds to.
+        expected = ' 1.0e-6 2.5e10 -3.25e-7 1.5 100.0 123457.0\n 1.0e-10 0.333333333333333 0.1\n 0.0 -0.0 Infinity\n'
         with tempfile.TemporaryDirectory(prefix="real-output-") as tmp:
             source = Path(tmp) / "example.f90"
             source.write_text(program, encoding="utf-8")

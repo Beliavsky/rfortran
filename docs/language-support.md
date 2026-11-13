@@ -1197,7 +1197,22 @@ LBOUND/UBOUND of whole arrays preserve their declared bounds; section bounds
 start at 1. Empty dimensions report LBOUND=1 and UBOUND=0. SIZE reports
 extents independently of the lower bounds. An assumed-shape dummy `x(:)` retains
 its own default lower bound of 1; an explicit-shape dummy uses its declared
-bounds and still requires matching extents under the current call specialization.
+bounds.
+
+A numeric or LOGICAL explicit-shape dummy of a module or internal procedure may
+have other extents, or fewer elements, than the whole array passed to it
+(sequence association): `dst(ni,nj)` with `ni = 6` and `nj = 5` receiving a
+`10x10` array is associated with the array's first 30 elements in array element
+order. The dummy is then a view of the actual's storage, without a copy, and
+supports element references, whole-array operations, sections and intrinsics,
+and passing it or its sections to INTENT(IN) dummies. When the extents are the
+same expressions as the actual's, the dummy simply names the actual; when they
+can only be compared at run time, the call uses the view only if they differ.
+A dummy with more elements than its actual stops with an error, at compile time
+when the sizes are constants. `-Wsequence-association`, in `-Wextra`, reports
+calls whose constant shapes differ. Passing such a view on to a writable
+explicit-shape dummy, and actuals that are array elements, sections, POINTER or
+ALLOCATABLE arrays, keep the earlier rule that extents must match.
 
 Runtime-dependent declaration bounds and explicit lower bounds on assumed-shape
 or allocatable arrays remain unsupported. Existing limitations on array expressions and procedure arguments
@@ -4219,7 +4234,9 @@ List-directed REAL output has 6 significant digits for REAL and 15 for DOUBLE
 PRECISION, in fixed or exponent form as C's `%g` chooses, without trailing zeros
 but with a digit after the decimal point, and with an unpadded exponent:
 `0.5`, `60.0`, `1.0e-6`, `2.5e10`, `-0.0`, `Infinity`. An exactly integral value
-is written as `n.0`. The interpreter and compiled code write the same text on
+is written as `n.0`: up to 2**24 for REAL, where every integer is exact, and
+below 2**63 for DOUBLE PRECISION. A larger REAL, such as `2.5e10`, which rounds
+to 24999999488, keeps its 6 significant digits. The interpreter and compiled code write the same text on
 every platform. Run `python tests/test_goto_and_real_output.py`.
 List-directed `PRINT *` with no output items emits a blank record. Large real
 output, including `HUGE(0.0)` and `HUGE(0.0_8)`, no longer traps while choosing

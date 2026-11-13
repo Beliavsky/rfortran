@@ -793,6 +793,12 @@ fn refs(body: &[Stmt], used: &mut HashSet<String>) {
                     refs(body, used);
                 }
             }
+            // A bound such as `k(m)` reads a module variable `m`.
+            Stmt::ArrayDecl { dims, .. } => {
+                for d in dims {
+                    expr(d, used);
+                }
+            }
             _ => {}
         }
     }

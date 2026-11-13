@@ -262,6 +262,79 @@ impl<'a> Analysis<'a> {
         }
     }
 
+    /// `-Wsequence-association`: calls that pass a whole array of known shape
+    /// to an explicit-shape dummy of another known shape. The dummy is then
+    /// associated with the actual's leading elements in array element order,
+    /// which is valid but often unintended.
+    pub(super) fn sequence_association_calls(&mut self, body: &'a [Stmt], scope: usize, mut offset: usize) {
+        for s in body {
+            if let Stmt::SourceLocation(p) = s { offset = *p; continue; }
+            if let Stmt::CallSub { name, args } = s {
+                if !name.starts_with('@') { self.sequence_association_call(name, args, scope, offset); }
+            }
+            match s {
+                Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => {
+                    let inner = self.bodies.get(&(body.as_ptr() as usize)).copied().unwrap_or(scope);
+                    self.sequence_association_calls(body, inner, offset);
+                }
+                _ => for b in children(s) { self.sequence_association_calls(b, scope, offset); },
+            }
+        }
+    }
+
+    fn sequence_association_call(&mut self, name: &str, args: &[Expr], scope: usize, offset: usize) {
+        let Some(id) = self.resolve(scope, name) else { return };
+        let Some(p) = self.decls[id].procedure else { return };
+        let (params, callee, callee_body) = (self.procedures[p].params.clone(), self.procedures[p].name.clone(), self.procedures[p].body);
+        if args.iter().any(|a| matches!(a, Expr::Call(k, _) if k.starts_with("@keyword:"))) { return; }
+        for (i, dummy) in params.iter().enumerate() {
+            let Some(actual @ Expr::Ident(_)) = args.get(i) else { continue };
+            let Some(dims) = callee_body.iter().find_map(|s| match s {
+                Stmt::ArrayDecl { name, dims, .. } if name.eq_ignore_ascii_case(dummy) => Some(dims),
+                _ => None,
+            }) else { continue };
+            if callee_body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name.eq_ignore_ascii_case(dummy)
+                && matches!(intent.as_str(), "pointer" | "allocatable"))) { continue; }
+            let Some(actual_shape) = self.constant_shape(actual, scope) else { continue };
+            if actual_shape.len() != dims.len() { continue; }
+            // The dummy's extents, with constant actuals for the dummies they use.
+            let mut formal = vec![];
+            for d in dims {
+                let (lower, upper) = match d {
+                    Expr::Call(n, a) if n == "@declared_bounds" && a.len() == 2 => (a[0].clone(), a[1].clone()),
+                    _ => (Expr::IntLit("1".into()), d.clone()),
+                };
+                let value = |e: &Expr| {
+                    let mut e = e.clone();
+                    let mut ok = true;
+                    crate::procedure_arguments::visit_expr(&mut e, &mut |x| if let Expr::Ident(n) = x {
+                        if let Some(j) = params.iter().position(|q| q.eq_ignore_ascii_case(n)) {
+                            match args.get(j) { Some(a) => *x = a.clone(), None => ok = false }
+                        }
+                    });
+                    if !ok { return None; }
+                    self.integer(&e, scope, &mut HashSet::new())
+                };
+                let (Some(lower), Some(upper)) = (value(&lower), value(&upper)) else { formal.clear(); break };
+                formal.push((upper - lower + 1).max(0));
+            }
+            if formal.len() != dims.len() || formal == actual_shape { continue; }
+            let shape = |s: &[i64]| s.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
+            let (needed, available) = (formal.iter().product::<i64>(), actual_shape.iter().product::<i64>());
+            self.warnings.push(Advice {
+                category: "sequence-association", span: self.span(offset, name), related: None,
+                message: format!("explicit-shape dummy `{dummy}` of `{callee}` has shape [{}], but this call passes an array of shape [{}]",
+                    shape(&formal), shape(&actual_shape)),
+                suggestion: None,
+                note: if needed > available {
+                    "the dummy has more elements than its actual argument, which is invalid"
+                } else {
+                    "the dummy is associated with the leading elements of the actual in array element order (sequence association)"
+                },
+            });
+        }
+    }
+
     /// The extents of an actual argument known at compile time.
     fn constant_shape(&self, e: &Expr, scope: usize) -> Option<Vec<i64>> {
         match e {

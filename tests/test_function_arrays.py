@@ -109,7 +109,7 @@ class FunctionArrays(unittest.TestCase):
 
     def test_diagnostics(self):
         cases=[
-            ("integer::a(2)\na=1", "a", "integer,intent(in)::x(3)", True, "matching extent"),
+            ("integer::a(2)\na=1", "a", "integer,intent(in)::x(3)", True, "has 3 elements, more than the 2 of its actual argument"),
             ("real::a(3)\na=1.0", "a", "integer,intent(in)::x(3)", True, "type or rank mismatch"),
         ]
         with tempfile.TemporaryDirectory(prefix="bad-function-arrays-") as tmp:

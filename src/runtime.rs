@@ -838,7 +838,9 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
     // The same text as compiled list-directed output: an exactly integral
     // value as `n.0`, otherwise 6 (REAL) or 15 (DOUBLE PRECISION) significant digits.
     fn format_real(f: f64, double: bool) -> String {
-        if f.fract() == 0.0 && f.abs() < 9.2e18 { return format!("{:.1}", f); }
+        // A single-precision integer beyond 2**24 has digits that single
+        // precision does not determine, as 24999999488 for 2.5e10.
+        if f.fract() == 0.0 && f.abs() < if double { 9.2e18 } else { 16777217.0 } { return format!("{:.1}", f); }
         let digits = if f.is_finite() && f.abs() > f64::MAX * 0.99 { 17 } else if double { 15 } else { 6 };
         let mut out = [0u8; 64];
         let n = crate::format_spec::list_real(f, digits, &mut out);
@@ -2716,7 +2718,11 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
             if name.starts_with('@') || frame.env_int.get(flag) != Some(&1) { continue; }
             let value = if let Some(v) = frame.env_int.get(name) { Expr::IntLit(v.to_string()) }
                 else if let Some(v) = frame.env_real32.get(name) { Expr::RealLit((*v as f64).to_string()) }
-                else if let Some(v) = frame.env_real64.get(name) { Expr::RealLit(v.to_string()) }
+                // A D exponent keeps the next submission's literal DOUBLE
+                // PRECISION; a plain REAL literal is single precision.
+                else if let Some(v) = frame.env_real64.get(name) {
+                    Expr::RealLit(if v.is_finite() { format!("{v:e}").replace('e', "d") } else { v.to_string() })
+                }
                 else if let Some(v) = frame.env_log.get(name) { Expr::Logical(*v) }
                 else if let Some(v) = frame.env_str.get(name) { Expr::Str(v.clone()) }
                 else { continue; };

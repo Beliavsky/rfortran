@@ -1299,6 +1299,7 @@ pub fn check(
         "duplicate-constant",
         "unchecked-conformance",
         "conformance",
+        "sequence-association",
         "maybe-nonconforming",
         "maybe-out-of-bounds",
         "constant-condition",
@@ -1340,6 +1341,7 @@ pub fn check(
                 | "could-be-intent-out"
                 | "duplicate-constant"
                 | "unchecked-conformance"
+                | "sequence-association"
                 | "maybe-nonconforming"
                 | "maybe-out-of-bounds"
                 | "constant-condition"
@@ -1425,6 +1427,7 @@ pub fn check(
             if controls["unchecked-conformance"].0 { a.unchecked_conformance(&requirements); }
             if controls["conformance"].0 { a.conformance_calls(&program.body, scope, 0, &requirements); }
         }
+        if controls["sequence-association"].0 { a.sequence_association_calls(&program.body, scope, 0); }
         if controls["constant-condition"].0 || controls["constant-condition-all"].0 {
             a.constant_conditions(&program.body, scope, 0);
             // -Wconstant-condition-all includes the literal cases.

@@ -1082,6 +1082,14 @@ impl Lower {
         })
     }
     fn array(&mut self, e: &Expr, out: &mut Vec<Stmt>) -> Result<Option<ArrayValue>> {
+        // A whole heap array bound to a dummy, which keeps its active shape.
+        if let Expr::Call(n, args) = e {
+            if let [Expr::Ident(array), _] = args.as_slice() {
+                if n == "@packed_view" && self.vars.get(array).is_some_and(|v| v.active_shape.is_some()) {
+                    return self.array(&id(array), out);
+                }
+            }
+        }
         if let Expr::Call(n, args) = e {
             if matches!(n.as_str(), "@array_constructor" | "reshape") && !self.has_pointer(e) {
                 let (kind, dims) = if n == "reshape" {

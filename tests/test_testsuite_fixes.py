@@ -7,7 +7,14 @@ compiler (gfortran.dg/typebound_operator_8.f03), and NaNs and infinities in
 MAXLOC, MINLOC, MAXVAL and MINVAL (gfortran.dg/maxloc_2.f90, minloc_1.f90,
 maxlocval_2.f90, maxlocval_4.f90, minlocval_1.f90 and minlocval_4.f90);
 also compiled formatted output of MAXLOC, MINLOC and FINDLOC with DIM=, which
-wrote only the first element."""
+wrote only the first element; and procedure locals larger than the default
+1 MiB Windows stack (gfortran.fortran-torture/execute/stack_varsize.f90,
+gfortran.dg/largeequiv_1.f90); and explicit-shape dummies of other extents than
+their whole-array actuals, associated with the actual's leading elements in
+array element order (gfortran.dg/array_1.f90, dependent_decls_3.f90,
+nested_modules_2.f90, nested_modules_3.f90), with -Wsequence-association;
+initialized module variables as dummy extents; and list-directed output of
+single-precision integers beyond 2**24."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -168,6 +175,220 @@ end program p
   0  2  0
  x 3 3 3
 """)
+
+    def test_large_procedure_locals(self):
+        # The interpreter is too slow for arrays of this size. gfortran
+        # -std=f2018 also puts these locals on its default stack and overflows.
+        self.check("""module m
+implicit none
+contains
+subroutine big(n)
+integer, intent(in) :: n
+integer :: a(1500000), k(1024,1024)
+a = 3
+a(n) = 4
+k = 1
+k(n, 2) = 5
+print '(i0,1x,i0)', sum(a), sum(k)
+end subroutine big
+recursive subroutine deep(n)
+integer, intent(in) :: n
+real :: b(40000)
+b = n
+if (n > 0) call deep(n - 1)
+if (b(1) /= n) error stop 1
+end subroutine deep
+end module m
+program p
+use m
+implicit none
+call big(7)
+call deep(20)
+print '(a)', 'ok'
+end program p
+""", """4500001 1048580
+ok
+""", interpreter=False, reference=False)
+
+    def test_sequence_association_with_explicit_shape_dummies(self):
+        # Views with run-time extents, a lower bound other than 1, a module
+        # variable extent, matching shapes chosen at run time, and a section
+        # of a view passed on.
+        self.check("""module sizes
+implicit none
+integer :: m
+end module sizes
+module ops
+use sizes
+implicit none
+contains
+subroutine fill(dst, ni, nj)
+  integer, intent(in) :: ni, nj
+  real(8), intent(out) :: dst(ni, nj)
+  integer :: i, j
+  do j = 1, nj
+     do i = 1, ni
+        dst(i, j) = 10*i + j
+     end do
+  end do
+end subroutine fill
+subroutine bump(v, n)
+  integer, intent(in) :: n
+  integer, intent(inout) :: v(0:n-1)
+  v = v + 1
+  v(0) = v(0) + 100
+end subroutine bump
+real(8) function total(a, ni, nj)
+  integer, intent(in) :: ni, nj
+  real(8), intent(in) :: a(ni, nj)
+  total = sum(a)
+end function total
+subroutine report(a, ni, nj)
+  integer, intent(in) :: ni, nj
+  real(8), intent(in) :: a(ni, nj)
+  print '(2(i0,1x),f0.1,1x,f0.1)', size(a, 1), size(a, 2), sum(a), maxval(a(:, nj))
+  call show(a(:, nj), ni)
+end subroutine report
+subroutine show(v, n)
+  integer, intent(in) :: n
+  real(8), intent(in) :: v(n)
+  print '(*(f0.1,:,1x))', v
+end subroutine show
+subroutine head(k)
+  integer, intent(inout) :: k(m)
+  k = -k
+end subroutine head
+subroutine square(q, n)
+  integer, intent(in) :: n
+  real(8), intent(inout) :: q(n, n)
+  q = 2 * q
+end subroutine square
+end module ops
+program main
+use ops
+implicit none
+real(8) :: x(4,3), y(3,3)
+integer :: k(5), i, n
+x = 0
+call fill(x, 2, 3)
+print '(*(f0.1,:,1x))', x
+call report(x, 2, 3)
+call report(x, 4, 3)
+k = [(i, i = 1, 5)]
+call bump(k, 3)
+print '(*(i0,:,1x))', k
+m = 2
+call head(k)
+print '(*(i0,:,1x))', k
+y = 1
+do n = 2, 3
+   call square(y, n)
+   print '(*(f0.1,:,1x))', y
+end do
+call fill(y, 3, 3)
+call report(y, 3, 3)
+end program main
+""", """11.0 21.0 12.0 22.0 13.0 23.0 .0 .0 .0 .0 .0 .0
+2 3 102.0 23.0
+13.0 23.0
+4 3 102.0 .0
+.0 .0 .0 .0
+102 3 4 4 5
+-102 -3 4 4 5
+2.0 2.0 2.0 2.0 1.0 1.0 1.0 1.0 1.0
+4.0 4.0 4.0 4.0 2.0 2.0 2.0 2.0 2.0
+3 3 198.0 33.0
+13.0 23.0 33.0
+""")
+
+    def test_sequence_association_diagnostics(self):
+        source = """module ops
+implicit none
+contains
+subroutine fill(dst, ni, nj)
+  integer, intent(in) :: ni, nj
+  real(8), intent(out) :: dst(ni, nj)
+  dst = 1
+end subroutine fill
+subroutine take(v)
+  real(8), intent(inout) :: v(8)
+  v = 0
+end subroutine take
+end module ops
+program main
+use ops
+implicit none
+real(8) :: x(4,3), z(4,3), u(6)
+integer :: n
+n = 2
+call fill(x, 2, 3)
+call fill(z, 4, 3)
+call fill(z, n, 3)
+call take(u)
+end program main
+"""
+        with tempfile.TemporaryDirectory(prefix='sequence-association-') as tmp:
+            path = Path(tmp) / 'example.f90'
+            path.write_text(source, encoding='utf-8')
+            result = subprocess.run([COMPILER, '-Wextra', 'check', path], cwd=tmp, capture_output=True, text=True, timeout=60)
+            self.assertIn('explicit-shape dummy `dst` of `fill` has shape [2, 3], but this call passes an array of shape [4, 3] [sequence-association]', result.stderr)
+            self.assertEqual(result.stderr.count('[sequence-association]'), 2, result.stderr)
+            self.assertIn('explicit-shape dummy `v` of `take` has 8 elements, more than the 6 of its actual argument `u`', result.stderr)
+            self.assertNotEqual(result.returncode, 0)
+            # Without the oversized call there is no error, and no warning by default.
+            path.write_text(source.replace('call take(u)', ''), encoding='utf-8')
+            result = subprocess.run([COMPILER, 'check', path], cwd=tmp, capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn('sequence-association', result.stderr)
+
+    def test_module_variable_dummy_extents(self):
+        # An initialized module variable as a dummy's extent, in a caller
+        # that does not otherwise use it and has a variable of the same name.
+        self.check("""module sizes
+implicit none
+integer :: m = 2
+integer, parameter :: np = 3
+end module sizes
+module ops
+use sizes
+implicit none
+contains
+subroutine head(k)
+  integer, intent(inout) :: k(m)
+  k = -k
+end subroutine head
+subroutine tail(k, n)
+  integer, intent(in) :: n
+  integer, intent(inout) :: k(n + m - np)
+  k = 10 * k
+end subroutine tail
+end module ops
+program main
+use ops, only: head, tail
+implicit none
+integer :: k(5), m
+m = 4
+k = 1
+call head(k)
+print '(*(i0,:,1x))', k
+call tail(k, 3)
+print '(*(i0,:,1x))', k, m
+end program main
+""", "-1 -1 1 1 1" + chr(10) + "-10 -10 1 1 1 4" + chr(10))
+
+    def test_large_single_precision_integers_in_list_output(self):
+        # A REAL beyond 2**24 has digits that single precision does not
+        # determine: 2.5e10 rounds to 24999999488. rfort writes it with 6
+        # significant digits, unlike gfortran's 9.
+        self.check("""program p
+real :: x, y
+double precision :: d
+x = 16777216.0
+y = 2.5e10
+d = 2.5d10
+print *, x, y, -y, 2.5e10, 3 * y, d
+end program p
+""", " 16777216.0 2.5e10 -2.5e10 2.5e10 7.5e10 25000000000.0" + chr(10), reference=False)
 
 
 if __name__ == "__main__":

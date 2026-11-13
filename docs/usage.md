@@ -173,6 +173,7 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wcould-be-intent-out` | No | Yes | INTENT(INOUT) scalar dummy arguments that every path assigns before anything reads them or passes them to a procedure |
 | `-Wunchecked-conformance` | No | Yes | Procedures that combine two assumed-shape dummies in a way that requires a size relationship, such as `x*y`, `dot_product(x, y)`, `matmul(a, b)` or `y = x`, and never compare their sizes; see [Array conformance](#array-conformance) |
 | `-Wconformance` | Yes | No | Calls whose actual arguments, of sizes known at compile time, break such a relationship, as `sumproduct([1.0, 2.0], [3.0])` |
+| `-Wsequence-association` | No | Yes | Calls that pass a whole array of known shape to an explicit-shape dummy of another known shape, which is then associated with the leading elements of the actual in array element order, as `dst(2,3)` receiving a `4x3` array |
 | `-Wmaybe-nonconforming` | No | Yes | Elemental operations on arrays whose sizes, from PACK or ALLOCATE, may differ, as `x1 - x2` for two PACK results; see [Array conformance](#array-conformance) |
 | `-Wmaybe-out-of-bounds` | No | Yes | Constant subscripts of PACK results, which may have fewer elements, as `x1(1)` when the mask selects nothing |
 | `-Wconstant-condition` | No | Yes | Conditions, or parts of them, whose values are known at compile time, such as `.true. .or. (x > y)`, `n == n` or `n > 5 .and. n < 3`; see [Constant conditions](#constant-conditions) |
