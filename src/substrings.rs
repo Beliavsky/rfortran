@@ -842,6 +842,12 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                 }
                 continue;
             }
+            // A temporary of run-time length, such as a copy of an automatic
+            // CHARACTER actual, is an owned heap buffer, not 2 GiB of storage.
+            Stmt::VarDecl { kind: TypeSpec::Character(Some(MAX_EXPRESSION_LENGTH)), names } => {
+                for name in names { declare_character(name, MAX_EXPRESSION_LENGTH, &mut result); }
+                continue;
+            }
             Stmt::VarDecl { kind, names } if deferred(kind) => {
                 for name in names {
                     let flag = allocation_flag(&scope.lengths[name]);

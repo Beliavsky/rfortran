@@ -585,12 +585,12 @@ impl Resolver {
             .get(op)
             .into_iter()
             .flatten()
-            .filter(|name| self.procedures[*name].args == args)
+            .filter(|name| self.procedures.get(*name).is_some_and(|p| p.args == args))
             .collect();
         if matches.is_empty() {
             matches = visible.get(op).into_iter().flatten().filter(|name| {
-                let p = &self.procedures[*name];
-                p.elemental && elemental_match(&p.args, args)
+                // A deferred binding has an interface but no procedure.
+                self.procedures.get(*name).is_some_and(|p| p.elemental && elemental_match(&p.args, args))
             }).collect();
         }
         match matches.as_slice() {
@@ -1131,7 +1131,7 @@ impl Resolver {
                     let target = self.name_type(name, &vars);
                     let types = [target, source];
                     let defined = visible.get("=").into_iter().flatten()
-                        .filter(|p| self.procedures[*p].args == types).cloned().collect::<Vec<_>>();
+                        .filter(|p| self.procedures.get(*p).is_some_and(|q| q.args == types)).cloned().collect::<Vec<_>>();
                     match defined.as_slice() {
                         [procedure] if known_type(&types[0]) && known_type(&types[1]) => {
                             *s = Stmt::CallSub { name: procedure.clone(), args: vec![Expr::Ident(name.clone()), value.clone()] };

@@ -1321,6 +1321,7 @@ impl Lower {
         }
         let count = a.shape[0].clone();
         let kind = a.kind.clone();
+        let kind_of_best = kind.clone();
         let best = self.temp(kind.clone(), int(0), out);
         let position = self.temp(TypeSpec::Integer(None), int(0), out);
         let (Expr::Ident(best_name), Expr::Ident(position_name)) = (&best, &position) else { unreachable!() };
@@ -1332,11 +1333,19 @@ impl Lower {
         let (mut body, value) = self.loop_body(a, &index);
         body.push(assign(&element, value));
         let better = bin(if n == "maxloc" { BinOp::Gt } else { BinOp::Lt }, id(&element), best.clone());
-        body.push(Stmt::If {
-            cond: bin(BinOp::Or, bin(BinOp::Eq, position.clone(), int(0)), better),
-            then_body: vec![assign(&best_name, id(&element)), assign(&position_name, id(&index))],
-            else_body: None,
-        });
+        let first = bin(BinOp::Eq, position.clone(), int(0));
+        let mut take = vec![assign(&best_name, id(&element)), assign(&position_name, id(&index))];
+        let cond = if matches!(kind_of_best, TypeSpec::Integer(_)) { bin(BinOp::Or, first, better) } else {
+            // Until an element that is not a NaN is found, each element is
+            // taken; the first is the result when all are NaNs.
+            let found = self.temp(TypeSpec::Logical, Expr::Logical(false), out);
+            let Expr::Ident(found_name) = &found else { unreachable!() };
+            let not_nan = bin(BinOp::Eq, id(&element), id(&element));
+            take.push(assign(found_name, not_nan.clone()));
+            bin(BinOp::Or, bin(BinOp::And, found.clone(), better),
+                bin(BinOp::And, Expr::Un(UnOp::Not, Box::new(found)), bin(BinOp::Or, first, not_nan)))
+        };
+        body.push(Stmt::If { cond, then_body: take, else_body: None });
         out.push(Stmt::Do { var: index, start: int(1), end: count, body });
         Ok(position)
     }
@@ -1392,6 +1401,7 @@ impl Lower {
             }
             _ => zero,
         };
+        let kind_of_acc = kind.clone();
         let acc = self.temp(kind, initial, out);
         let Expr::Ident(dest) = &acc else {
             unreachable!()
@@ -1405,6 +1415,22 @@ impl Lower {
         let next = match n {
             "sum" => add(acc.clone(), value),
             "product" => mul(acc.clone(), value),
+            "minval" | "maxval" if !matches!(kind_of_acc, TypeSpec::Integer(_)) => {
+                // Start from the first element that is not a NaN, as for
+                // other arrays: infinities are results, all NaNs give a NaN.
+                let found = self.temp(TypeSpec::Logical, Expr::Logical(false), out);
+                let Expr::Ident(found_name) = &found else { unreachable!() };
+                let item = self.fresh();
+                out.push(Stmt::VarDecl { kind: kind_of_acc.clone(), names: vec![item.clone()] });
+                body.push(assign(&item, value));
+                let better = bin(if n == "maxval" { BinOp::Gt } else { BinOp::Lt }, id(&item), acc.clone());
+                body.push(Stmt::If {
+                    cond: found.clone(),
+                    then_body: vec![Stmt::If { cond: better, then_body: vec![assign(dest, id(&item))], else_body: None }],
+                    else_body: Some(vec![assign(dest, id(&item)), assign(found_name, bin(BinOp::Eq, id(&item), id(&item)))]),
+                });
+                acc.clone()
+            }
             "minval" => call("min", vec![acc.clone(), value]),
             "maxval" => call("max", vec![acc.clone(), value]),
             "any" => bin(BinOp::Or, acc.clone(), value),

@@ -424,6 +424,9 @@ fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, s
     else if runtime {crate::heap::temporary(result_kind.clone(),temp.clone(),output_len.clone(),prefix);}
     else { prefix.push(Stmt::ArrayDecl {kind:result_kind.clone(),name:temp.clone(),dims:vec![output_len.clone()]}); }
     let first = bin(BinOp::Eq,id(&position),int(0));
+    let real = !find && !matches!(kind,TypeSpec::Integer(_));
+    let found = format!("@location_found_{serial}");
+    if real { prefix.push(Stmt::VarDecl {kind:TypeSpec::Logical,names:vec![found.clone()]}); }
     let mut comparisons=vec![];
     let update = if find {
         let equal=if character {
@@ -431,10 +434,17 @@ fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, s
         } else {bin(if kind == TypeSpec::Logical {BinOp::Eqv} else {BinOp::Eq},id(&item),id(&sought))};
         bin(BinOp::And,equal,bin(BinOp::Or,first,id(&back)))
     } else {
-        bin(BinOp::Or,first,bin(BinOp::Or,bin(if name == "@minloc" {BinOp::Lt} else {BinOp::Gt},id(&item),id(&best)),bin(BinOp::And,id(&back),bin(BinOp::Eq,id(&item),id(&best)))))
+        let better=bin(BinOp::Or,bin(if name == "@minloc" {BinOp::Lt} else {BinOp::Gt},id(&item),id(&best)),bin(BinOp::And,id(&back),bin(BinOp::Eq,id(&item),id(&best))));
+        if real {
+            // Until an element that is not a NaN is found, each element is
+            // taken; the first is the result when all are NaNs.
+            let not_nan=bin(BinOp::Eq,id(&item),id(&item));
+            bin(BinOp::Or,bin(BinOp::And,id(&found),better),bin(BinOp::And,Expr::Un(UnOp::Not,Box::new(id(&found))),bin(BinOp::Or,first,not_nan)))
+        } else {bin(BinOp::Or,first,better)}
     };
     let mut body = vec![assign(&position,int(0))];
     if !find { body.push(assign(&best,int(0))); }
+    if real { body.push(assign(&found,Expr::Logical(false))); }
     let mut selected=if let Some(values)=character_values {
         values.into_iter().enumerate().map(|(i,value)|Stmt::If {
             cond:bin(BinOp::Eq,source_index.clone(),int(i as i64+1)),
@@ -442,7 +452,9 @@ fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, s
         }).collect()
     }else{vec![capture_character(&item,value,&kind)]};
     selected.append(&mut comparisons);
-    selected.push(Stmt::If {cond:update,then_body:if find {vec![assign(&position,id(&index))]} else {vec![assign(&position,id(&index)),assign(&best,id(&item))]},else_body:None});
+    let mut take=if find {vec![assign(&position,id(&index))]} else {vec![assign(&position,id(&index)),assign(&best,id(&item))]};
+    if real { take.push(assign(&found,bin(BinOp::Eq,id(&item),id(&item)))); }
+    selected.push(Stmt::If {cond:update,then_body:take,else_body:None});
     body.push(Stmt::Do {var:index.clone(),start:int(1),end:axis_len,body:vec![Stmt::If {cond:mask,then_body:selected,else_body:None}]});
     if dim {
         body.push(if scalar { assign(&temp,id(&position)) } else { Stmt::AssignIndex {name:temp.clone(),indices:vec![id(&outer)],value:id(&position)} });
@@ -1214,6 +1226,16 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             prefix.push(Stmt::Assign { name: acc_name.clone(), value: identity });
             let acc = Expr::Ident(acc_name.clone());
             let item = Expr::Ident(item_name.clone());
+            // A REAL MAXVAL or MINVAL starts from the first element that is not
+            // a NaN, so that infinities are results and an all-NaN array gives
+            // a NaN; HUGE remains the result for no elements.
+            let found_name = format!("@reduction_found_{serial}");
+            let nan_aware = !integer && matches!(name.as_str(), "minval" | "maxval");
+            if nan_aware {
+                prefix.insert(loop_start, Stmt::VarDecl { kind: TypeSpec::Logical, names: vec![found_name.clone()] });
+                loop_start += 1;
+                prefix.push(Stmt::Assign { name: found_name.clone(), value: Expr::Logical(false) });
+            }
             let update = match name.as_str() {
                 "count" | "@count_i8" => Stmt::If {
                     cond: item.clone(),
@@ -1232,9 +1254,17 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                 // tiny components do not overflow or underflow when squared.
                 "@norm2" => Stmt::Assign { name: acc_name.clone(), value: Expr::Call("hypot".into(), vec![acc.clone(),item.clone()]) },
                 "sum" | "product" => Stmt::Assign { name: acc_name.clone(), value: bin(if name == "sum" { BinOp::Add } else { BinOp::Mul }, acc.clone(), item.clone()) },
-                _ => Stmt::If {
-                    cond: bin(if name == "minval" { BinOp::Lt } else { BinOp::Gt }, item.clone(), acc.clone()),
-                    then_body: vec![Stmt::Assign { name: acc_name.clone(), value: item.clone() }], else_body: None,
+                _ => {
+                    let better = Stmt::If {
+                        cond: bin(if name == "minval" { BinOp::Lt } else { BinOp::Gt }, item.clone(), acc.clone()),
+                        then_body: vec![Stmt::Assign { name: acc_name.clone(), value: item.clone() }], else_body: None,
+                    };
+                    if nan_aware {
+                        Stmt::If { cond: Expr::Ident(found_name.clone()), then_body: vec![better], else_body: Some(vec![
+                            Stmt::Assign { name: acc_name.clone(), value: item.clone() },
+                            Stmt::Assign { name: found_name.clone(), value: bin(BinOp::Eq, item.clone(), item.clone()) },
+                        ]) }
+                    } else { better }
                 },
             };
             let mut body = vec![Stmt::Assign { name: item_name, value }, update];
@@ -2070,6 +2100,11 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                         Expr::Ident(n) => symbols.get(n).is_some_and(|(_, dims)| !dims.is_empty()),
                         Expr::Section { .. } => true,
                         Expr::Call(n, _) if matches!(n.as_str(),"@matrix_view"|"@packed_view"|"@array_constructor") => true,
+                        // MINLOC, MAXLOC and FINDLOC give arrays unless DIM=
+                        // reduces a rank-one ARRAY; their last argument is the
+                        // result shape.
+                        Expr::Call(n, a) if matches!(n.as_str(),"@minloc"|"@maxloc"|"@findloc") =>
+                            a.get(9).is_some_and(|shape| !matches!(shape, Expr::Call(_, dims) if dims.is_empty())),
                         Expr::Bin(_, a, b) => array_value(a, symbols) || array_value(b, symbols),
                         Expr::Un(_, a) => array_value(a, symbols),
                         // Whether a call is array-valued is decided per item

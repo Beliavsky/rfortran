@@ -1584,7 +1584,11 @@ expressions; FINDLOC also supports LOGICAL and CHARACTER arrays, including fixed
 and runtime extents and allocatable components. Optional constant or runtime DIM reduces rank, or omitting DIM returns one position
 per source dimension. MASK may be scalar or conformable LOGICAL; runtime scalar
 BACK selects the last matching location instead of the first. Empty selections
-return zeros. KIND=4 and KIND=8 are supported. FINDLOC VALUE must currently have
+return zeros. As in gfortran, REAL MINLOC/MAXLOC skip NaN elements and give the
+first selected position when every selected element is a NaN, and REAL
+MINVAL/MAXVAL give a NaN for an all-NaN selection and infinities when they are
+the extremes, while an empty selection still gives HUGE with the appropriate sign.
+KIND=4 and KIND=8 are supported. FINDLOC VALUE must currently have
 the same type/kind as ARRAY. CHARACTER lengths may differ: comparison pads the
 shorter operand with blanks, preserving nonblank suffixes in VALUE. CHARACTER
 searches support sections, empty arrays, MASK, BACK, DIM, KIND and keyword arguments.

@@ -67,6 +67,9 @@ def run(command, cwd, timeout):
     except subprocess.TimeoutExpired as e:
         out = e.stdout.decode(errors='replace') if isinstance(e.stdout, bytes) else (e.stdout or '')
         return None, out, 'timeout', time.time() - start
+    except OSError as e:
+        # A build that reports success without writing a runnable program.
+        return -1, '', f'error: cannot run {command[0]}: {e}', time.time() - start
 
 
 def first_error(text):
