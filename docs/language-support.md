@@ -4203,7 +4203,9 @@ once on entry; zero-iteration loops do not evaluate their items. A variable
 external unit is captured before evaluating output items. These rules also apply
 to the supported formatted and internal WRITE paths. Run
 `python tests/test_character_output_implied_do.py` for interpreter/native O0/O2
-checks with gfortran comparisons.
+checks with gfortran comparisons. The same output list may also contain whole
+arrays and sections of assumed-shape dummies and ALLOCATABLE arrays of any rank,
+as in `print *, (w(i), i = 1, 2), x, y(2:)`.
 
 List-directed LOGICAL output uses `T` and `F` for scalar values, array elements,
 expressions and procedure results. CHARACTER strings containing `.TRUE.` or

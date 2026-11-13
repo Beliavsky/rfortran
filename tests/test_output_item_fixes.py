@@ -1,6 +1,7 @@
 """ELEMENTAL functions of array constructors in formatted PRINT, list-directed
 and formatted output of COMPLEX sections and runtime-sized COMPLEX arrays,
-sections of multidimensional assumed-shape COMPLEX dummies, and implied-DO
+sections of multidimensional assumed-shape COMPLEX dummies, list-directed
+implied-DOs alongside run-time-sized arrays, and implied-DO
 indices with an INTEGER type-spec (Fortran 2008)."""
 from pathlib import Path
 import subprocess
@@ -192,6 +193,75 @@ end program p
  1 3.00000000 -3.00000000 5.00000000 -5.00000000 6
  2 (2.00000000,-2.00000000) (4.00000000,-4.00000000) (6.00000000,-6.00000000) 5.0
  2 4.00000000 -4.00000000 6.00000000 -6.00000000 6
+""", reference=False)
+
+    def test_implied_do_with_runtime_sized_arrays(self):
+        # List-directed output lists that mix implied-DOs with whole arrays
+        # and sections of assumed-shape dummies and ALLOCATABLE arrays.
+        # gfortran pads list-directed values differently.
+        self.check("""module m
+implicit none
+contains
+subroutine show(w, x, y, z, c, s)
+real, intent(in) :: w(:), x(0:), y(:,:)
+integer, intent(in) :: z(:)
+complex, intent(in) :: c(:,:)
+character(*), intent(in) :: s(:)
+integer :: i, n
+n = size(w)
+print *, (w(i), i = 1, 2), x
+print *, (i, i = 1, 2), y
+print *, x, (z(i), i = 1, 2), w
+print *, (w(i), i = 1, 2), x(1:2)
+print *, (w(i), i = 1, 2), w(2:n)
+print *, (i, i = 1, 2), s, z
+print *, (i, i = 1, 1), c(2,:), x
+print *, c(2,:), x
+end subroutine show
+end module m
+program p
+use m
+implicit none
+real :: a(3) = [1., 2., 3.], b(3) = [4., 5., 6.], y(2,2) = reshape([1., 2., 3., 4.], [2, 2])
+integer, allocatable :: k(:), e(:)
+complex :: c(2,2) = reshape([(1,1),(2,2),(3,3),(4,4)], [2,2])
+integer :: i
+k = [7, 8, 9]
+allocate(e(0))
+call show(a, b, y, k, c, ['ab', 'cd'])
+print *, (i, i = 1, 2), k
+print *, (i, i = 1, 2), e, 'end'
+end program p
+""", """ 1.0 2.0 4.0 5.0 6.0
+ 1 2 1.0 2.0 3.0 4.0
+ 4.0 5.0 6.0 7 8 1.0 2.0 3.0
+ 1.0 2.0 5.0 6.0
+ 1.0 2.0 2.0 3.0
+ 1 2 ab cd 7 8 9
+ 1 (2.00000000,2.00000000) (4.00000000,4.00000000) 4.0 5.0 6.0
+ (2.00000000,2.00000000) (4.00000000,4.00000000) 4.0 5.0 6.0
+ 1 2 7 8 9
+ 1 2 end
+""", reference=False)
+        self.check("""program p
+implicit none
+integer, allocatable :: k(:), e(:), m(:,:)
+real, allocatable :: r(:)
+integer :: i
+k = [7, 8, 9]
+allocate(e(0), m(0:1,2), r(-1:1))
+m = reshape([1, 2, 3, 4], [2, 2]); r = [1.5, 2.5, 3.5]
+print *, (i, i = 1, 2), k
+print *, (i, i = 1, 2), e, 'end'
+print *, (i, i = 1, 2), m, k(2:), r(0:)
+print *, (k(i), i = 1, 3), r
+print '(*(g0,1x))', (i, i = 1, 2), k, m
+end program p
+""", """ 1 2 7 8 9
+ 1 2 end
+ 1 2 1 2 3 4 8 9 2.5 3.5
+ 7 8 9 1.5 2.5 3.5
+1 2 7 8 9 1 2 3 4
 """, reference=False)
 
     def test_typed_implied_do_index(self):

@@ -474,6 +474,32 @@ fn emit(
         for e in expanded {
             if let Expr::Ident(n) = &e {
                 if let Some((_, dims)) = symbols.get(n).filter(|(_, dims)| !dims.is_empty()) {
+                    // Arrays with run-time extents, such as assumed-shape
+                    // dummies, are written in array element order by nested
+                    // loops over their bounds.
+                    if dims.iter().any(|d| crate::parameters::integer_constant(d).is_err()) || heap(n, symbols) {
+                        let mut scoped = symbols.clone();
+                        let kind = TypeSpec::Integer(Some(8));
+                        let mut indices = vec![];
+                        // A multidimensional ALLOCATABLE is declared flattened;
+                        // its axes give the rank.
+                        let rank = symbols.get(&format!("@axes:{n}")).map_or(dims.len(), |(_, axes)| axes.len());
+                        for _ in 0..rank {
+                            *serial += 1;
+                            let index = format!("@array_output_{serial}");
+                            scoped.insert(index.clone(), (kind.clone(), vec![]));
+                            body.push(Stmt::VarDecl { kind: kind.clone(), names: vec![index.clone()] });
+                            indices.push(index);
+                        }
+                        let mut item = Expr::Index(n.clone(), indices.iter().map(|i| id(i)).collect());
+                        for (axis, index) in indices.iter().enumerate() {
+                            let bound = |f: &str| Expr::Call(f.into(), vec![id(n), int(axis as i64 + 1)]);
+                            item = Expr::Call("@output_implied_do".into(),
+                                vec![id(index), bound("lbound"), bound("ubound"), int(1), item]);
+                        }
+                        emit(&[item], &scoped, serial, previous, active, body, session)?;
+                        continue;
+                    }
                     if dims.len() != 1 {
                         bail!("output implied-DO array item requires a known flattened shape");
                     }
@@ -512,6 +538,12 @@ fn emit(
     Ok(())
 }
 
+/// Whether `name` is an ALLOCATABLE (or other heap) array, whose declared
+/// extents are placeholders for its run-time shape.
+fn heap(name: &str, symbols: &Symbols) -> bool {
+    ["@axes:", "@heap:", "@extent:"].iter().any(|p| symbols.contains_key(&format!("{p}{name}")))
+}
+
 fn contains_section(e: &Expr) -> bool {
     match e {
         Expr::Section { .. } => true,
@@ -546,9 +578,15 @@ fn scalarize(e: &Expr, index: &Expr, symbols: &Symbols) -> Option<(Expr, Option<
     // The declared lower and upper bounds of dimension `d` of an array.
     let declared = |name: &str, d: usize| -> Option<(Expr, Expr)> {
         let (_, dims) = symbols.get(name)?;
+        // Run-time bounds, such as those of assumed-shape dummies, are inquired.
+        let inquiry = |f: &str| Expr::Call(f.into(), vec![id(name), int(d as i64 + 1)]);
+        let runtime = |e: &Expr| matches!(e, Expr::Ident(n) if n.starts_with('@'));
+        if heap(name, symbols) { return Some((inquiry("lbound"), inquiry("ubound"))); }
         match dims.get(d)? {
-            Expr::Call(tag, b) if tag == "@declared_bounds" && b.len() == 2 => Some((b[0].clone(), b[1].clone())),
-            Expr::Ident(n) if n.starts_with('@') => None,
+            Expr::Call(tag, b) if tag == "@declared_bounds" && b.len() == 2 => Some((
+                if runtime(&b[0]) { inquiry("lbound") } else { b[0].clone() },
+                if runtime(&b[1]) { inquiry("ubound") } else { b[1].clone() })),
+            e if runtime(e) => Some((inquiry("lbound"), inquiry("ubound"))),
             extent => Some((int(1), extent.clone())),
         }
     };
