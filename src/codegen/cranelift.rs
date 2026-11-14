@@ -1225,6 +1225,8 @@ fn eval_expr(
                             }
                             return CgVal::I64(offset);
                         }
+                        // Without run-time checks the offset is already plain arithmetic.
+                        if let [offset] = args.as_slice() { return eval_expr(b, ex, ptr_ty, offset, ints, reals, bools, func_meta); }
                     }
                     // An allocatable array's element offset, from (position,
                     // extent) pairs; the helper is called only to report a

@@ -15,7 +15,8 @@ array element order (gfortran.dg/array_1.f90, dependent_decls_3.f90,
 nested_modules_2.f90, nested_modules_3.f90), with -Wsequence-association;
 initialized module variables as dummy extents; and list-directed output of
 single-precision integers beyond 2**24; and dummies of external procedures
-passed on to writable explicit-shape and scalar dummies of module procedures."""
+passed on to writable explicit-shape and scalar dummies of module procedures;
+and fewer run-time checks of ALLOCATABLE elements."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -581,6 +582,27 @@ end do
 print '(*(f0.1,:,1x))', a
 end program p
 """, "2.0 3.0 4.0 3.0 5.0 7.0" + chr(10))
+
+    def test_allocatable_loops_without_checks(self):
+        # Element offsets that skip their second check also compile with
+        # -nocheck and -fast, which drop the checks altogether.
+        import test_nocheck
+        text = """program p
+real(8), allocatable :: a(:)
+integer :: i
+allocate(a(4))
+a(1) = 1
+do i = 2, 4
+   a(i) = a(i - 1) * 2
+end do
+print '(*(f0.1,:,1x))', a
+end program p
+"""
+        for flags in ([], ["-nocheck"], ["-fast"], ["-O0", "-nocheck"]):
+            with self.subTest(flags=flags):
+                result = test_nocheck.build_and_run(text, *flags)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.replace(chr(13), ""), "1.0 2.0 4.0 8.0" + chr(10))
 
 
 if __name__ == "__main__":

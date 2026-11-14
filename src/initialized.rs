@@ -276,6 +276,29 @@ fn full_cover(var: &str, start: &Expr, end: &Expr, body: &[Stmt], env: &Env) -> 
             }
         }
     }
+    // A loop over the run-time length of heap storage, as a whole-array
+    // assignment to an ALLOCATABLE array is lowered, defines every element
+    // that its body assigns at the loop index on each iteration.
+    if constant(start) == Some(1) && constant(end).is_none() {
+        fn assigns(body: &[Stmt], name: &str) -> bool {
+            body.iter().any(|s| match s {
+                Stmt::Assign { name: n, .. } => n == name,
+                Stmt::Do { var, body, .. } => var == name || assigns(body, name),
+                Stmt::If { then_body, else_body, .. } => assigns(then_body, name) || else_body.as_ref().is_some_and(|b| assigns(b, name)),
+                _ => false,
+            })
+        }
+        if matches!(end, Expr::Ident(n) if assigns(body, n)) || assigns(body, var) { return vec![]; }
+        let mut covered: Vec<String> = Vec::new();
+        for s in body {
+            let Stmt::AssignIndex { name, indices, .. } = s else { continue };
+            if !matches!(indices.as_slice(), [Expr::Ident(i)] if i == var) || covered.contains(name) { continue; }
+            if env.get(name).is_some_and(|v| v.heap_length.as_ref() == Some(end) && v.element_width == 1 && !v.zero_sized) {
+                covered.push(name.clone());
+            }
+        }
+        return if simple(body, &covered) { covered } else { vec![] };
+    }
     let (Some(a), Some(b)) = (constant(start), constant(end)) else { return vec![] };
     if a > b { return vec![]; }
     let mut found = Vec::new();
