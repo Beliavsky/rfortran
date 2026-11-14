@@ -1210,9 +1210,16 @@ same expressions as the actual's, the dummy simply names the actual; when they
 can only be compared at run time, the call uses the view only if they differ.
 A dummy with more elements than its actual stops with an error, at compile time
 when the sizes are constants. `-Wsequence-association`, in `-Wextra`, reports
-calls whose constant shapes differ. Passing such a view on to a writable
-explicit-shape dummy, and actuals that are array elements, sections, POINTER or
-ALLOCATABLE arrays, keep the earlier rule that extents must match.
+calls whose constant shapes differ. Actuals that are array elements, sections
+or ALLOCATABLE arrays keep the earlier rule that extents must match.
+
+A POINTER actual, including a dummy of an external procedure, which is received
+by reference, may be passed to a writable explicit-shape dummy of the same
+shape: the dummy is a POINTER associated with the actual, sharing its storage,
+strides and initialization flags, so strided targets need no copy. A dummy of
+another shape stops with an error. A scalar POINTER actual of a subroutine with
+scalar dummies is copied in, unless the dummy is INTENT(OUT), and stored back,
+unless it is INTENT(IN).
 
 Runtime-dependent declaration bounds and explicit lower bounds on assumed-shape
 or allocatable arrays remain unsupported. Existing limitations on array expressions and procedure arguments

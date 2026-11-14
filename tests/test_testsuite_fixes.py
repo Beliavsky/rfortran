@@ -14,7 +14,8 @@ their whole-array actuals, associated with the actual's leading elements in
 array element order (gfortran.dg/array_1.f90, dependent_decls_3.f90,
 nested_modules_2.f90, nested_modules_3.f90), with -Wsequence-association;
 initialized module variables as dummy extents; and list-directed output of
-single-precision integers beyond 2**24."""
+single-precision integers beyond 2**24; and dummies of external procedures
+passed on to writable explicit-shape and scalar dummies of module procedures."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -389,6 +390,162 @@ d = 2.5d10
 print *, x, y, -y, 2.5e10, 3 * y, d
 end program p
 """, " 16777216.0 2.5e10 -2.5e10 2.5e10 7.5e10 25000000000.0" + chr(10), reference=False)
+
+    def test_forwarding_dummies_of_external_procedures(self):
+        # The dummies of an external procedure, received by reference, passed
+        # on to module procedures: writable explicit-shape arrays, including
+        # one with lower bound 0 and a strided POINTER, and scalars.
+        self.check("""module m
+implicit none
+contains
+  subroutine scale(a, n, s)
+    integer, intent(in) :: n
+    double precision, intent(inout) :: a(n)
+    double precision, intent(inout) :: s
+    a = a * 2
+    s = s + sum(a)
+  end subroutine scale
+  subroutine setm(b, ni, nj)
+    integer, intent(in) :: ni, nj
+    double precision, intent(out) :: b(0:ni-1, nj)
+    integer :: i, j
+    do j = 1, nj
+      do i = 0, ni - 1
+        b(i, j) = 10*i + j
+      end do
+    end do
+  end subroutine setm
+  subroutine count_up(k, n)
+    integer, intent(in) :: n
+    integer, intent(inout) :: k
+    k = k + n
+  end subroutine count_up
+end module m
+subroutine outer(a, n, b, ni, nj, s, k)
+  use m
+  integer, intent(in) :: n, ni, nj
+  double precision, intent(inout) :: a(n), s
+  double precision, intent(out) :: b(ni, nj)
+  integer, intent(inout) :: k
+  call scale(a, n, s)
+  call setm(b, ni, nj)
+  call count_up(k, n)
+end subroutine outer
+program p
+  use m
+  implicit none
+  double precision, target :: x(4) = 1, y(2,3), w(10)
+  double precision, pointer :: q(:)
+  double precision :: s = 0
+  integer :: k = 5
+  call outer(x, 4, y, 2, 3, s, k)
+  print '(*(f0.1,:,1x))', x, s
+  print '(*(f0.1,:,1x))', y
+  print '(i0)', k
+  w = 1
+  q => w(1:10:3)
+  call scale(q, 4, s)
+  print '(*(f0.1,:,1x))', w, s
+end program p
+""", """2.0 2.0 2.0 2.0 8.0
+1.0 11.0 2.0 12.0 3.0 13.0
+9
+2.0 1.0 1.0 2.0 1.0 1.0 2.0 1.0 1.0 2.0 16.0
+""", reference=False)  # gfortran's output; it warns of an array temporary for q
+        self.check("""module m
+contains
+  subroutine count_up(k, n)
+    integer, intent(in) :: n
+    integer, intent(inout) :: k
+    k = k + n
+  end subroutine count_up
+end module m
+subroutine outer(a, n, k)
+  use m
+  integer, intent(in) :: n
+  double precision, intent(inout) :: a(n)
+  integer, intent(inout) :: k
+  call count_up(k, n)
+  a = k
+end subroutine outer
+program p
+  integer :: k = 5
+  double precision :: x(3) = 0
+  call outer(x, 3, k)
+  print '(i0,1x,f0.1)', k, x(1)
+end program p
+""", "8 8.0" + chr(10))
+        self.check("""module m
+contains
+  subroutine set_out(k, v)
+    integer, intent(out) :: k
+    integer, intent(in) :: v
+    k = v
+  end subroutine set_out
+  subroutine twice(k)
+    integer :: k
+    k = 2 * k
+  end subroutine twice
+  subroutine first(a, m)
+    integer, intent(in) :: m
+    real, intent(inout) :: a(m)
+    a = 0
+  end subroutine first
+end module m
+subroutine outer(a, n, k, j)
+  use m
+  integer, intent(in) :: n
+  real, intent(inout) :: a(n)
+  integer, intent(out) :: k
+  integer, intent(inout) :: j
+  call set_out(k, n)
+  call twice(j)
+  call first(a, n)
+end subroutine outer
+program p
+  integer :: k, j = 3
+  real :: x(4) = 1
+  call outer(x, 4, k, j)
+  print '(2(i0,1x),*(f0.1,:,1x))', k, j, x
+end program p
+""", "4 6 .0 .0 .0 .0" + chr(10))
+
+    def test_forwarded_pointer_view_of_another_shape(self):
+        # Sequence association through a POINTER actual is not yet supported.
+        self.check("""module m
+contains
+  subroutine set_out(k, v)
+    integer, intent(out) :: k
+    integer, intent(in) :: v
+    k = v
+  end subroutine set_out
+  subroutine twice(k)
+    integer :: k
+    k = 2 * k
+  end subroutine twice
+  subroutine first(a, m)
+    integer, intent(in) :: m
+    real, intent(inout) :: a(m)
+    a = 0
+  end subroutine first
+end module m
+subroutine outer(a, n, k, j)
+  use m
+  integer, intent(in) :: n
+  real, intent(inout) :: a(n)
+  integer, intent(out) :: k
+  integer, intent(inout) :: j
+  call set_out(k, n)
+  call twice(j)
+  call first(a, n - 1)
+end subroutine outer
+program p
+  integer :: k, j = 3
+  real :: x(4) = 1
+  call outer(x, 4, k, j)
+  print *, k, j, x
+end program p
+""", error="explicit-shape dummy `a` of `first` requires its POINTER actual argument to have the same shape", reference=False)
 
 
 if __name__ == "__main__":

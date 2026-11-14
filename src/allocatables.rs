@@ -52,7 +52,7 @@ pub(crate) fn metadata(body: &[Stmt], shapes: &mut Shapes) {
         if let Stmt::DummyIntent { name, intent } = s {
             if let Some(length)=intent.strip_prefix("@character_spec_length:") {shapes.insert(format!("@character_spec_length:{name}"),(TypeSpec::Integer(Some(8)),vec![id(length)]));}
             if intent=="@heap" {shapes.insert(format!("@heap:{name}"),(TypeSpec::Logical,vec![]));}
-            if let Some(rest)=intent.strip_prefix("@bounded_lower:") {shapes.insert(format!("@lowers:{name}"),(TypeSpec::Integer(Some(8)),rest.split(':').map(id).collect()));}
+            if let Some(rest)=intent.strip_prefix("@bounded_lower:") {shapes.insert(format!("@lowers:{name}"),(TypeSpec::Integer(Some(8)),rest.split(':').map(bound_token).collect()));}
             if let Some(rest) = intent.strip_prefix("@bounded_shape:") {
                 shapes.insert(
                     format!("@axes:{name}"),
@@ -86,6 +86,9 @@ pub(crate) fn metadata(body: &[Stmt], shapes: &mut Shapes) {
 pub(crate) fn axes(name: &str, shapes: &Shapes) -> Option<Vec<Expr>> {
     shapes.get(&format!("@axes:{name}")).map(|v| v.1.clone())
 }
+/// A bound in descriptor metadata: an integer literal, or the variable that
+/// holds a bound known only at run time.
+pub(crate) fn bound_token(t:&str)->Expr {if t.parse::<i64>().is_ok() {Expr::IntLit(t.into())} else {id(t)}}
 pub(crate) fn lowers(name:&str,shapes:&Shapes)->Option<Vec<Expr>> {shapes.get(&format!("@lowers:{name}")).map(|v|v.1.clone())}
 pub(crate) fn inquiry(name: &str, args: &[Expr], shapes: &Shapes) -> Result<Option<Expr>> {
     if name=="len" && args.len()==1 {
@@ -543,7 +546,10 @@ fn linear_index(
         if !matches!(crate::array_calls::scalar_actual_kind(index,shapes)?,TypeSpec::Integer(_)) {bail!("array `{name}` subscript must be scalar INTEGER");}
         let position=format!("@alloc_position_{serial}_{axis}");let limit=format!("@alloc_limit_{serial}_{axis}");
         params.extend([position.clone(),limit.clone()]);
-        let position_value=if let Some(lower)=lowers(name,shapes){bin(BinOp::Add,bin(BinOp::Sub,index.clone(),lower[axis].clone()),int(1))}else{index.clone()};
+        let position_value=match lowers(name,shapes) {
+            Some(lower) if !matches!(&lower[axis],Expr::IntLit(v) if v=="1") => bin(BinOp::Add,bin(BinOp::Sub,index.clone(),lower[axis].clone()),int(1)),
+            _ => index.clone(),
+        };
         actuals.extend([position_value,extent]);
         body.push(fail(bin(BinOp::Or,bin(BinOp::Lt,id(&position),int(1)),bin(BinOp::Gt,id(&position),id(&limit))),&format!("array `{name}` dimension {}: subscript outside allocated bounds",axis+1)));
         terms.push((position,limit));
@@ -1680,6 +1686,13 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                                 let mut extent = extent.clone();
                                 if let Expr::Call(tag,bounds)=&mut extent {if tag=="@heap_bounds" {
                                     let lower=lowers(n,&shapes).context("explicit allocation bounds require runtime storage")?[axis].clone();
+                                    // A storage temporary bound to a dummy has the dummy's
+                                    // constant lower bound; the allocation's is not kept.
+                                    let lower=if matches!(lower,Expr::Ident(_)) {lower} else {
+                                        *serial+=1;let scratch=format!("@allocation_lower_{serial}");
+                                        out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![scratch.clone()]});
+                                        id(&scratch)
+                                    };
                                     for value in bounds.iter_mut(){expression(value, &mut shapes,&mut out,checks,serial)?;}
                                     out.push(Stmt::CallSub{name:"@heap_bounds".into(),args:{let mut a=vec![lower,id(state),bounds[0].clone(),bounds[1].clone()];if let Some(n)=&allocation_status {a.push(Expr::Call("@allocation_status".into(),vec![id(n)]));}a}});
                                 }else{expression(&mut extent, &mut shapes,&mut out,checks,serial)?;out.push(assign(state,Expr::Call("max".into(),vec![int(0),extent])));}}

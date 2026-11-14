@@ -1899,6 +1899,7 @@ fn expand(
                 let mut copy_back = vec![];
                 let mut shape_checks = Vec::new();
                 let mut explicit_views: Vec<(String,String,TypeSpec,Vec<Expr>,String,Vec<String>)> = Vec::new();
+                let mut pointer_views: Vec<(String,String,TypeSpec,Vec<Expr>,String)> = Vec::new();
                 let mut dummy_lowers: HashMap<String,Vec<Expr>> = HashMap::new();
                 let mut dummy_shape_setup = vec![];
                 for (i, p) in r.params.iter().enumerate() {
@@ -2023,7 +2024,32 @@ fn expand(
                     let pointer_actual=matches!(actual,Expr::Ident(a) if shapes.contains_key(&format!("@pointer:{a}")));
                     let c_adapter=r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==crate::c_interop::IMPORT && intent=="true") || matches!(s,Stmt::CallSub{name,..} if name=="@c_invoke"));
                     let c_array=!dims.is_empty() && c_adapter;
-                    if pointer_actual && !c_adapter && (intent!="intent(in)" || dims.is_empty() || r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p&&intent=="allocatable"))) {bail!("POINTER actuals currently require POINTER dummy arguments");}
+                    // A writable explicit-shape dummy of a POINTER actual, such
+                    // as an entry point's borrowed dummy passed on, is itself
+                    // a POINTER associated with the actual: it shares the
+                    // actual's storage, strides and initialization flags.
+                    if pointer_actual && !c_adapter && intent!="intent(in)" {
+                        let Expr::Ident(a)=actual else {unreachable!()};
+                        if let Some((dummy_kind,dummy_dims))=viewable_dummy(p,r).filter(|(k,d)|shapes.get(a).is_some_and(|(ak,ad)|ad.len()==d.len() && crate::pointers::same_kind(ak,k))) {
+                            *serial+=1;
+                            let view=format!("@pointer_view_{serial}");
+                            let deferred=vec![Expr::Ident("@deferred_extent".into());dummy_dims.len()];
+                            local.insert(p.clone(),(dummy_kind.clone(),deferred.clone()));
+                            local.insert(format!("@pointer:{p}"),(TypeSpec::Logical,vec![]));
+                            local.insert(view.clone(),(dummy_kind.clone(),deferred));
+                            local.insert(format!("@pointer:{view}"),(TypeSpec::Logical,vec![]));
+                            names.insert(p.clone(),view.clone());
+                            pointer_views.push((p.clone(),view,dummy_kind,dummy_dims,a.clone()));
+                            continue;
+                        }
+                    }
+                    // A scalar POINTER actual, such as an entry point's dummy,
+                    // is read and written through its target by name.
+                    let scalar_pointer=pointer_actual && dims.is_empty()
+                        && matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical)
+                        && matches!(actual,Expr::Ident(a) if shapes.get(a).is_some_and(|(_,d)|d.is_empty()))
+                        && !r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && matches!(intent.as_str(),"allocatable"|"value")));
+                    if pointer_actual && !scalar_pointer && !c_adapter && (intent!="intent(in)" || dims.is_empty() || r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p&&intent=="allocatable"))) {bail!("POINTER actuals currently require POINTER dummy arguments");}
                     let pointer_target=local.contains_key(&format!("@target:{p}")) && r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if intent=="pointer" && r.params.contains(name)));
                     if pointer_target && !matches!(actual,Expr::Ident(a) if shapes.contains_key(&format!("@target:{a}"))) {bail!("escaping POINTER association requires a TARGET actual for `{p}`");}
                     if intent != "intent(in)"
@@ -2432,6 +2458,18 @@ fn expand(
                     prefix.push(Stmt::If{cond:bin(BinOp::Gt,stride,size),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),
                         args:vec![Expr::Str(format!("explicit-shape dummy `{p}` of `{name}` is larger than its actual argument"))]}],else_body:None});
                 }
+                for (p,_,_,dims,actual) in &pointer_views {
+                    // The extents must match: a POINTER actual is not associated
+                    // by element sequence with a dummy of another shape.
+                    for (axis,d) in dims.iter().enumerate() {
+                        let mut extent=explicit_bounds(d).1;
+                        crate::subroutines::expr(&mut extent,&names);
+                        let size=Expr::Call("size".into(),vec![Expr::Ident(actual.clone()),Expr::IntLit((axis+1).to_string())]);
+                        let extent=Expr::Call("max".into(),vec![extent,Expr::IntLit("0".into())]);
+                        prefix.push(Stmt::If{cond:Expr::Bin(BinOp::Ne,Box::new(extent),Box::new(size)),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),
+                            args:vec![Expr::Str(format!("explicit-shape dummy `{p}` of `{}` requires its POINTER actual argument to have the same shape",name.rsplit('$').next().unwrap_or(name)))]}],else_body:None});
+                    }
+                }
                 prefix.extend(undefine);
                 let mut cloned = r.body.clone();
                 cloned.splice(0..0,dummy_shape_setup);
@@ -2467,12 +2505,15 @@ fn expand(
                             *serial+=1;let n=format!("@dummy_lower_{serial}");
                             let value=dummy_lowers.get(p).map(|v|v[axis].clone())
                                 .unwrap_or_else(||Expr::IntLit("1".into()));
+                            // A constant bound is written as a literal, so that
+                            // element offsets need no arithmetic for a bound of 1.
+                            if let Ok(constant)=crate::parameters::integer_constant(&value) {lowers.push(constant.to_string());continue;}
                             setup.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![n.clone()]});
                             setup.push(Stmt::Assign{name:n.clone(),value});
                             lowers.push(n);
                         }
                         dummy_lower_setup.insert(p.clone(),setup);
-                        local.insert(format!("@lowers:{p}"),(TypeSpec::Integer(Some(8)),lowers.iter().map(|n|Expr::Ident(n.clone())).collect()));
+                        local.insert(format!("@lowers:{p}"),(TypeSpec::Integer(Some(8)),lowers.iter().map(|n|crate::allocatables::bound_token(n)).collect()));
                         cloned.push(Stmt::DummyIntent{name:p.clone(),intent:format!("@bounded_lower:{}",lowers.join(":"))});
                         if matches!(local.get(p),Some((TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical,_))) {
                         if let (Some(Expr::Ident(length)),Some(actual))=(crate::allocatables::length(p,&local),names.get(p)) {
@@ -2547,6 +2588,20 @@ fn expand(
                 crate::subroutines::rename(&mut cloned, &names, &r.params, serial)?;
                 bind_scalar_views(&mut cloned,&scalar_views)?;
                 bind_sequence_views(&mut cloned,&sequence_views)?;
+                for (_,view,kind,dims,actual) in &pointer_views {
+                    let first=cloned.iter().position(|s|!matches!(s,Stmt::SourceLocation(_)|Stmt::VarDecl{..}|Stmt::ArrayDecl{..}|Stmt::InitializedDecl{..}
+                        |Stmt::DummyIntent{..}|Stmt::Implicit(_)|Stmt::Use{..}|Stmt::DerivedDecl{..}|Stmt::DerivedType{..})).unwrap_or(cloned.len());
+                    let lowers:Vec<Expr>=dims.iter().map(|d|{let mut l=explicit_bounds(d).0;crate::subroutines::expr(&mut l,&names);l}).collect();
+                    let mut args=vec![Expr::Ident(view.clone()),Expr::Ident(actual.clone())];
+                    if lowers.iter().any(|l|crate::parameters::integer_constant(l).ok()!=Some(1)) {
+                        args.push(Expr::Call("@pointer_remap".into(),lowers.into_iter().map(|l|Expr::Section{name:String::new(),lower:Some(Box::new(l)),upper:None,stride:None}).collect()));
+                    }
+                    cloned.splice(first..first,[
+                        Stmt::ArrayDecl{kind:kind.clone(),name:view.clone(),dims:vec![Expr::Ident("@deferred_extent".into());dims.len()]},
+                        Stmt::DummyIntent{name:view.clone(),intent:"pointer".into()},
+                        Stmt::CallSub{name:"@pointer_associate".into(),args},
+                    ]);
+                }
                 // After renaming, which gives the dummy's uses the view's name.
                 for (p,view,kind,dims,_,fields) in &explicit_views {
                     let first=cloned.iter().position(|s|!matches!(s,Stmt::SourceLocation(_)|Stmt::VarDecl{..}|Stmt::ArrayDecl{..}|Stmt::InitializedDecl{..}

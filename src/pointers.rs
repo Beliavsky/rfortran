@@ -629,7 +629,7 @@ impl Lower {
             axes.push(Axis {
                 // Heap subscripts still use allocation coordinates here;
                 // fixed-array subscripts were normalized by array_bounds.
-                lower: if original_bounds || v.heap {v.active_lower.as_ref().and_then(|dims|dims.get(i)).map(|n|id(n)).unwrap_or_else(||int(v.lower.get(i).copied().unwrap_or(1)))} else {int(1)},
+                lower: if original_bounds || v.heap {v.active_lower.as_ref().and_then(|dims|dims.get(i)).map(|n|crate::allocatables::bound_token(n)).unwrap_or_else(||int(v.lower.get(i).copied().unwrap_or(1)))} else {int(1)},
                 extent: extent.clone(),
                 stride: stride.clone(),
             });
@@ -2262,6 +2262,38 @@ impl Lower {
                     self.random_number(&args[0], &readonly, &mut out)?;
                     continue;
                 }
+                // A scalar POINTER passed to a subroutine of this program,
+                // whose scalar dummies are later bound to variables: the call
+                // takes a copy of the target, which is stored back unless the
+                // dummy is INTENT(IN). An INTENT(OUT) dummy is not read first.
+                Stmt::CallSub { name, args }
+                    if (!name.starts_with('@') || name.starts_with("@module$"))
+                        && args.iter().any(|e| matches!(e, Expr::Ident(n) if self.pointers.get(n).is_some_and(|p| p.desc.axes.is_empty())))
+                        && SUBROUTINE_INTENTS.with(|s| s.borrow().contains_key(name.as_str())) =>
+                {
+                    let intents = SUBROUTINE_INTENTS.with(|s| s.borrow()[name.as_str()].clone());
+                    let mut block = vec![];
+                    let mut after = vec![];
+                    let mut actuals = vec![];
+                    for (i, e) in args.iter().enumerate() {
+                        let scalar = match e {
+                            Expr::Ident(n) => self.pointers.get(n).filter(|p| p.desc.axes.is_empty()).map(|p| (n.clone(), p.kind.clone())),
+                            _ => None,
+                        };
+                        let Some((n, kind)) = scalar else { actuals.push(e.clone()); continue };
+                        let intent = intents.get(i).map(String::as_str).unwrap_or("");
+                        let temp = self.fresh();
+                        block.push(Stmt::VarDecl { kind, names: vec![temp.clone()] });
+                        if intent != "intent(out)" { block.push(assign(&temp, id(&n))); }
+                        if intent != "intent(in)" { after.push(assign(&n, id(&temp))); }
+                        actuals.push(id(&temp));
+                    }
+                    block.push(Stmt::CallSub { name: name.clone(), args: actuals });
+                    block.extend(after);
+                    self.body(&mut block, &readonly)?;
+                    out.push(Stmt::Block { body: block });
+                    continue;
+                }
                 Stmt::CallSub { name, args } => {
                     if args.iter().any(|e| self.has_pointer(e))
                         && (name.contains("read")
@@ -2372,7 +2404,32 @@ fn replace_stmt(s: &mut Stmt, n: &str, value: &Expr) {
     }
 }
 
+thread_local! {
+    /// The INTENT of each dummy of the program's subroutines, empty when
+    /// unspecified, for scalar POINTER actual arguments.
+    static SUBROUTINE_INTENTS: std::cell::RefCell<HashMap<String, Vec<String>>> = std::cell::RefCell::new(HashMap::new());
+}
+
 pub fn resolve(mut p: Program) -> Result<Program> {
+    fn subroutines(body: &[Stmt], out: &mut HashMap<String, Vec<String>>) {
+        for s in body {
+            match s {
+                Stmt::Subroutine { name, params, body, .. } => {
+                    let intent = |p: &String| body.iter().find_map(|s| match s {
+                        Stmt::DummyIntent { name, intent } if name == p && intent.starts_with("intent(") => Some(intent.clone()),
+                        _ => None,
+                    }).unwrap_or_default();
+                    out.insert(name.clone(), params.iter().map(intent).collect());
+                    subroutines(body, out);
+                }
+                Stmt::Module { body, .. } | Stmt::Function { body, .. } => subroutines(body, out),
+                _ => {}
+            }
+        }
+    }
+    let mut intents = HashMap::new();
+    subroutines(&p.body, &mut intents);
+    SUBROUTINE_INTENTS.with(|s| *s.borrow_mut() = intents);
     fn known(body: &mut Vec<Stmt>, names: &mut Functions) {
         for s in body {
             if let Stmt::Function { name, elemental, return_type, body, .. } = s {
