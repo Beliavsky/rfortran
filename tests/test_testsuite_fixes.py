@@ -604,6 +604,60 @@ end program p
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.replace(chr(13), ""), "1.0 2.0 4.0 8.0" + chr(10))
 
+    def test_expressions_for_dummies_without_intent(self):
+        # Array constructors and expressions passed to array dummies without
+        # INTENT that the procedure does not define, functions with such
+        # dummies, and formatted output of locations in array constructors.
+        self.check("""module m
+implicit none
+contains
+subroutine show(v, n)
+  integer :: n
+  integer :: v(n)
+  print '(*(i0,:,1x))', v, sum(v)
+end subroutine show
+subroutine total(v, s)
+  real :: v(:), s
+  s = sum(v)
+end subroutine total
+function twice(x) result(r)
+  integer :: x(:)
+  integer :: r(size(x))
+  r = 2 * x
+end function twice
+character(len=5) function label(k)
+  integer :: k
+  write (label, '(a,i0)') 'k=', k
+end function label
+end module m
+program p
+use m
+implicit none
+integer :: i
+real :: s, z(3) = [1.0, 2.0, 3.0]
+call show([3, 4, 5], 3)
+call show([(i * i, i = 1, 4)], 4)
+call show(reshape([1, 2, 3, 4], [4]), 4)
+call total(-z, s)
+print '(f0.1)', s
+call total(z * 2, s)
+print '(f0.1)', s
+print '(*(i0,:,1x))', twice([1, 2, 3])
+print '(a)', label(7)
+print '(*(1x,g0))', maxloc([1, 3, 2], dim=1), findloc([1, 3, 2], 3, dim=1), 9
+print '(*(1x,g0))', maxloc([1, 3, 2]), minloc(reshape([4, 1, 3, 2], [2, 2]))
+end program p
+""", """3 4 5 12
+1 4 9 16 30
+1 2 3 4 10
+-6.0
+12.0
+2 4 6
+k=7  
+ 2 2 9
+ 2 2 1
+""")
+
 
 if __name__ == "__main__":
     unittest.main()

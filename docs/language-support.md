@@ -1213,6 +1213,12 @@ when the sizes are constants. `-Wsequence-association`, in `-Wextra`, reports
 calls whose constant shapes differ. Actuals that are array elements, sections
 or ALLOCATABLE arrays keep the earlier rule that extents must match.
 
+An array dummy without INTENT that its procedure does not define may receive an
+expression, such as an array constructor, `reshape(...)` or `-x`, as if it were
+INTENT(IN); so may the dummies without INTENT of CHARACTER and array-valued
+functions, while such a dummy that the function defines is treated as
+INTENT(INOUT).
+
 A POINTER actual, including a dummy of an external procedure, which is received
 by reference, may be passed to a writable explicit-shape dummy of the same
 shape: the dummy is a POINTER associated with the actual, sharing its storage,

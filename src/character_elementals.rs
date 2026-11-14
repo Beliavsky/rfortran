@@ -659,8 +659,11 @@ impl Lower {
         }
         if routine.elemental && views.iter().any(|v|v.active.is_some()) {bail!("runtime-sized ELEMENTAL CHARACTER calls are not yet supported");}
         let bound_types = self.types(&routine, &views)?;
+        // A dummy without INTENT is an input unless the function defines it.
+        let unspecified=|param:&String|!routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && intent.starts_with("intent(")));
         let writable=routine.params.iter().filter(|param|routine.body.iter().any(|s|
-            matches!(s,Stmt::DummyIntent{name,intent} if name==*param && matches!(intent.as_str(),"intent(out)"|"intent(inout)"))))
+            matches!(s,Stmt::DummyIntent{name,intent} if name==*param && matches!(intent.as_str(),"intent(out)"|"intent(inout)")))
+            || unspecified(param) && crate::external_calls::defines(&routine.body,param))
             .cloned().collect::<std::collections::HashSet<_>>();
         if routine.elemental && !writable.is_empty() {
             let array_call=views.iter().any(|v|v.items.is_some());
@@ -683,7 +686,7 @@ impl Lower {
                 if array && routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param&&matches!(intent.as_str(),"pointer"|"allocatable"))) {bail!("POINTER/ALLOCATABLE CHARACTER function array dummies are not yet supported");}
             }
             for param in &routine.params {
-                if !writable.contains(param) && !routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param&&intent=="intent(in)")) {
+                if !writable.contains(param) && !unspecified(param) && !routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param&&intent=="intent(in)")) {
                     bail!("CHARACTER function `{name}` currently requires INTENT(IN) scalar dummy `{param}`");
                 }
             }

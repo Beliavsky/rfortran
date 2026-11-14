@@ -348,6 +348,7 @@ fn lower_assignment_value(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<
 // temporaries do not inflate every recursive stack frame on Windows debug builds.
 fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
     let Expr::Call(name,args) = e else { unreachable!() };
+    if args.len() < 10 { bail!("{} of a run-time-sized array is not yet supported here; assign it to an array first", name.trim_start_matches('@').to_uppercase()); }
     let find = name == "@findloc";
     // Fixed CHARACTER arrays have already become scalar storage at this pass.
     // Do not rebuild them as a late CHARACTER array constructor: that would
@@ -2123,6 +2124,9 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                             // A reduction is scalar, as `sum(a, mask=[...])`.
                             Expr::Call(n, _) if matches!(n.as_str(), "sum" | "product" | "maxval" | "minval" | "any" | "all"
                                 | "count" | "iany" | "iall" | "iparity" | "parity" | "norm2" | "dot_product" | "size") => false,
+                            // A scalar location, with DIM= of a rank-one ARRAY.
+                            Expr::Call(n, a) if matches!(n.as_str(), "@minloc" | "@maxloc" | "@findloc")
+                                && matches!(a.get(9), Some(Expr::Call(_, dims)) if dims.is_empty()) => false,
                             Expr::Call(_, a) | Expr::Index(_, a) => a.iter().any(contains),
                             Expr::Bin(_, a, b) => contains(a) || contains(b),
                             Expr::Un(_, a) => contains(a),

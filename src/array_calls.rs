@@ -2011,6 +2011,12 @@ fn expand(
                         }
                     }
                     let intent = intents.get(p).map(String::as_str).unwrap_or("");
+                    // An array dummy without INTENT may be associated with an
+                    // expression, such as an array constructor, when the
+                    // procedure does not define it: it is then an input.
+                    let intent = if intent.is_empty() && !dims.is_empty() && !crate::external_calls::defines(&r.body, p)
+                        && !matches!(actual, Expr::Ident(a) if shapes.get(a).is_some_and(|(_,d)|!d.is_empty()))
+                        && !r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && matches!(intent.as_str(),"pointer"|"allocatable"))) {"intent(in)"} else {intent};
                     if local.contains_key(&format!("@pointer:{p}")) {
                         let Expr::Ident(a)=actual else {bail!("POINTER dummy `{p}` requires a POINTER variable");};
                         if !shapes.contains_key(&format!("@pointer:{a}")) {bail!("POINTER dummy `{p}` requires a POINTER actual");}
