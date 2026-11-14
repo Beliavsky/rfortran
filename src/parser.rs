@@ -844,6 +844,7 @@ pub fn parse_with_origins(
                 let _ = emit_to_io_write(&mut stderr, &Config::default(), &file, &diag);
                 errs.push(CompileError::new(CompileErrorKind::Parse, msg, span));
             }
+            crate::parens::resolve(&mut p);
             Ok(p)
         }
         Err(e) => {

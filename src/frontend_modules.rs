@@ -78,6 +78,7 @@ mod protected;
 mod proc_components;
 mod field_subscripts;
 mod typed_implied_do;
+mod parens;
 mod scalar_components;
 mod recursive_types;
 mod character_pointers;

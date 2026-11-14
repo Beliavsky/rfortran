@@ -1213,6 +1213,12 @@ when the sizes are constants. `-Wsequence-association`, in `-Wextra`, reports
 calls whose constant shapes differ. Actuals that are array elements, sections
 or ALLOCATABLE arrays keep the earlier rule that extents must match.
 
+A parenthesized variable passed as an actual argument, as in `f((i), i)`, is
+an expression: its dummy receives a copy of the value, so that the procedure
+defining another dummy associated with `i` does not change it. The copy is
+made when the variable is declared in the calling scope, or implicitly typed
+in a main program or external procedure without USE.
+
 An array dummy without INTENT that its procedure does not define may receive an
 expression, such as an array constructor, `reshape(...)` or `-x`, as if it were
 INTENT(IN); so may the dummies without INTENT of CHARACTER and array-valued

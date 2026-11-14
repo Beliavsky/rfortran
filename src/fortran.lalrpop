@@ -997,7 +997,9 @@ Primary: Expr = {
     KW_REAL LPAREN <args: CallArgList> RPAREN => Expr::Call("real".to_string(), args),
     <id: Designator> => Expr::Ident(id),
     COMPLEX_OPEN <re:RhsExpr> COMMA <im:RhsExpr> RPAREN => Expr::Call("@complex_literal".into(),vec![re,im]),
-    LPAREN <e:RhsExpr> RPAREN => e,
+    // A parenthesized variable is an expression, not the variable: as an
+    // actual argument it is a copy. Later lowering removes the marker elsewhere.
+    LPAREN <e:RhsExpr> RPAREN => if matches!(e, Expr::Ident(_)) { Expr::Call(crate::parens::PAREN.into(), vec![e]) } else { e },
     LPAREN <items:ExprList> COMMA <var:Ident> EQ <start:RhsExpr> COMMA <end:RhsExpr> <step:ImpliedDoStep?> RPAREN => {
         let mut args=vec![Expr::Ident(var),start,end,step.unwrap_or(Expr::IntLit("1".into()))];
         args.extend(items);Expr::Call("@output_implied_do".into(),args)

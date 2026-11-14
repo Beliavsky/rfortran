@@ -1501,6 +1501,73 @@ impl Lower {
         }
         Ok(items)
     }
+    /// A list-directed PRINT whose implied-DO reads record elements that need
+    /// a view for each iteration, as `(size(v(i)%x), i = 1, n)`, written as
+    /// fragments with each view made inside its loop; None for other lists.
+    /// With a FORMAT, the items go through a formatted output session.
+    fn looped_output(&mut self, items: &[Expr], objects: &mut Objects, format: Option<Expr>) -> Result<Option<Stmt>> {
+        let needs_views = |this: &mut Self, items: &[Expr], objects: &Objects| -> Result<bool> {
+            for item in items {
+                let Expr::Call(tag, args) = item else { continue };
+                if tag != "@output_implied_do" || args.len() < 5 { continue; }
+                let (mut trial_objects, mut trial_prefix, serial) = (objects.clone(), vec![], this.serial);
+                for e in &args[4..] { let mut e = e.clone(); this.expression(&mut e, &mut trial_objects, &mut trial_prefix)?; }
+                this.serial = serial;
+                if !trial_prefix.is_empty() { return Ok(true); }
+            }
+            Ok(false)
+        };
+        if !needs_views(self, items, objects)? { return Ok(None); }
+        // As in list-directed output elsewhere, adjacent CHARACTER items have
+        // no blank between them; here only literals are known to be CHARACTER.
+        fn emit(this: &mut Lower, items: &[Expr], objects: &mut Objects, out: &mut Vec<Stmt>, character: &mut bool, session: Option<&str>) -> Result<bool> {
+            for item in items {
+                if let Expr::Call(tag, args) = item {
+                    if tag == "@output_implied_do" && args.len() >= 5 {
+                        let Expr::Ident(var) = &args[0] else { return Ok(false) };
+                        if crate::parameters::integer_constant(&args[3]).ok() != Some(1) { return Ok(false); }
+                        let (mut start, mut end) = (args[1].clone(), args[2].clone());
+                        this.expression(&mut start, objects, out)?;
+                        this.expression(&mut end, objects, out)?;
+                        let mut body = vec![];
+                        // The first item of an iteration may follow any item.
+                        *character = false;
+                        if !emit(this, &args[4..], objects, &mut body, character, session)? { return Ok(false); }
+                        *character = false;
+                        out.push(Stmt::Do { var: var.clone(), start, end, body });
+                        continue;
+                    }
+                }
+                let mut value = item.clone();
+                let mut prefix = vec![];
+                this.expression(&mut value, objects, &mut prefix)?;
+                out.extend(prefix);
+                if let Some(handle) = session {
+                    out.push(Stmt::CallSub { name: "@format_item".into(), args: vec![Expr::Ident(handle.into()), value] });
+                    continue;
+                }
+                let fragment = |e: Expr| Stmt::CallSub { name: "@print_fragment".into(), args: vec![e] };
+                let literal = matches!(value, Expr::Str(_));
+                if !(literal && *character) { out.push(fragment(Expr::Str(" ".into()))); }
+                *character = literal;
+                out.push(fragment(value));
+            }
+            Ok(true)
+        }
+        let serial = self.serial;
+        let mut body = vec![];
+        let handle = format.as_ref().map(|_| { self.serial += 1; format!("@record_output_list_{}", self.serial) });
+        if let (Some(handle), Some(format)) = (&handle, format) {
+            body.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![handle.clone()] });
+            body.push(Stmt::CallSub { name: "@format_begin".into(), args: vec![Expr::Ident(handle.clone()), format, Expr::IntLit("1".into())] });
+        }
+        if !emit(self, items, objects, &mut body, &mut false, handle.as_deref())? { self.serial = serial; return Ok(None); }
+        match &handle {
+            Some(handle) => body.push(Stmt::CallSub { name: "@format_end".into(), args: vec![Expr::Ident(handle.clone())] }),
+            None => body.push(Stmt::Print { items: vec![] }),
+        }
+        Ok(Some(Stmt::Block { body }))
+    }
     fn output(
         &mut self,
         items: &mut Vec<Expr>,
@@ -2031,6 +2098,11 @@ impl Lower {
                         prefix.extend(defaults);
                         return Ok(());
                     }
+                    Stmt::CallSub { name, args } if name == "@formatted_print" && !args.is_empty()
+                        && self.looped_output(&args[1..], &mut objects.clone(), Some(args[0].clone()))?.is_some() => {
+                        let format = args[0].clone();
+                        if let Some(block) = self.looped_output(&args[1..], &mut objects, Some(format))? { s = block; }
+                    }
                     Stmt::CallSub { name, args }
                         if matches!(name.as_str(), "@write" | "@formatted_print" | "@unformatted_read" | "@unformatted_write") =>
                     {
@@ -2078,7 +2150,10 @@ impl Lower {
                             bail!("derived array function cannot be invoked with CALL");
                         }
                     }
-                    Stmt::Print { items } => self.output(items, &mut objects, &mut prefix)?,
+                    Stmt::Print { items } => {
+                        if let Some(block) = self.looped_output(items, &mut objects, None)? { s = block; }
+                        else { self.output(items, &mut objects, &mut prefix)?; }
+                    }
                     Stmt::Read { args: items } => {
                         for e in items {
                             self.heap_component_actual(e,&mut objects,&mut prefix,Some(&mut suffix))?;

@@ -658,6 +658,51 @@ k=7
  2 2 1
 """)
 
+    def test_parenthesized_actuals_and_component_implied_dos(self):
+        # A parenthesized variable passed as an actual argument is a copy;
+        # implied-DOs over ALLOCATABLE components of array elements read the
+        # element of each iteration.
+        self.check("""module m
+implicit none
+type t
+   real, allocatable :: x(:)
+   integer :: k = 4
+end type t
+contains
+subroutine bump(a, b)
+  integer :: a, b
+  b = b + 10
+  a = a + 1
+end subroutine bump
+end module m
+program p
+use m
+implicit none
+integer :: i, j, tryme
+type(t) :: v(3)
+i = 3
+j = tryme((i), i)
+print '(2(i0,1x))', j, i
+i = 3
+call bump((i), i)
+print '(i0)', i
+do i = 1, 3
+   allocate(v(i)%x(i)); v(i)%x = i
+end do
+print '(*(g0,1x))', (size(v(i)%x), i = 1, 3), (allocated(v(i)%x), i = 1, 3)
+print '(3(f0.1,1x),3(i0,1x))', (sum(v(i)%x), i = 1, 3), (v(i)%k, i = 1, 3)
+end program p
+integer function tryme(rtnme, hitme)
+integer rtnme, hitme
+hitme = 999
+tryme = rtnme
+end
+""", """3 999
+13
+1 2 3 T T T
+1.0 4.0 9.0 4 4 4
+""")
+
 
 if __name__ == "__main__":
     unittest.main()
