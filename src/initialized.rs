@@ -61,6 +61,24 @@ fn guard(value: Expr, name: &str, index: Option<Expr>, width: i64) -> Stmt {
     Stmt::CallSub { name: "@check_initialized".into(), args }
 }
 fn constant(e: &Expr) -> Option<i64> { crate::parameters::integer_constant(e).ok() }
+/// An ALLOCATABLE element offset, whose evaluation checks each subscript
+/// against its extent, so that the offset lies within the allocation.
+fn allocation_offset(e: &Expr) -> bool { matches!(e, Expr::Call(n, _) if n.starts_with("@alloc_offset_")) }
+/// The offset of an element just stored through the same checked offset:
+/// with subscripts that have no side effects, it need not be checked again.
+pub(crate) const UNCHECKED_OFFSET: &str = "@unchecked_offset";
+fn repeated_offset(e: &Expr) -> Option<Expr> {
+    fn pure(e: &Expr) -> bool {
+        match e {
+            Expr::Ident(_) | Expr::IntLit(_) => true,
+            Expr::Bin(_, a, b) => pure(a) && pure(b),
+            Expr::Un(_, a) => pure(a),
+            _ => false,
+        }
+    }
+    let Expr::Call(_, args) = e else { return None };
+    (allocation_offset(e) && args.iter().all(pure)).then(|| Expr::Call(UNCHECKED_OFFSET.into(), vec![e.clone()]))
+}
 
 /// Statements between these markers read without initialization checks; the
 /// values they write count as set.
@@ -103,7 +121,7 @@ fn check(name: &str, index: Option<&Expr>, env: &Env, out: &mut Vec<Stmt>, seria
             // module/borrowed view. Validate the physical index before loading
             // that flag, rather than diagnosing arbitrary memory as undefined
             // before the actual data access gets its ordinary bounds check.
-            if let (Some(n), Some(index)) = (v.extent, index) {
+            if let (Some(n), Some(index)) = (v.extent.filter(|_| !index.is_some_and(allocation_offset)), index) {
                 let outside=Expr::Bin(crate::ast::BinOp::Or,
                     Box::new(Expr::Bin(crate::ast::BinOp::Lt,Box::new(index.clone()),Box::new(int(1)))),
                     Box::new(Expr::Bin(crate::ast::BinOp::Gt,Box::new(index.clone()),Box::new(v.heap_length.clone().unwrap_or_else(||int(n))))));
@@ -146,7 +164,8 @@ fn write(name: &str, index: Option<&Expr>, env: &mut Env, out: &mut Vec<Stmt>, s
                 v.elements.insert(i, State::Yes);
                 if v.heap_length.is_none() && (1..=n).all(|i| v.elements.get(&i) == Some(&State::Yes)) { v.state = State::Yes; v.elements.clear(); }
             } else if v.state != State::Yes { v.state = State::Maybe; }
-            out.push(Stmt::AssignIndex { name: v.flag.clone(), indices: vec![index.clone()], value: int(1) });
+            let index = repeated_offset(index).unwrap_or_else(|| index.clone());
+            out.push(Stmt::AssignIndex { name: v.flag.clone(), indices: vec![index], value: int(1) });
         } else {
             v.state = State::Yes; v.elements.clear();
             *serial += 1;

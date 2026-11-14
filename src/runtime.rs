@@ -366,7 +366,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
             }
             Expr::Call(name, args) => {
 
-                if name=="@integer_literal" {return eval_expr(&args[0],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack);}
+                if name=="@integer_literal" || name==crate::initialized::UNCHECKED_OFFSET {return eval_expr(&args[0],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack);}
                 if let Some((op,k))=crate::integer_arithmetic::decode(name) {
                     let a=eval_expr(&args[0],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack);
                     let b=eval_expr(&args[1],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap_or(0);

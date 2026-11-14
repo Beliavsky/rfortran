@@ -547,6 +547,41 @@ program p
 end program p
 """, error="explicit-shape dummy `a` of `first` requires its POINTER actual argument to have the same shape", reference=False)
 
+    def test_allocatable_element_checks_without_repeated_offsets(self):
+        # Element offsets of ALLOCATABLE arrays are checked once per access;
+        # out-of-bounds subscripts and undefined elements are still reported.
+        self.check("""program p
+real(8), allocatable :: a(:)
+integer :: i
+allocate(a(3))
+a(1) = 1
+i = 5
+print *, a(i)
+end program p
+""", error="subscript outside allocated bounds", reference=False)
+        self.check("""program p
+real(8), allocatable :: a(:)
+integer :: i
+allocate(a(3))
+a(1) = 1
+i = 2
+print *, a(i)
+end program p
+""", error="read of uninitialized variable `a`: element 2", reference=False)
+        self.check("""program p
+real(8), allocatable :: a(:,:)
+integer :: i, j
+allocate(a(3,2))
+a = 1
+do j = 1, 2
+   do i = 1, 3
+      a(i, j) = a(i, j) + i * j
+   end do
+end do
+print '(*(f0.1,:,1x))', a
+end program p
+""", "2.0 3.0 4.0 3.0 5.0 7.0" + chr(10))
+
 
 if __name__ == "__main__":
     unittest.main()

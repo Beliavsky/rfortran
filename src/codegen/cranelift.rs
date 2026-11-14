@@ -1211,6 +1211,21 @@ fn eval_expr(
                         b.switch_to_block(success); b.seal_block(success);
                         return CgVal::I64(index);
                     }
+                    // An offset already checked by the store that precedes it.
+                    if name == crate::initialized::UNCHECKED_OFFSET {
+                        if let Some(IExpr::Call(_, pairs)) = args.first().filter(|_| args.len() == 1) {
+                            let values: Vec<ir::Value> = pairs.iter().map(|a| {let v = eval_expr(b, ex, ptr_ty, a, ints, reals, bools, func_meta); to_i64(b, v)}).collect();
+                            let mut offset = b.ins().iconst(ir::types::I64, 1);
+                            let mut stride: Option<ir::Value> = None;
+                            for pair in values.chunks(2) {
+                                let position = b.ins().iadd_imm(pair[0], -1);
+                                let term = match stride {Some(s) => b.ins().imul(position, s), None => position};
+                                offset = b.ins().iadd(offset, term);
+                                stride = Some(match stride {Some(s) => b.ins().imul(s, pair[1]), None => pair[1]});
+                            }
+                            return CgVal::I64(offset);
+                        }
+                    }
                     // An allocatable array's element offset, from (position,
                     // extent) pairs; the helper is called only to report a
                     // subscript outside the allocated bounds.
