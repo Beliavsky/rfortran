@@ -86,6 +86,13 @@ pub(crate) fn rename_with_prefix(
                 name(n, &names);
                 *intent = format!("{tag}{}", axes.join(":"));
             }
+            // A borrowed descriptor names its fields, which may be renamed too.
+            Stmt::DummyIntent { name: n, intent } if intent.starts_with("@borrowed_descriptor:") => {
+                let fields = intent.trim_start_matches("@borrowed_descriptor:").split(',')
+                    .map(|f| { let mut f = f.to_owned(); name(&mut f, &names); f }).collect::<Vec<_>>();
+                name(n, &names);
+                *intent = format!("@borrowed_descriptor:{}", fields.join(","));
+            }
             Stmt::DummyIntent { name: n, intent } if intent.starts_with("@bounded_limits:") => {
                 name(n, &names)
             }

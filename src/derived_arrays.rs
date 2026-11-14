@@ -211,6 +211,11 @@ struct Lower {
     elemental_functions: std::collections::HashSet<String>,
     /// Type-bound procedure names of each type.
     bindings: HashMap<String, HashMap<String, String>>,
+    /// The POINTER components of each type, with their target type and rank,
+    /// whose descriptors are stored as the fields `component$pointerK`.
+    pointer_components: HashMap<String, Vec<(String, TypeSpec, usize)>>,
+    /// The rank of each POINTER that views a component.
+    pointer_views: HashMap<String, usize>,
 }
 /// Storage of one field of an array of records. An array component `c` of a
 /// scalar object `g` is stored as the ordinary array components `c$field`,
@@ -508,8 +513,32 @@ impl Lower {
                     let mut fields = vec![];
                     let mut layout = vec![];
                     let mut unsupported = false;
+                    // POINTER components store their descriptors as integer
+                    // fields, zero for a disassociated pointer.
+                    let pointer_names: std::collections::HashSet<&String> = components.iter().filter_map(|c| match c {
+                        Stmt::DummyIntent { name, intent } if intent == "pointer" => Some(name),
+                        _ => None,
+                    }).collect();
+                    let mut pointers: Vec<(String, TypeSpec, usize)> = vec![];
+                    let pointer_kind = |k: &TypeSpec| matches!(k, TypeSpec::Integer(_) | TypeSpec::IntegerKind(_) | TypeSpec::Real | TypeSpec::RealKind(_)
+                        | TypeSpec::DoublePrecision | TypeSpec::Logical | TypeSpec::LogicalKind(_));
+                    let descriptor = |name: &str, rank: usize, fields: &mut Vec<Field>| {
+                        for k in 0..5 + 3 * rank {
+                            fields.push(Field { name: format!("{name}$pointer{k}"), kind: TypeSpec::Integer(Some(8)), default: Some(Expr::IntLit("0".into())), dims: vec![], heap: None });
+                        }
+                    };
                     for c in components {
                         match c {
+                            Stmt::DummyIntent { name, intent } if intent == "pointer" && pointer_names.contains(name) => {}
+                            Stmt::VarDecl { kind, names } if names.iter().any(|n| pointer_names.contains(n)) => {
+                                if !pointer_kind(kind) || !names.iter().all(|n| pointer_names.contains(n)) { fields.clear(); unsupported = true; break; }
+                                for n in names { descriptor(n, 0, &mut fields); pointers.push((n.clone(), kind.clone(), 0)); }
+                            }
+                            Stmt::ArrayDecl { kind, name, dims } if pointer_names.contains(name) => {
+                                if !pointer_kind(kind) || !dims.iter().all(|d| matches!(d, Expr::Ident(n) if n == "@deferred_extent")) { fields.clear(); unsupported = true; break; }
+                                descriptor(name, dims.len(), &mut fields);
+                                pointers.push((name.clone(), kind.clone(), dims.len()));
+                            }
                             Stmt::VarDecl { kind, names } => {
                                 for name in names {
                                     fields.push(Field {
@@ -530,6 +559,9 @@ impl Lower {
                                 for n in names {
                                     for f in self.types[type_name].clone() {
                                         fields.push(Field { name: format!("{n}%{}", f.name), ..f });
+                                    }
+                                    for (c, kind, rank) in self.pointer_components.get(type_name).cloned().unwrap_or_default() {
+                                        pointers.push((format!("{n}%{c}"), kind, rank));
                                     }
                                     layout.push((n.clone(), Some(type_name.clone())));
                                 }
@@ -584,6 +616,7 @@ impl Lower {
                         fields.push(Field { name: EMPTY_FIELD.into(), kind: TypeSpec::Integer(None), default: Some(Expr::IntLit("0".into())), dims: vec![], heap: None });
                         layout.push((EMPTY_FIELD.into(), None));
                     }
+                    if !unsupported && !pointers.is_empty() { self.pointer_components.insert(name.clone(), pointers); }
                     self.types.insert(name.clone(), fields);
                     self.layouts.insert(name.clone(), layout);
                     if let Stmt::DerivedType { bindings, .. } = s {
@@ -1515,6 +1548,115 @@ impl Lower {
     /// A list-directed PRINT whose implied-DO reads record elements that need
     /// a view for each iteration, as `(size(v(i)%x), i = 1, n)`, written as
     /// fragments with each view made inside its loop; None for other lists.
+    /// Make each reference in `s`'s own expressions to a POINTER component of
+    /// an array element, `v(i)%p` or `v(i)%p(j)`, a POINTER borrowing that
+    /// element's descriptor fields: loaded before the statement, and stored
+    /// back after it, so that pointer assignment, NULLIFY and ALLOCATE of the
+    /// component persist. References to one element share one POINTER.
+    fn pointer_component_views(&mut self, s: &mut Stmt, objects: &mut Objects, prefix: &mut Vec<Stmt>, suffix: &mut Vec<Stmt>) -> Result<()> {
+        if self.pointer_components.is_empty() || matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. }) { return Ok(()); }
+        let mut views: Vec<(String, String)> = vec![];
+        let (mut before, mut after) = (vec![], vec![]);
+        // An assignment to the component, `v(i)%p = x` or `v(i)%p(j) = x`.
+        if let Stmt::AssignIndex { name, indices, value } = s {
+            if let Some((object, component)) = name.split_once('%') {
+                let pointer = objects.get(object).filter(|o| !o.dims.is_empty())
+                    .and_then(|o| self.pointer_components.get(&o.ty)).is_some_and(|p| p.iter().any(|(c, _, _)| c == component));
+                if pointer {
+                    let (subscripts, elements): (Vec<Expr>, Vec<Expr>) = indices.iter().cloned()
+                        .partition(|e| matches!(e, Expr::Call(t, _) if t == "@component_subscripts"));
+                    let mut args = vec![Expr::Call(object.into(), elements)];
+                    args.extend(subscripts);
+                    let mut target = Expr::Call(format!("@record_component:{component}"), args);
+                    self.pointer_component_expr(&mut target, objects, &mut before, &mut after, &mut views)?;
+                    let value = value.clone();
+                    *s = match target {
+                        Expr::Ident(view) => Stmt::Assign { name: view, value },
+                        Expr::Call(view, indices) => Stmt::AssignIndex { name: view, indices, value },
+                        _ => unreachable!(),
+                    };
+                }
+            }
+        }
+        for e in crate::procedure_arguments::expressions(s) {
+            self.pointer_component_expr(e, objects, &mut before, &mut after, &mut views)?;
+        }
+        // One BLOCK keeps each view's declarations with the statement.
+        if !views.is_empty() {
+            let statement = std::mem::replace(s, Stmt::Block { body: vec![] });
+            before.push(statement);
+            before.extend(after);
+            *s = Stmt::Block { body: before };
+        }
+        let _ = (prefix, suffix);
+        Ok(())
+    }
+    fn pointer_component_expr(&mut self, e: &mut Expr, objects: &mut Objects, prefix: &mut Vec<Stmt>, suffix: &mut Vec<Stmt>,
+        views: &mut Vec<(String, String)>) -> Result<()> {
+        // Items of an implied-DO take their views in each iteration.
+        if matches!(e, Expr::Call(tag, _) if tag == "@output_implied_do") { return Ok(()); }
+        if let Expr::Call(tag, args) = e {
+            if let Some(component) = tag.strip_prefix("@record_component:").map(str::to_owned) {
+                let element = args.first().and_then(|a| match a {
+                    Expr::Call(n, i) | Expr::Index(n, i) if objects.get(n).is_some_and(|o| !o.dims.is_empty()) => Some((n.clone(), i.clone())),
+                    _ => None,
+                });
+                if let Some((object, indices)) = element {
+                    let ty = objects[&object].ty.clone();
+                    let pointer = self.pointer_components.get(&ty).and_then(|p| p.iter().find(|(c, _, _)| *c == component)).cloned();
+                    if let Some((component, kind, rank)) = pointer {
+                        let mut rest = args[1..].to_vec();
+                        // Subscripts of the component, as in ALLOCATE (v(i)%p(n)).
+                        if let [Expr::Call(tag, inner)] = rest.as_slice() {
+                            if tag == "@component_subscripts" { rest = inner.clone(); }
+                        }
+                        for r in &mut rest { self.pointer_component_expr(r, objects, prefix, suffix, views)?; }
+                        let key = format!("{object}{indices:?}%{component}");
+                        let view = match views.iter().find(|(k, _)| *k == key) {
+                            Some((_, v)) => v.clone(),
+                            None => {
+                                let mut indices = indices;
+                                for i in &mut indices { self.expression(i, objects, prefix)?; }
+                                self.capture_indices(&mut indices, prefix);
+                                self.serial += 1;
+                                let view = format!("@pointer_component_{}", self.serial);
+                                let fields: Vec<String> = (0..5 + 3 * rank).map(|k| format!("{view}$d{k}")).collect();
+                                prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: fields.clone() });
+                                for (k, local) in fields.iter().enumerate() {
+                                    let field = Field { name: format!("{component}$pointer{k}"), kind: TypeSpec::Integer(Some(8)), default: None, dims: vec![], heap: None };
+                                    let stored = select(&object, &field, vec![], &indices)?;
+                                    prefix.push(Stmt::Assign { name: local.clone(), value: stored.clone() });
+                                    suffix.push(assignment(stored, Expr::Ident(local.clone())));
+                                }
+                                prefix.push(if rank == 0 { Stmt::VarDecl { kind, names: vec![view.clone()] } }
+                                    else { Stmt::ArrayDecl { kind, name: view.clone(), dims: deferred(rank) } });
+                                prefix.push(Stmt::DummyIntent { name: view.clone(), intent: "pointer".into() });
+                                prefix.push(Stmt::DummyIntent { name: view.clone(), intent: format!("@borrowed_descriptor:{}", fields.join(",")) });
+                                views.push((key, view.clone()));
+                                self.pointer_views.insert(view.clone(), rank);
+                                view
+                            }
+                        };
+                        *e = match rest.as_slice() {
+                            [] => Expr::Ident(view),
+                            // A section of a rank-one component, `v(i)%p(2:3)`.
+                            [Expr::Section { lower, upper, stride, .. }] => Expr::Section { name: view, lower: lower.clone(), upper: upper.clone(), stride: stride.clone() },
+                            _ => Expr::Call(view, rest),
+                        };
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        match e {
+            Expr::Call(_, args) | Expr::Index(_, args) => for a in args { self.pointer_component_expr(a, objects, prefix, suffix, views)?; },
+            Expr::Bin(_, a, b) => { self.pointer_component_expr(a, objects, prefix, suffix, views)?; self.pointer_component_expr(b, objects, prefix, suffix, views)?; }
+            Expr::Un(_, a) => self.pointer_component_expr(a, objects, prefix, suffix, views)?,
+            Expr::Section { lower, upper, stride, .. } => for b in [lower, upper, stride].into_iter().flatten() { self.pointer_component_expr(b, objects, prefix, suffix, views)?; },
+            _ => {}
+        }
+        Ok(())
+    }
     /// With a FORMAT, the items go through a formatted output session.
     fn looped_output(&mut self, items: &[Expr], objects: &mut Objects, format: Option<Expr>) -> Result<Option<Stmt>> {
         let needs_views = |this: &mut Self, items: &[Expr], objects: &Objects| -> Result<bool> {
@@ -1522,7 +1664,12 @@ impl Lower {
                 let Expr::Call(tag, args) = item else { continue };
                 if tag != "@output_implied_do" || args.len() < 5 { continue; }
                 let (mut trial_objects, mut trial_prefix, serial) = (objects.clone(), vec![], this.serial);
-                for e in &args[4..] { let mut e = e.clone(); this.expression(&mut e, &mut trial_objects, &mut trial_prefix)?; }
+                for e in &args[4..] {
+                    let mut e = e.clone();
+                    let (mut views, mut back) = (vec![], vec![]);
+                    this.pointer_component_expr(&mut e, &mut trial_objects, &mut trial_prefix, &mut back, &mut views)?;
+                    this.expression(&mut e, &mut trial_objects, &mut trial_prefix)?;
+                }
                 this.serial = serial;
                 if !trial_prefix.is_empty() { return Ok(true); }
             }
@@ -1551,7 +1698,31 @@ impl Lower {
                 }
                 let mut value = item.clone();
                 let mut prefix = vec![];
+                let (mut views, mut back) = (vec![], vec![]);
+                this.pointer_component_expr(&mut value, objects, &mut prefix, &mut back, &mut views)?;
                 this.expression(&mut value, objects, &mut prefix)?;
+                // A whole POINTER component is written element by element.
+                let rank = match &value { Expr::Ident(v) => this.pointer_views.get(v).copied().filter(|r| *r > 0), _ => None };
+                if let (Some(rank), Expr::Ident(view)) = (rank, &value) {
+                    if rank != 1 { return Ok(false); }
+                    this.serial += 1;
+                    let index = format!("@pointer_component_index_{}", this.serial);
+                    prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![index.clone()] });
+                    let bound = |f: &str| Expr::Call(f.into(), vec![Expr::Ident(view.clone()), Expr::IntLit("1".into())]);
+                    let element = Expr::Call(view.clone(), vec![Expr::Ident(index.clone())]);
+                    let mut body = vec![];
+                    match session {
+                        Some(handle) => body.push(Stmt::CallSub { name: "@format_item".into(), args: vec![Expr::Ident(handle.into()), element] }),
+                        None => {
+                            body.push(Stmt::CallSub { name: "@print_fragment".into(), args: vec![Expr::Str(" ".into())] });
+                            body.push(Stmt::CallSub { name: "@print_fragment".into(), args: vec![element] });
+                            *character = false;
+                        }
+                    }
+                    prefix.push(Stmt::Do { var: index, start: bound("lbound"), end: bound("ubound"), body });
+                    out.push(Stmt::Block { body: prefix });
+                    continue;
+                }
                 out.extend(prefix);
                 if let Some(handle) = session {
                     out.push(Stmt::CallSub { name: "@format_item".into(), args: vec![Expr::Ident(handle.into()), value] });
@@ -1777,9 +1948,12 @@ impl Lower {
             }
             let mut prefix = vec![];
             let mut suffix = vec![];
+            self.pointer_component_views(&mut s, &mut objects, &mut prefix, &mut suffix)
+                .map_err(|e| crate::source_diagnostics::at(e, offset))?;
             if self.pointer_statement(&s, &mut objects, &mut prefix)
                 .map_err(|e| crate::source_diagnostics::at(e, offset))? {
                 out.extend(prefix);
+                out.extend(suffix);
                 continue;
             }
             self.heap_component_assignment(&mut s,&mut objects,&mut prefix,&mut suffix).map_err(|e|crate::source_diagnostics::at(e,offset))?;
@@ -2396,6 +2570,8 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         elemental_results: HashMap::new(),
         elemental_functions: Default::default(),
         bindings: HashMap::new(),
+        pointer_components: HashMap::new(),
+        pointer_views: HashMap::new(),
     };
     lower.prepare_elemental_results(&mut p.body);
     // Private polymorphic component variants may refer to concrete types from

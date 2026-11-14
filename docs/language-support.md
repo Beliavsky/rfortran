@@ -2173,6 +2173,15 @@ with positional or keyword arguments, including sections, empty arrays and
 omitted or NULL() allocatable components. These constructor arguments currently
 require element types without their own ALLOCATABLE components.
 See `tests/programs/xderived_array_component_constructor.f90`.
+
+Arrays of records may have scalar or array POINTER components of numeric or
+LOGICAL type, disassociated by default: `v(i)%p => t(2:4)`, `allocate(v(i)%p(n))`,
+`v(i)%p(j) = x`, sections such as `v(j)%p => v(i)%p(2:3)`, `nullify`,
+`associated`, `size`, output (including inside implied-DOs) and copies of
+whole records, which copy the pointer associations. A type without components
+may also be the type of an array, as the base of an extension often is. Pointer
+assignment of components in FORALL, and constructors giving values for POINTER
+components of arrays of records, are not yet supported.
 POINTER components of derived type and ALLOCATABLE scalar components
 (including deferred-length CHARACTER) remain unsupported, and an ALLOCATABLE
 component, like any ALLOCATABLE array, must be allocated (by ALLOCATE or by

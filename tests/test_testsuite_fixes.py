@@ -732,6 +732,68 @@ print '(l1)', allocated(a)
 end program p
 """, "3 4 4" + chr(10) + "2 3 3" + chr(10) + "F" + chr(10))
 
+    def test_pointer_components_of_record_arrays(self):
+        # POINTER components of elements of arrays of records: ALLOCATE,
+        # assignment through them, pointer assignment to sections of other
+        # elements' components, NULLIFY, ASSOCIATED, default null
+        # initialization, whole-record copies and DEALLOCATE.
+        self.check("""program p
+implicit none
+type foo
+   integer, dimension(:), pointer :: array
+   real, pointer :: s => null()
+   integer :: tag = 7
+end type foo
+type(foo), allocatable :: mol(:)
+type(foo) :: two(2)
+real, target :: x = 2.5
+integer :: i
+allocate(mol(3))
+do i = 1, 3
+   allocate(mol(i)%array(i + 1))
+   mol(i)%array = i * 10
+end do
+print '(*(i0,:,1x))', (size(mol(i)%array), i = 1, 3), mol(3)%array, mol(2)%tag
+print '(*(l1,:,1x))', associated(mol(1)%s), associated(mol(2)%array)
+mol(1)%s => x
+mol(1)%s = mol(1)%s * 2
+print '(f0.1,1x,f0.1)', mol(1)%s, x
+two(1)%array => mol(3)%array(2:3)
+two(1)%array(1) = 99
+print '(*(i0,:,1x))', mol(3)%array
+nullify(mol(2)%array)
+print '(l1)', associated(mol(2)%array)
+two = mol(2:3)
+print '(*(i0,:,1x))', two(2)%array
+deallocate(mol(1)%array)
+end program p
+""", """2 3 4 30 30 30 30 7
+F T
+5.0 5.0
+30 99 30 30
+F
+30 99 30 30
+""")
+        self.check("""program p
+type element
+   integer, pointer, dimension(:)::p
+end type
+type (element) :: q(5), r(5)
+integer, target, dimension(25)::t
+n = 5
+do i = 1,5
+   r(i)%p => t((i-1)*n + 1:i*n)
+enddo
+do i = 1, 25
+   t(i) = i
+enddo
+do i = 2, 5
+   q(i)%p => r(i-1)%p
+end do
+print '(*(i0,:,1x))', r(2)%p, q(3)%p
+end
+""", "6 7 8 9 10 6 7 8 9 10" + chr(10))
+
 
 if __name__ == "__main__":
     unittest.main()
