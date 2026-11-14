@@ -29,6 +29,9 @@ mod record_owned_copy;
 #[path = "record_inquiries.rs"]
 mod record_inquiries;
 
+/// The hidden component of a type without components.
+const EMPTY_FIELD: &str = "empty$";
+
 #[derive(Clone)]
 struct Field {
     name: String,
@@ -504,6 +507,7 @@ impl Lower {
                 } => {
                     let mut fields = vec![];
                     let mut layout = vec![];
+                    let mut unsupported = false;
                     for c in components {
                         match c {
                             Stmt::VarDecl { kind, names } => {
@@ -551,7 +555,7 @@ impl Lower {
                             }
                             Stmt::DummyIntent {name,intent} if intent=="allocatable" && components.iter().any(|c|matches!(c,Stmt::ArrayDecl {name:n,kind,..} if n==name && matches!(kind,TypeSpec::Integer(_) | TypeSpec::IntegerKind(_) | TypeSpec::Real | TypeSpec::RealKind(_) | TypeSpec::DoublePrecision | TypeSpec::Logical | TypeSpec::Character(_) | TypeSpec::CharacterLength(_)))) => {}
                             Stmt::DummyIntent {intent,..} if intent=="@scalar_heap" => {},
-                            Stmt::DummyIntent {intent,..} if intent=="@record_slots" => { fields.clear(); break; }
+                            Stmt::DummyIntent {intent,..} if intent=="@record_slots" => { fields.clear(); unsupported = true; break; }
                             // A fixed-size array component; an initialized one
                             // follows its InitializedDecl.
                             Stmt::ArrayDecl { kind, name, dims }
@@ -569,9 +573,16 @@ impl Lower {
                             Stmt::DummyIntent { name, .. } if name == crate::extensions::EXTENDS => {}
                             _ => {
                                 fields.clear();
+                                unsupported = true;
                                 break;
                             }
                         }
+                    }
+                    // A type without components, as the base of an extension
+                    // often is, still needs storage for the shape of its arrays.
+                    if fields.is_empty() && !unsupported {
+                        fields.push(Field { name: EMPTY_FIELD.into(), kind: TypeSpec::Integer(None), default: Some(Expr::IntLit("0".into())), dims: vec![], heap: None });
+                        layout.push((EMPTY_FIELD.into(), None));
                     }
                     self.types.insert(name.clone(), fields);
                     self.layouts.insert(name.clone(), layout);

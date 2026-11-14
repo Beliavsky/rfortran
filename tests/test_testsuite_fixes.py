@@ -703,6 +703,35 @@ end
 1.0 4.0 9.0 4 4 4
 """)
 
+    def test_arrays_of_types_without_components(self):
+        # Fixed-size and ALLOCATABLE arrays of a type without components, and
+        # polymorphic arrays whose declared type is such an extension base.
+        self.check("""module m
+implicit none
+type :: base
+end type base
+type, extends(base) :: child
+   integer :: k = 3
+end type child
+end module m
+program p
+use m
+implicit none
+type(base), allocatable :: a(:)
+type(base) :: b(4)
+class(base), allocatable :: c(:)
+allocate(a(3))
+print '(*(i0,:,1x))', size(a), size(b), shape(b)
+allocate(child :: c(2))
+select type (c)
+type is (child)
+   print '(*(i0,:,1x))', size(c), c%k
+end select
+deallocate(a)
+print '(l1)', allocated(a)
+end program p
+""", "3 4 4" + chr(10) + "2 3 3" + chr(10) + "F" + chr(10))
+
 
 if __name__ == "__main__":
     unittest.main()

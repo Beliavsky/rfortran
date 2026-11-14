@@ -155,6 +155,7 @@ def cargo_tests(compiler):
 
 
 def main():
+    started = time.time()
     exe = 'rfort.exe' if os.name == 'nt' else 'rfort'
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--compiler', type=Path, default=ROOT / 'target' / 'release' / exe,
@@ -194,6 +195,9 @@ def main():
     if not args.no_cargo:
         print('\n=== cargo test --release')
         status = cargo_tests(compiler)
+    finished = time.time()
+    stamp = lambda t: time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(t))
+    print(f'\nStarted {stamp(started)}, finished {stamp(finished)} ({clock(finished - started)} elapsed)')
     sys.exit(1 if not_ok or status else 0)
 
 
