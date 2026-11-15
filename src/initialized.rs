@@ -92,12 +92,21 @@ pub(crate) const TRANSPORT: &str = "@transport_value";
 pub(crate) const TRANSPORT_FROM_CODES: &str = "@transport_from_codes";
 pub(crate) const TRANSPORT_TO_CODES: &str = "@transport_to_codes";
 thread_local! { static UNCHECKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+// The number of enclosing IF branches whose condition is known only at run
+// time. A read there may never execute, or may follow on the path taken a
+// write that the analysis cannot order before it (a lowered GOTO state).
+thread_local! { static CONDITIONAL: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
 fn check(name: &str, index: Option<&Expr>, env: &Env, out: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
     if UNCHECKED.with(|c| c.get()) > 0 { return Ok(()); }
     let Some(v) = env.get(name) else { return Ok(()) };
     if v.zero_sized {return Ok(());}
-    if v.heap_length.is_none() {if let (Some(n), None) = (v.extent, index) {
+    // A read of an unassigned variable under a runtime condition (an IF, or
+    // a generated DO with runtime bounds) may never execute: a guarded dummy that an
+    // ENTRY lacks, a zero-sized section, a lowered GOTO state. Check it at
+    // run time. Partly assigned arrays keep their per-element errors.
+    let deferred = v.elements.is_empty() && CONDITIONAL.with(|c| c.get()) > 0;
+    if v.heap_length.is_none() && !deferred {if let (Some(n), None) = (v.extent, index) {
         if let Some(i) = (1..=n).find(|i| *v.elements.get(i).unwrap_or(&v.state) == State::No) {
             bail!("read of uninitialized variable `{name}`: element {i} before assignment");
         }
@@ -108,6 +117,7 @@ fn check(name: &str, index: Option<&Expr>, env: &Env, out: &mut Vec<Stmt>, seria
         if let Some(i) = index.and_then(constant) { *v.elements.get(&i).unwrap_or(&v.state) }
         else if v.state == State::No && !v.elements.is_empty() { State::Maybe } else { v.state }
     } else { v.state };
+    let state = if deferred && state == State::No { State::Maybe } else { state };
     match state {
         State::No => {
             if let Some((original,element))=crate::character_arrays::original_element(name) {
@@ -677,13 +687,12 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
             Stmt::If { cond, then_body, else_body } => {
                 read(cond, env, &mut before, serial)?;
                 let mut a = env.clone(); let mut b = env.clone();
-                // Reads under a runtime condition may never execute (for
-                // example IF (ALLOCATED(x)) PRINT *, x, or a guard that a
-                // lowered section never satisfies). Check them on the path
-                // taken, at run time, rather than reject the program.
+                // Reads of heap storage under a runtime condition may never
+                // execute (for example IF (ALLOCATED(x)) PRINT *, x). Preserve
+                // the initialization mask and check only on the path taken.
                 if !matches!(cond, Expr::Logical(_)) {
                     for branch in [&mut a, &mut b] {
-                        for v in branch.values_mut() {
+                        for v in branch.values_mut().filter(|v| v.heap_length.is_some()) {
                             if v.state == State::No { v.state = State::Maybe; }
                             if v.elements.values().any(|state| *state == State::No) {
                                 for state in v.elements.values_mut() {
@@ -695,8 +704,15 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 }
                 // A branch that cannot run is removed rather than left
                 // without the instrumentation that code generation expects.
-                if !matches!(cond, Expr::Logical(false)) { flow(then_body, &mut a, result, serial)?; } else { then_body.clear(); }
-                if !matches!(cond, Expr::Logical(true)) { if let Some(body) = else_body { flow(body, &mut b, result, serial)?; } } else { *else_body = None; }
+                let runtime = !matches!(cond, Expr::Logical(_));
+                if runtime { CONDITIONAL.with(|c| c.set(c.get() + 1)); }
+                let branches = (|| -> Result<()> {
+                    if !matches!(cond, Expr::Logical(false)) { flow(then_body, &mut a, result, serial)?; } else { then_body.clear(); }
+                    if !matches!(cond, Expr::Logical(true)) { if let Some(body) = else_body { flow(body, &mut b, result, serial)?; } } else { *else_body = None; }
+                    Ok(())
+                })();
+                if runtime { CONDITIONAL.with(|c| c.set(c.get() - 1)); }
+                branches?;
                 *env = match cond { Expr::Logical(true) => a, Expr::Logical(false) => b, _ => merge(&a, &b) };
             }
             Stmt::Do { var, start, end, body } => {
@@ -716,7 +732,15 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                             if v.runtime_sized && v.state==State::No {v.state=State::Maybe;}
                         }
                     }
-                    flow(body, &mut inner, result, serial)?;
+                    // A generated loop with runtime bounds, such as the copy
+                    // of a zero-sized section, may run no iterations, like a
+                    // branch of a runtime IF. Source loops, including the
+                    // worker loops of DO CONCURRENT, keep compile-time errors.
+                    let runtime = var.starts_with('@') && (constant(start).is_none() || constant(end).is_none());
+                    if runtime { CONDITIONAL.with(|c| c.set(c.get() + 1)); }
+                    let flowed = flow(body, &mut inner, result, serial);
+                    if runtime { CONDITIONAL.with(|c| c.set(c.get() - 1)); }
+                    flowed?;
                     *env = merge(env, &inner);
                     for name in covered {
                         if let Some(v) = env.get_mut(&name) { v.state = State::Yes; v.elements.clear(); }
@@ -775,6 +799,17 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
     }
     *body = output;
     Ok(terminated)
+}
+
+/// Whether some RETURN of the body returns a value other than `name`.
+fn returns_other(body: &[Stmt], name: &str) -> bool {
+    body.iter().any(|s| match s {
+        Stmt::Return(Some(e)) => !matches!(e, Expr::Ident(n) if n == name),
+        Stmt::If { then_body, else_body, .. } => returns_other(then_body, name) || else_body.as_ref().is_some_and(|b| returns_other(b, name)),
+        Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => returns_other(body, name),
+        Stmt::SelectCase { cases, default, .. } => cases.iter().any(|c| returns_other(&c.body, name)) || default.as_ref().is_some_and(|b| returns_other(b, name)),
+        _ => false,
+    })
 }
 
 fn collect(body: &[Stmt], variables: &mut BTreeMap<String, Option<i64>>) {
@@ -936,7 +971,16 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
     }
     drop(setup);
     let terminated = flow(body, &mut env, result, serial)?;
-    if !terminated { if let Some(name) = result { check(name, None, &env, body, serial)?; } }
+    if !terminated { if let Some(name) = result {
+        // When RETURN statements carry another variable (a lowered RESULT
+        // with GOTOs), the end of the body may be unreachable; check the
+        // function name there at run time.
+        let elsewhere = returns_other(body, name);
+        if elsewhere { CONDITIONAL.with(|c| c.set(c.get() + 1)); }
+        let checked = check(name, None, &env, body, serial);
+        if elsewhere { CONDITIONAL.with(|c| c.set(c.get() - 1)); }
+        checked?;
+    } }
     for (name, value) in inherited { if !declared.contains(name) { if let Some(v) = env.get(name) { *value = v.clone(); } } }
     if let Some(capture) = capture { capture.extend(env.iter().map(|(name,v)|(name.clone(),v.flag.clone()))); }
     prefix.append(body); *body = prefix;
@@ -947,6 +991,7 @@ pub fn instrument(mut program: Program) -> Result<Program> {
     program = crate::compile_profile::run("initialized.cleanup", || crate::heap::cleanup(program));
     // An earlier failed instrumentation may have left a region open.
     UNCHECKED.with(|c| c.set(0));
+    CONDITIONAL.with(|c| c.set(0));
     scope(&mut program.body, &mut Env::new(), &[], None, &mut 0, None)?;
     crate::modules::unify_storage(program)
 }
@@ -956,6 +1001,7 @@ pub(crate) fn instrument_scalars(mut program: Program) -> Result<(Program, BTree
     program = crate::compile_profile::run("initialized.resolve", || crate::subroutines::resolve(program))?;
     program = crate::compile_profile::run("initialized.cleanup", || crate::heap::cleanup(program));
     UNCHECKED.with(|c| c.set(0));
+    CONDITIONAL.with(|c| c.set(0));
     let mut flags = BTreeMap::new();
     scope(&mut program.body, &mut Env::new(), &[], None, &mut 0, Some(&mut flags))?;
     Ok((crate::modules::unify_storage(program)?, flags))

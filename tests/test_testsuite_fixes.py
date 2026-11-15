@@ -28,6 +28,7 @@ from test_record_read import COMPILER
 
 class TestsuiteFixes(unittest.TestCase):
     check = test_deallocate.Deallocate.check
+    reject = test_deallocate.Deallocate.reject
 
     def test_runtime_length_actuals_to_elemental_functions(self):
         self.check("""module m
@@ -910,6 +911,52 @@ logical function zero() result(r)
    if (.not. r) goto 1
 end function zero
 """, "hello unit ten" + chr(10) + "42" + chr(10) + "1 2 3" + chr(10) + "F" + chr(10) + "T" + chr(10), reference=False)
+
+    def test_reads_that_may_not_execute(self):
+        # A dummy that an ENTRY lacks, read only under a guard, and a never
+        # assigned array read only through a zero-sized section of runtime
+        # bounds are checked at run time (ENTRY is obsolescent, so this is
+        # not checked against gfortran -std=f2018).
+        self.check("""module m
+contains
+subroutine foo(a, b)
+  integer :: a, b
+  logical, save :: was_foo = .false.
+  was_foo = .true.
+  print '(i0,1x,i0)', a, b
+entry bar(a)
+  if (was_foo) then
+    print '(a,i0)', 'foo ', a + b
+  else
+    print '(a,i0)', 'bar ', a
+  end if
+  was_foo = .false.
+end subroutine
+subroutine zero_sized(n1, n2)
+  integer :: n1, n2
+  real :: c(3,2), x(3,5), y(5,2)
+  c = matmul(x(:,n1:n2), y(n1:n2,:))
+  print '(6f4.1)', c
+end subroutine
+end module
+program p
+use m
+call foo(3, 4)
+call bar(5)
+call zero_sized(9, 8)
+end program
+""", "3 4\nfoo 7\nbar 5\n 0.0 0.0 0.0 0.0 0.0 0.0\n", reference=False)
+
+    def test_unconditional_read_after_runtime_branch_is_rejected(self):
+        # Only reads under a runtime condition are deferred to run time.
+        self.reject("""program p
+implicit none
+integer :: n, x, y
+read *, n
+if (n > 0) y = 1
+print *, x, y
+end program
+""", "uninitialized variable `x`")
 
 
 if __name__ == "__main__":
