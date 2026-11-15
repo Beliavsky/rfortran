@@ -552,7 +552,9 @@ pub(crate) fn same_statement(gap: &str) -> bool {
 // True when tokens[index] begins a logical statement (after an optional label).
 // Whether the token at `index` follows a comma directly inside the parentheses
 // of a CHARACTER type selector that start with LEN= or KIND=.
-fn character_selector(tokens: &[Token], index: usize) -> bool {
+/// Whether `index` is inside the selector of `CHARACTER(LEN=..., ...)` or
+/// `CHARACTER(KIND=..., ...)`; with `any_first`, of `CHARACTER(x, ...)`.
+fn character_selector(tokens: &[Token], index: usize, any_first: bool) -> bool {
     let mut depth = 0usize;
     for i in (0..index).rev() {
         match tokens[i].kind {
@@ -560,7 +562,7 @@ fn character_selector(tokens: &[Token], index: usize) -> bool {
             TokenKind::LParen if depth > 0 => depth -= 1,
             TokenKind::LParen => {
                 return i >= 1 && matches!(tokens[i - 1].kind, TokenKind::KwCharacter)
-                    && matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::KwLen | TokenKind::KwKind));
+                    && (any_first || matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::KwLen | TokenKind::KwKind)));
             }
             _ => {}
         }
@@ -1385,7 +1387,10 @@ fn lex_with(input: &str, collapse: bool) -> Vec<Token> {
                 "len" if !parameter && matches!(previous,Some(TokenKind::LParen)) && matches!(next,Some(TokenKind::Eq)) => Some(TokenKind::KwLen),
                 "kind" if !parameter && matches!(previous,Some(TokenKind::LParen)) && matches!(next,Some(TokenKind::Eq)) => Some(TokenKind::KwKind),
                 // The second selector of CHARACTER(LEN=..., KIND=...) or CHARACTER(KIND=..., LEN=...).
-                "kind" | "len" if matches!(previous,Some(TokenKind::Comma)) && matches!(next,Some(TokenKind::Eq)) && character_selector(&tokens,start) =>
+                // A second KIND= or LEN= of a CHARACTER selector; KIND= may
+                // follow a length without LEN=, as in CHARACTER(:, KIND=k).
+                "kind" | "len" if matches!(previous,Some(TokenKind::Comma)) && matches!(next,Some(TokenKind::Eq))
+                    && character_selector(&tokens,start,n.eq_ignore_ascii_case("kind")) =>
                     Some(if n.eq_ignore_ascii_case("kind") {TokenKind::KwKind} else {TokenKind::KwLen}),
                 "type" if matches!(next,Some(TokenKind::DColon|TokenKind::LParen)) || matches!(previous,Some(TokenKind::KwEnd)) => Some(TokenKind::KwType),
                 // TYPE, attributes :: name and TYPE name (alone on its statement).
@@ -1437,7 +1442,9 @@ fn lex_with(input: &str, collapse: bool) -> Vec<Token> {
                     && !assigned(&tokens,input,start) => Some(TokenKind::KwCommon),
                 "procedure" if matches!(next,Some(TokenKind::DColon)) || matches!(previous,Some(TokenKind::KwModule))
                     // A type-bound binding with attributes: `procedure, private :: f`.
-                    || matches!(next,Some(TokenKind::Comma)) && statement_head(&tokens,input,start) => Some(TokenKind::KwProcedure),
+                    || matches!(next,Some(TokenKind::Comma)) && statement_head(&tokens,input,start)
+                    // A procedure statement of a generic interface: `procedure f, g`.
+                    || matches!(next,Some(TokenKind::Ident(_))) && statement_head(&tokens,input,start) => Some(TokenKind::KwProcedure),
                 "interface" if matches!(previous,Some(TokenKind::KwEnd)) || matches!(next,Some(TokenKind::Ident(_))) => Some(TokenKind::KwInterface),
                 "operator" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwOperator),
                 // DIMENSION statement: `dimension a(2), b(3)` or `dimension :: a(2)`.

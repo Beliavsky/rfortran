@@ -357,7 +357,7 @@ AssociationList: Vec<(String, Expr)> = {
     <mut v:AssociationList> COMMA <n:Ident> ARROW <e:RhsExpr> => { v.push((n, e)); v },
 };
 
-ComponentName: String = { <n:Ident> => n, KW_PRINT => "print".into() };
+ComponentName: String = { <n:Ident> => n, KW_PRINT => "print".into(), KW_DO => "do".into() };
 // Components after an array element, as `p%x` in `a(i)%p%x`.
 ComponentPath: String = {
     <n:ComponentName> => n,
@@ -401,6 +401,7 @@ Bindings: Vec<(String,String)> = {
         for name in &items {if let Some(access)=attrs.iter().find(|a|a.as_str()=="public" || a.as_str()=="private") {
             bindings.push((format!("@binding_access:{name}"),format!("@{access}")));
         }}
+        for name in &items {bindings.extend(crate::ast::pass_argument(&attrs).map(|a|(format!("@pass:{name}"),a)));}
         let items=crate::abstract_types::deferred_bindings(interface,attrs,items)
             .map_err(|error|lalrpop_util::ParseError::User{error})?;
         for (name,_) in &items{if !name.starts_with('@'){bindings.push((format!("@binding_location:{name}"),pos.to_string()));}}
@@ -414,6 +415,7 @@ Bindings: Vec<(String,String)> = {
             bindings.push((format!("@binding_access:{name}"),format!("@{access}")));
         }}
         for (name,target) in &items {if attrs.iter().any(|a|a=="non_overridable") {bindings.push((format!("@non_overridable:{name}"),target.clone()));}}
+        for (name,_) in &items {bindings.extend(crate::ast::pass_argument(&attrs).map(|a|(format!("@pass:{name}"),a)));}
         bindings.extend(items);
         Ok(bindings)
     },
@@ -461,7 +463,8 @@ BindingAttributes: Vec<String> = {
     <a:BindingAttribute> => vec![a],
     <mut v:BindingAttributes> COMMA <a:BindingAttribute> => {v.push(a);v},
 };
-BindingAttribute: String = { <n:Ident> => n, KW_PUBLIC => "public".into(), KW_PRIVATE => "private".into() };
+// PASS(arg) is kept as `pass(arg)`.
+BindingAttribute: String = { <n:Ident> => n, <n:Ident> LPAREN <a:Ident> RPAREN => format!("{}({})", n.to_ascii_lowercase(), a.to_ascii_lowercase()), KW_PUBLIC => "public".into(), KW_PRIVATE => "private".into() };
 BindingList: Vec<(String,String)> = {
     <item:Binding> => vec![item],
     <mut items:BindingList> COMMA <item:Binding> => {items.push(item);items},
@@ -506,9 +509,15 @@ GenericNames: Vec<String> = {
     <n:GenericName> => vec![n],
     <mut names:GenericNames> COMMA <n:GenericName> => {names.push(n);names},
 };
+// MODULE PROCEDURE, or PROCEDURE, which may also name external procedures,
+// each with an optional `::`.
 OperatorProcedures: Vec<String> = {
-    KW_MODULE KW_PROCEDURE <names:IdentList> => names,
-    <mut names:OperatorProcedures> KW_MODULE KW_PROCEDURE <more:IdentList> => {names.extend(more);names},
+    <names:GenericProcedureStmt> => names,
+    <mut names:OperatorProcedures> <more:GenericProcedureStmt> => {names.extend(more);names},
+};
+GenericProcedureStmt: Vec<String> = {
+    KW_MODULE KW_PROCEDURE DCOLON? <names:IdentList> => names,
+    KW_PROCEDURE DCOLON? <names:IdentList> => names,
 };
 EndOperator: String = { KW_OPERATOR LPAREN <op:Operator> RPAREN => op };
 
@@ -628,11 +637,29 @@ Stmt: Stmt = {
         let mut typed=vec![crate::select_type::intrinsic_guard(kind)]; typed.extend(args);
         Stmt::CallSub{name:"@allocate_intrinsic_type".into(),args:typed}
     },
-    // ALLOCATE(CHARACTER(LEN=n) :: s) of a deferred-length CHARACTER scalar.
+    // ALLOCATE(CHARACTER(LEN=n) :: s) or ALLOCATE(CHARACTER(n) :: s) of
+    // deferred-length CHARACTER objects.
     KW_ALLOCATE LPAREN KW_CHARACTER LPAREN KW_LEN EQ <length:RhsExpr> RPAREN DCOLON <objects: CallArgList> RPAREN => {
         let mut args = vec![length];
         args.extend(objects);
         Stmt::CallSub { name: crate::substrings::ALLOCATE_CHARACTER.into(), args }
+    },
+    KW_ALLOCATE LPAREN KW_CHARACTER LPAREN <length:RhsExpr> RPAREN DCOLON <objects: CallArgList> RPAREN => {
+        let mut args = vec![length];
+        args.extend(objects);
+        Stmt::CallSub { name: crate::substrings::ALLOCATE_CHARACTER.into(), args }
+    },
+    KW_ALLOCATE LPAREN KW_CHARACTER LPAREN KW_LEN EQ <length:RhsExpr> COMMA KW_KIND EQ <kind:RhsExpr> RPAREN DCOLON <objects: CallArgList> RPAREN =>? {
+        crate::ast::character_kind(&kind).map_err(|error| lalrpop_util::ParseError::User { error })?;
+        let mut args = vec![length];
+        args.extend(objects);
+        Ok(Stmt::CallSub { name: crate::substrings::ALLOCATE_CHARACTER.into(), args })
+    },
+    KW_ALLOCATE LPAREN KW_CHARACTER LPAREN KW_KIND EQ <kind:RhsExpr> COMMA KW_LEN EQ <length:RhsExpr> RPAREN DCOLON <objects: CallArgList> RPAREN =>? {
+        crate::ast::character_kind(&kind).map_err(|error| lalrpop_util::ParseError::User { error })?;
+        let mut args = vec![length];
+        args.extend(objects);
+        Ok(Stmt::CallSub { name: crate::substrings::ALLOCATE_CHARACTER.into(), args })
     },
     KW_DEALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@deallocate".into(), args },
     KW_NULLIFY LPAREN <args:CallArgList> RPAREN => Stmt::CallSub{name:"@nullify".into(),args},
@@ -837,9 +864,17 @@ TypeSpec: TypeSpec = {
     KW_CHARACTER LPAREN KW_LEN EQ <length:RhsExpr> RPAREN => crate::ast::character_length(length),
     KW_CHARACTER LPAREN <length:RhsExpr> RPAREN => crate::ast::character_length(length),
     // CHARACTER storage is ASCII; the ASCII and default kinds are the same.
-    KW_CHARACTER LPAREN KW_LEN EQ <length:RhsExpr> COMMA KW_KIND EQ <_kind:RhsExpr> RPAREN => crate::ast::character_length(length),
-    KW_CHARACTER LPAREN KW_KIND EQ <_kind:RhsExpr> COMMA KW_LEN EQ <length:RhsExpr> RPAREN => crate::ast::character_length(length),
-    KW_CHARACTER LPAREN KW_KIND EQ <_kind:RhsExpr> RPAREN => TypeSpec::Character(None),
+    // A kind known here to be another one (UCS-4) is rejected.
+    KW_CHARACTER LPAREN KW_LEN EQ <length:RhsExpr> COMMA KW_KIND EQ <kind:RhsExpr> RPAREN =>? crate::ast::character_kind(&kind).map(|_| crate::ast::character_length(length)).map_err(|error| lalrpop_util::ParseError::User { error }),
+    KW_CHARACTER LPAREN KW_KIND EQ <kind:RhsExpr> COMMA KW_LEN EQ <length:RhsExpr> RPAREN =>? crate::ast::character_kind(&kind).map(|_| crate::ast::character_length(length)).map_err(|error| lalrpop_util::ParseError::User { error }),
+    KW_CHARACTER LPAREN <length:RhsExpr> COMMA KW_KIND EQ <kind:RhsExpr> RPAREN =>? crate::ast::character_kind(&kind).map(|_| crate::ast::character_length(length)).map_err(|error| lalrpop_util::ParseError::User { error }),
+    KW_CHARACTER LPAREN KW_LEN EQ COLON COMMA KW_KIND EQ <kind:RhsExpr> RPAREN =>? crate::ast::character_kind(&kind).map(|_| crate::ast::character_length(Expr::Ident("@deferred_character".into()))).map_err(|error| lalrpop_util::ParseError::User { error }),
+    KW_CHARACTER LPAREN KW_KIND EQ <kind:RhsExpr> COMMA KW_LEN EQ COLON RPAREN =>? crate::ast::character_kind(&kind).map(|_| crate::ast::character_length(Expr::Ident("@deferred_character".into()))).map_err(|error| lalrpop_util::ParseError::User { error }),
+    KW_CHARACTER LPAREN COLON COMMA KW_KIND EQ <kind:RhsExpr> RPAREN =>? crate::ast::character_kind(&kind).map(|_| crate::ast::character_length(Expr::Ident("@deferred_character".into()))).map_err(|error| lalrpop_util::ParseError::User { error }),
+    KW_CHARACTER LPAREN KW_LEN EQ STAR COMMA KW_KIND EQ <kind:RhsExpr> RPAREN =>? crate::ast::character_kind(&kind).map(|_| TypeSpec::CharacterAssumed).map_err(|error| lalrpop_util::ParseError::User { error }),
+    KW_CHARACTER LPAREN KW_KIND EQ <kind:RhsExpr> COMMA KW_LEN EQ STAR RPAREN =>? crate::ast::character_kind(&kind).map(|_| TypeSpec::CharacterAssumed).map_err(|error| lalrpop_util::ParseError::User { error }),
+    KW_CHARACTER LPAREN STAR COMMA KW_KIND EQ <kind:RhsExpr> RPAREN =>? crate::ast::character_kind(&kind).map(|_| TypeSpec::CharacterAssumed).map_err(|error| lalrpop_util::ParseError::User { error }),
+    KW_CHARACTER LPAREN KW_KIND EQ <kind:RhsExpr> RPAREN =>? crate::ast::character_kind(&kind).map(|_| TypeSpec::Character(None)).map_err(|error| lalrpop_util::ParseError::User { error }),
     KW_LOGICAL => TypeSpec::Logical,
 };
 

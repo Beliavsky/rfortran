@@ -335,11 +335,17 @@ pub fn generic_bindings(bindings: Vec<(String, String)>) -> Vec<(String, String)
             (format!("@defined_io_binding:{g}:{b}"),specific(b).unwrap_or_else(||b.clone()))))).collect()
 }
 
+/// The dummy argument named by a PASS(arg) binding attribute.
+pub fn pass_argument(attributes: &[String]) -> Option<String> {
+    attributes.iter().find_map(|a| a.strip_prefix("pass(")?.strip_suffix(')').map(str::to_string))
+}
+
 /// Check the attributes of a type-bound procedure binding.
 pub fn binding_attributes(attributes: &[String]) -> Result<(), &'static str> {
     for a in attributes {
         match a.to_ascii_lowercase().as_str() {
             "public" | "private" | "pass" | "non_overridable" => {}
+            a if a.starts_with("pass(") => {}
             "nopass" => return Err("NOPASS type-bound procedures are not yet supported"),
             "deferred" => return Err("DEFERRED bindings require an explicit procedure interface"),
             _ => return Err("unknown type-bound procedure attribute"),
@@ -752,6 +758,20 @@ pub fn procedure_declaration(encoded: &str) -> Vec<Stmt> {
 }
 
 // Preserve the already-resolved representation for ordinary literal lengths.
+/// Check the KIND of a CHARACTER type: only the ASCII (default) kind is
+/// supported. A named kind constant is not known here and is accepted.
+pub fn character_kind(kind: &Expr) -> Result<(), &'static str> {
+    let supported = match kind {
+        Expr::IntLit(n) => n == "1",
+        Expr::Call(name, args) if name.eq_ignore_ascii_case("selected_char_kind") => match args.as_slice() {
+            [Expr::Str(s)] => s.eq_ignore_ascii_case("ascii") || s.eq_ignore_ascii_case("default"),
+            _ => true,
+        },
+        _ => true,
+    };
+    if supported { Ok(()) } else { Err("CHARACTER kinds other than the default ASCII kind (such as UCS-4) are not yet supported") }
+}
+
 pub fn character_length(length: Expr) -> TypeSpec {
     if let Expr::IntLit(n) = &length {
         if let Ok(n) = n.parse::<usize>() { return TypeSpec::Character(Some(n)); }

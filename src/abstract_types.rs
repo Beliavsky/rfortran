@@ -22,6 +22,7 @@ pub(crate) fn deferred_bindings(
     for a in &attrs {
         match a.as_str() {
             "deferred" | "public" | "private" | "pass" => {}
+            a if a.starts_with("pass(") => {}
             "non_overridable" => return Err("DEFERRED and NON_OVERRIDABLE cannot be combined"),
             "nopass" => return Err("NOPASS deferred bindings are not yet supported"),
             _ => return Err("unsupported deferred binding attribute"),
@@ -745,6 +746,7 @@ pub(crate) fn finish(mut program: Program) -> Result<Program> {
                     !n.starts_with("@deferred:")
                         && !n.starts_with("@non_overridable:")
                         && !n.starts_with("@binding_location:")
+                        && !n.starts_with("@pass:")
                 });
             }
             for b in children(s) {

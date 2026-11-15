@@ -958,6 +958,91 @@ print *, x, y
 end program
 """, "uninitialized variable `x`")
 
+    def test_pass_argument_procedure_statements_and_character_selectors(self):
+        # PASS(arg) of the first dummy; PROCEDURE statements in a generic
+        # interface naming internal procedures; a component named DO;
+        # CHARACTER selectors combining a length and KIND=; ALLOCATE with
+        # CHARACTER(n) and CHARACTER(LEN=n, KIND=k).
+        self.check("""module m
+implicit none
+type :: counter
+   integer :: n = 0
+   integer :: do = 5
+contains
+   procedure, pass(self) :: bump
+   procedure, pass(self), public :: total
+end type
+contains
+subroutine bump(self, by)
+   class(counter), intent(inout) :: self
+   integer, intent(in) :: by
+   self%n = self%n + by
+end subroutine
+integer function total(self)
+   class(counter), intent(in) :: self
+   total = self%n + self%do
+end function
+end module
+program p
+use m
+implicit none
+interface show
+   procedure show_int
+   procedure :: show_text
+end interface
+type(counter) :: c
+character(len=:, kind=1), allocatable :: a
+character(:, kind=selected_char_kind('ascii')), allocatable :: b
+character(kind=1, len=:), allocatable :: d(:)
+call c%bump(3)
+c%do = c%do + 1
+call show(c%total())
+allocate(character(3) :: a)
+a = 'xyz'
+allocate(character(len=2, kind=1) :: d(2))
+d = ['ab', 'cd']
+b = a // d(2)
+call show(b)
+call show(len(b))
+contains
+subroutine show_int(i)
+   integer, intent(in) :: i
+   print '(i0)', i
+end subroutine
+subroutine show_text(s)
+   character(*, kind=1), intent(in) :: s
+   print '(a)', s
+end subroutine
+end program
+""", "9\nxyzcd\n5\n")
+
+    def test_unsupported_pass_argument_and_character_kind_are_rejected(self):
+        self.reject("""module m
+type :: t
+   integer :: n = 0
+contains
+   procedure, pass(y) :: f
+end type
+contains
+subroutine f(x, y)
+   integer, intent(in) :: x
+   class(t), intent(inout) :: y
+   y%n = x
+end subroutine
+end module
+program p
+use m
+type(t) :: a
+call a%f(1)
+end program
+""", "not the first dummy argument")
+        self.reject("""program p
+character(len=3, kind=4) :: s
+s = 'abc'
+print *, s
+end program
+""", "CHARACTER kinds other than the default")
+
 
 if __name__ == "__main__":
     unittest.main()

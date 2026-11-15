@@ -159,7 +159,6 @@ struct Resolver {
     intrinsic_fallback: std::cell::Cell<bool>,
     procedures: HashMap<String, Procedure>,
     duplicate_procedures: HashSet<String>,
-    module_procedures: HashSet<String>,
     components: HashMap<String, Vars>,
     enumeration_types: HashSet<String>,
     methods: HashMap<String, HashMap<String, String>>,
@@ -402,11 +401,6 @@ impl Resolver {
                 }
                 Stmt::Module { body, .. } => {
                     self.module_objects.extend(declarations(body, &Vars::new()).into_iter().filter(|(name, _)| name.starts_with("@module$")));
-                    for s in body {
-                        if let Stmt::Function { name, .. } | Stmt::Subroutine { name, .. } = s {
-                            self.module_procedures.insert(name.clone());
-                        }
-                    }
                     self.collect(body)?;
                 }
                 Stmt::Block { body } => self.collect(body)?,
@@ -428,9 +422,8 @@ impl Resolver {
                     bail!("END INTERFACE name does not match `{generic}`");
                 }
                 for name in procedures {
-                    if !self.module_procedures.contains(name) {
-                        bail!("generic `{generic}` requires a defined module procedure `{name}`");
-                    }
+                    // PROCEDURE statements may also name internal procedures
+                    // of the program; any specific needs a known interface.
                     if self.duplicate_procedures.contains(name) {
                         bail!("generic procedure `{name}` must have a unique name within this compilation");
                     }

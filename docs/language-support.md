@@ -299,8 +299,12 @@ A kind type parameter may be any constant INTEGER expression, such as
 `real(kind(0.0d0))`, `integer(kind=selected_int_kind(9))` or a named constant.
 `KIND(x)` of a declared variable, including a COMPLEX part `z%re`, is a
 constant, so `cmplx(x, y, kind=kind(z))` works. `SELECTED_CHAR_KIND('ASCII')`
-is 1, and `CHARACTER(LEN=n, KIND=k)` is accepted; CHARACTER data is always
-stored as ASCII, whatever the kind.
+is 1. `CHARACTER(LEN=n, KIND=k)` and `CHARACTER(n, KIND=k)` are accepted, as
+are the deferred and assumed lengths `CHARACTER(LEN=:, KIND=k)`,
+`CHARACTER(:, KIND=k)` and `CHARACTER(*, KIND=k)`, with LEN= and KIND= in either
+order. CHARACTER data is always stored as ASCII: a literal kind other than 1, or
+`SELECTED_CHAR_KIND` of a set other than ASCII or DEFAULT (such as UCS-4), is
+rejected, but a named kind constant is not checked.
 
 Initialized INTEGER, REAL, DOUBLE PRECISION, LOGICAL and fixed-length CHARACTER
 scalar locals in functions
@@ -1022,7 +1026,8 @@ When assignment sources have a known maximum length, this subset can reserve
 that bounded storage. Otherwise main-program and BLOCK-local deferred-length
 scalars use owned heap storage with a runtime length, including
 `s = repeat('ab', n)`, repeated growth such as `s = s // 'x'`, and
-`allocate(character(len=n) :: s)`. Assignment can grow or shrink the allocation,
+`allocate(character(len=n) :: s)` (also written `character(n)`, or with
+`kind=`). Assignment can grow or shrink the allocation,
 including to length zero, and overlapping assignments capture the source before
 replacing the destination. DEALLOCATE releases heap storage. The former
 4096-character scalar limit no longer applies to these locals. The current
@@ -2510,6 +2515,8 @@ and gfortran comparisons.
 ### Type-bound procedures and generics
 
 Type-bound procedures may carry PUBLIC, PRIVATE, PASS and NON_OVERRIDABLE.
+`PASS(arg)` is accepted when `arg` is the first dummy argument; passing the
+object as another dummy argument is rejected. A binding may be named DO.
 `generic :: scale => scale_r, scale_i` selects a specific binding by the types of
 the actual arguments, as a generic interface does, and `generic :: operator(+) =>
 add` and `generic :: assignment(=) => assign` bind an operator or assignment to
@@ -2591,7 +2598,7 @@ Contract errors report the binding declaration's source line. Standard modes
 before `-std=f2003` reject ABSTRACT types and DEFERRED bindings.
 
 This builds on scalar type specialization, with the existing limits on actual
-arguments, storage and results. NOPASS, named PASS arguments, parameterized
+arguments, storage and results. NOPASS, PASS of a dummy other than the first, parameterized
 derived types remain unsupported. Scalar CLASS(*) dummies are described under
 SELECT TYPE. Local scalar polymorphic
 allocation is supported as described below.
@@ -3031,7 +3038,7 @@ POINTER/VALUE CLASS dummies, and generic interfaces containing
 specialized CLASS specifics remain unsupported. Specialized CLASS(t) array
 dummies support defined formatted I/O through concrete dynamic views. Elements of
 [polymorphic ALLOCATABLE arrays](#polymorphic-allocatable-arrays-and-class-allocatable-objects) call the binding of the array's dynamic
-type. NOPASS and named PASS arguments
+type. NOPASS and PASS of a dummy other than the first
 retain their existing limitations.
 Local scalar polymorphic pointer receivers can borrow the concrete targets
 described in [scalar polymorphic POINTER objects](#scalar-polymorphic-pointer-objects).
@@ -3758,6 +3765,10 @@ dispatch (including keywords and matching-rank precedence), allocatable output
 arguments and external integer input. Materialized multidimensional expressions
 retain their original rank and shape during argument association; tests cover
 reallocation, empty CHARACTER RESHAPE results, PAD/ORDER and ranks through 15.
+
+A generic interface lists its specifics with `MODULE PROCEDURE` or `PROCEDURE`
+statements, each with an optional `::`. A `PROCEDURE` specific may also be an
+internal procedure of the program.
 
 ### ELEMENTAL functions
 

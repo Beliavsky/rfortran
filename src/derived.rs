@@ -1588,7 +1588,40 @@ pub fn resolve(program: Program) -> Result<Program> {
     crate::simple::validate_calls(&program)?;
     crate::deferred_character_components::resolve(program)
 }
+/// The object of a type-bound call is passed as the first actual argument,
+/// so PASS(arg) must name the first dummy argument of the procedure.
+fn check_pass_arguments(program: &Program) -> Result<()> {
+    fn scan<'a>(body: &'a [Stmt], passes: &mut Vec<(&'a str, String, String)>, firsts: &mut HashMap<String, Vec<Option<String>>>) {
+        for s in body {
+            match s {
+                Stmt::DerivedType { name, bindings, .. } => {
+                    for (tag, argument) in bindings {
+                        let Some(binding) = tag.strip_prefix("@pass:") else { continue };
+                        if let Some((_, target)) = bindings.iter().find(|(n, _)| n == binding) {
+                            passes.push((name, target.to_ascii_lowercase(), argument.clone()));
+                        }
+                    }
+                }
+                Stmt::Function { name, params, body, .. } | Stmt::Subroutine { name, params, body, .. } => {
+                    firsts.entry(name.to_ascii_lowercase()).or_default().push(params.first().map(|p| p.to_ascii_lowercase()));
+                    scan(body, passes, firsts);
+                }
+                Stmt::Module { body, .. } => scan(body, passes, firsts),
+                _ => {}
+            }
+        }
+    }
+    let (mut passes, mut firsts) = (vec![], HashMap::new());
+    scan(&program.body, &mut passes, &mut firsts);
+    for (ty, target, argument) in passes {
+        if firsts.get(&target).is_some_and(|f| f.iter().all(|first| first.as_deref() != Some(argument.as_str()))) {
+            bail!("type `{ty}` passes its object to `{target}` as `{argument}`, which is not the first dummy argument; PASS of another dummy argument is not yet supported");
+        }
+    }
+    Ok(())
+}
 fn resolve_types(mut program: Program) -> Result<Program> {
+    check_pass_arguments(&program)?;
     program=crate::input::prepare_formatted(program);
     crate::source_diagnostics::validate_function_results(&program)?;
     crate::enumerations::validate_definitions(&program)?;
