@@ -2182,9 +2182,11 @@ whole records, which copy the pointer associations. A derived component of such
 an element type may have a default value, as `type(a) :: acomp = a(5)`, with
 nested constructors and keyword arguments; it overrides the defaults of the
 component's own type. A type without components
-may also be the type of an array, as the base of an extension often is. Pointer
-assignment of components in FORALL, and constructors giving values for POINTER
-components of arrays of records, are not yet supported.
+may also be the type of an array, as the base of an extension often is. A
+FORALL of one pointer assignment, as `forall (i = 2:n) q(i)%p => r(i-1)%p`,
+determines all its targets before assigning any, taking them from a copy of a
+fixed-size array of records that it also assigns. Constructors giving values
+for POINTER components of arrays of records are not yet supported.
 POINTER components of derived type and ALLOCATABLE scalar components
 (including deferred-length CHARACTER) remain unsupported, and an ALLOCATABLE
 component, like any ALLOCATABLE array, must be allocated (by ALLOCATE or by

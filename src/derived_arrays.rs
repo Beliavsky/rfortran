@@ -232,6 +232,54 @@ fn storage(object: &str, field: &str) -> String {
         format!("@record${object}${field}")
     }
 }
+/// A FORALL whose one statement is a pointer assignment, as
+/// `forall (i = 2:n) q(i)%p => r(i-1)%p`, as DO loops: the iterations give
+/// the FORALL's result when the pointers assigned are not also its targets.
+/// When they are, as in `q(i)%p => q(n-i)%p`, the targets are taken from a
+/// copy of the fixed-size array of records made before the loops.
+fn forall_pointer_assignment(s: &mut Stmt, objects: &Objects, serial: usize) {
+    let Stmt::Block { body } = s else { return };
+    let [Stmt::CallSub { name: control, args: controls }, Stmt::CallSub { name: associate, args }] = body.as_slice() else { return };
+    if control != "@forall" || associate != "@pointer_associate" || controls.is_empty() || controls.len() % 4 != 0 || args.len() < 2 { return; }
+    if controls.chunks(4).any(|c| !matches!(&c[0], Expr::Ident(_)) || crate::parameters::integer_constant(&c[3]).ok() != Some(1)) { return; }
+    fn root(e: &Expr) -> Option<String> {
+        match e {
+            Expr::Ident(n) | Expr::Section { name: n, .. } => Some(n.clone()),
+            Expr::Call(n, a) | Expr::Index(n, a) => if n.starts_with("@record_component:") { a.first().and_then(root) } else { Some(n.clone()) },
+            _ => None,
+        }
+    }
+    fn mentions(e: &Expr, name: &str) -> bool {
+        let mut found = false;
+        crate::procedure_arguments::visit_expr(&mut e.clone(), &mut |x| match x {
+            Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) | Expr::Section { name: n, .. } if n == name => found = true,
+            _ => {}
+        });
+        found
+    }
+    let Some(target) = root(&args[0]) else { return };
+    let mut statement = body[1].clone();
+    let mut snapshot = vec![];
+    if args[1..].iter().any(|e| mentions(e, &target)) {
+        let Some(object) = objects.get(&target) else { return };
+        if object.dims.is_empty() || object.dims.iter().any(|d| crate::parameters::integer_constant(d).is_err() && !matches!(d, Expr::Call(n, _) if n == "@declared_bounds")) { return; }
+        let copy = format!("@forall_targets_{serial}");
+        snapshot.push(Stmt::DerivedDecl { type_name: object.ty.clone(), names: vec![copy.clone()], attributes: vec![], polymorphic: false, dims: object.dims.clone() });
+        snapshot.push(Stmt::Assign { name: copy.clone(), value: Expr::Ident(target.clone()) });
+        let Stmt::CallSub { args, .. } = &mut statement else { unreachable!() };
+        for e in &mut args[1..] {
+            crate::procedure_arguments::visit_expr(e, &mut |x| match x {
+                Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) | Expr::Section { name: n, .. } if *n == target => *n = copy.clone(),
+                _ => {}
+            });
+        }
+    }
+    for c in controls.chunks(4).rev() {
+        let Expr::Ident(var) = &c[0] else { return };
+        statement = Stmt::Do { var: var.clone(), start: c[1].clone(), end: c[2].clone(), body: vec![statement] };
+    }
+    *s = if snapshot.is_empty() { statement } else { snapshot.push(statement); Stmt::Block { body: snapshot } };
+}
 fn deferred(rank: usize) -> Vec<Expr> {
     vec![Expr::Ident("@deferred_extent".into()); rank]
 }
@@ -1982,6 +2030,8 @@ impl Lower {
             }
             let mut prefix = vec![];
             let mut suffix = vec![];
+            self.serial += 1;
+            forall_pointer_assignment(&mut s, &objects, self.serial);
             self.pointer_component_views(&mut s, &mut objects, &mut prefix, &mut suffix)
                 .map_err(|e| crate::source_diagnostics::at(e, offset))?;
             if self.pointer_statement(&s, &mut objects, &mut prefix)

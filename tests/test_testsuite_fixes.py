@@ -835,6 +835,38 @@ end program p
 40 5 5
 """)
 
+    def test_forall_pointer_assignment_of_components(self):
+        # FORALL pointer assignment of POINTER components of arrays of records,
+        # including targets taken from the array being assigned. All targets
+        # are determined before any pointer is assigned (Fortran 2008
+        # 7.2.4.2.4), so r(5) gets the original r(1); gfortran assigns in
+        # order and gives 21 22 instead of 1 2.
+        self.check("""program p
+implicit none
+type element
+   integer, pointer :: p(:)
+end type
+type(element) :: q(5), r(5)
+integer, target :: t(25)
+integer :: i, n
+n = 5
+do i = 1, 25
+   t(i) = i
+end do
+do i = 1, 5
+   r(i)%p => t((i-1)*n + 1:i*n)
+end do
+forall (i = 2:5)
+   q(i)%p => r(i-1)%p
+end forall
+print '(*(i0,:,1x))', q(2)%p, q(5)%p
+forall (i = 1:5) r(i)%p => r(6 - i)%p
+print '(*(i0,:,1x))', r(1)%p, r(5)%p(1:2)
+end program p
+""", """1 2 3 4 5 16 17 18 19 20
+21 22 23 24 25 1 2
+""", reference=False)
+
 
 if __name__ == "__main__":
     unittest.main()
