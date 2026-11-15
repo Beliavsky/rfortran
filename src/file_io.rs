@@ -167,7 +167,16 @@ fn lower_open(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpe
         let mode=match (status.as_str(),action.as_str()) {("old","read")=>0,("replace","write")=>1,("replace","readwrite")=>2,("old","readwrite")=>3,("old","write")=>4,("unknown","readwrite")=>5,("unknown","write")=>6,("unknown","read")=>0,
             // NEW does not yet check that the file is absent.
             ("new","write")=>1,("new","readwrite")=>2,_=>bail!("unsupported OPEN STATUS/ACTION combination")};
-        let path=controls.remove("file").context("OPEN requires FILE")?;
+        // Without FILE, a unit is connected to the file fort.N, as when a
+        // data transfer uses an unconnected unit (and as in gfortran).
+        let default_name=crate::parameters::integer_constant(&destination).ok().filter(|_|newunit.is_none()).map(|n|Expr::Str(format!("fort.{n}")));
+        // A unit known only at run time is connected to fort.N by its first
+        // data transfer, which is what OPEN with default properties does.
+        if !controls.contains_key("file") && default_name.is_none() && newunit.is_none() && !checked && !append
+            && matches!(status.as_str(),"unknown"|"old") && matches!(action.as_str(),"readwrite"|"read") {
+            return Ok(Open{body:vec![],result:None,newunit:None});
+        }
+        let path=controls.remove("file").or(default_name).context("OPEN requires FILE")?;
         if !matches!(crate::array_calls::scalar_actual_kind(&path,symbols)?,TypeSpec::Character(_)) {bail!("FILE requires scalar CHARACTER");}
         let mut args=vec![destination.clone(),path,Expr::IntLit(mode.to_string()),Expr::IntLit(i64::from(newunit.is_some()).to_string()),Expr::IntLit(i64::from(append).to_string())];
         // With IOSTAT the raw result, a unit or a failure code, goes to a

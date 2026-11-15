@@ -4647,7 +4647,11 @@ STATUS='old' with ACTION='read', 'write' or 'readwrite'. The default
 STATUS='unknown', ACTION='readwrite' combination opens or creates a file;
 STATUS='unknown' also accepts ACTION='write' or 'read', and STATUS='new'
 accepts ACTION='write' or 'readwrite' (without checking that the file is
-absent). CLOSE accepts STATUS='keep' or 'delete'.
+absent). CLOSE accepts STATUS='keep' or 'delete'. Without FILE, OPEN connects
+a unit to the file `fort.N`, as gfortran does; a unit known only at run time
+with default properties is connected by its first data transfer, which uses
+the same name. `CALL GETARG(N, VALUE)`, a GNU extension, is
+GET_COMMAND_ARGUMENT for an N of any INTEGER kind.
 A READ from a unit opened with ACTION='write', or a WRITE to one opened with
 ACTION='read', stops the program with an error; with IOSTAT=, a READ instead
 sets a positive status. `-Waction-mismatch`, on by default, reports such a

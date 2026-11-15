@@ -97,7 +97,7 @@ fn call(n: &str, args: Vec<Expr>) -> Expr {
 const INTRINSIC_SUBROUTINES: &[&str] = &[
     "random_number", "random_seed", "cpu_time", "system_clock", "date_and_time", "get_environment_variable",
     "getcwd", "get_command_argument", "get_command", "execute_command_line", "move_alloc", "mvbits",
-    "tokenize", "split", "abort", "exit", "flush", "sleep",
+    "tokenize", "split", "abort", "exit", "flush", "sleep", "getarg",
 ];
 
 fn character(kind: &TypeSpec) -> bool {

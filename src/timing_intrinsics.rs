@@ -99,6 +99,14 @@ pub fn resolve(mut p: Program) -> Result<Program> {
             if let Stmt::SourceLocation(offset) = &s {
                 location = Some(*offset);
             }
+            // GETARG(N, VALUE), a GNU extension, is GET_COMMAND_ARGUMENT(N, VALUE).
+            if let Stmt::CallSub { name, args } = &mut s {
+                // Its number may have any INTEGER kind.
+                if name == "getarg" && args.len() == 2 && !procedures.contains(name) {
+                    *name = "get_command_argument".into();
+                    args[0] = Expr::Call("int".into(), vec![args[0].clone()]);
+                }
+            }
             let result = match &mut s {
                 Stmt::CallSub { name, args }
                     if matches!(name.as_str(), "split" | "cpu_time" | "system_clock" | "date_and_time" | "get_environment_variable" | "getcwd" | "get_command_argument" | "get_command" | "execute_command_line")

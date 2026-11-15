@@ -867,6 +867,50 @@ end program p
 21 22 23 24 25 1 2
 """, reference=False)
 
+    def test_open_without_file_and_conditional_reads(self):
+        # OPEN without FILE connects fort.N, for constant and variable units;
+        # a read of an undefined variable in a branch that never runs is not
+        # an error; GOTO-based control flow defines a function result; GETARG
+        # (a GNU extension, so not checked against gfortran -std=f2018).
+        self.check("""program p
+implicit none
+integer :: k, n, u, a(3), b(2), never
+character(len=20) :: line
+logical, external :: zero
+open(10)
+write(10, '(a)') 'hello unit ten'
+rewind(10)
+read(10, '(a)') line
+close(10, status='delete')
+print '(a)', trim(line)
+u = 11
+open(u)
+write(u, *) 42
+rewind(u)
+read(u, *) n
+close(u, status='delete')
+print '(i0)', n
+b = [1, 2]
+do k = 1, 3
+   if (k > 5) then
+      a(k) = never   ! never runs, so never is not read
+   else
+      a(k) = k
+   end if
+end do
+print '(*(i0,:,1x))', a
+print '(l1)', zero()
+call getarg(0, line)
+print '(l1)', len_trim(line) > 0
+end program p
+logical function zero() result(r)
+   goto 2
+1  return
+2  r = .false.
+   if (.not. r) goto 1
+end function zero
+""", "hello unit ten" + chr(10) + "42" + chr(10) + "1 2 3" + chr(10) + "F" + chr(10) + "T" + chr(10), reference=False)
+
 
 if __name__ == "__main__":
     unittest.main()
