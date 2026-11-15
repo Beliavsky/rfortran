@@ -552,8 +552,10 @@ impl Lower {
                                 }
                             }
                             // A scalar derived component contributes its fields.
+                            // `save` marks a component with a default value, which
+                            // the Assign after it gives.
                             Stmt::DerivedDecl { type_name, names, attributes, dims, .. }
-                                if dims.is_empty() && attributes.is_empty()
+                                if dims.is_empty() && (attributes.is_empty() || attributes.len() == 1 && attributes[0] == "save")
                                     && self.types.get(type_name).is_some_and(|f| !f.is_empty()) =>
                             {
                                 for n in names {
@@ -600,6 +602,12 @@ impl Lower {
                                         layout.push((name.clone(), None));
                                     }
                                 }
+                            }
+                            // The default value of a derived component.
+                            Stmt::Assign { name: component, value }
+                                if layout.iter().any(|(n, t)| n == component && t.is_some()) => {
+                                let ty = layout.iter().find(|(n, _)| n == component).and_then(|(_, t)| t.clone()).unwrap();
+                                if !self.component_defaults(component, &ty, value, &mut fields) { fields.clear(); unsupported = true; break; }
                             }
                             Stmt::SourceLocation(_) => {}
                             Stmt::DummyIntent { name, .. } if name == crate::extensions::EXTENDS => {}
@@ -1656,6 +1664,32 @@ impl Lower {
             _ => {}
         }
         Ok(())
+    }
+    /// Give the fields `prefix%...` of a derived component of type `ty` the
+    /// values of its default, a structure constructor; false for a default
+    /// that is not one, or whose components are not known.
+    fn component_defaults(&self, prefix: &str, ty: &str, value: &Expr, fields: &mut [Field]) -> bool {
+        let Expr::Call(name, args) = value else { return false };
+        if !name.eq_ignore_ascii_case(ty.rsplit('$').next().unwrap_or(ty)) && name != ty { return false; }
+        let Some(layout) = self.layouts.get(ty) else { return false };
+        let mut keywords = false;
+        for (position, arg) in args.iter().enumerate() {
+            let (component, value) = match arg {
+                Expr::Call(tag, v) if tag.starts_with("@keyword:") && v.len() == 1 => { keywords = true; (tag["@keyword:".len()..].to_string(), &v[0]) }
+                _ if keywords => return false,
+                _ => match layout.get(position) { Some((n, _)) => (n.clone(), arg), None => return false },
+            };
+            let Some((_, inner)) = layout.iter().find(|(n, _)| n.eq_ignore_ascii_case(&component)) else { return false };
+            let path = format!("{prefix}%{component}");
+            match inner {
+                Some(inner) => if !self.component_defaults(&path, inner, value, fields) { return false },
+                None => match fields.iter_mut().find(|f| f.name.eq_ignore_ascii_case(&path) && f.dims.is_empty() && f.heap.is_none()) {
+                    Some(f) => f.default = Some(value.clone()),
+                    None => return false,
+                },
+            }
+        }
+        true
     }
     /// With a FORMAT, the items go through a formatted output session.
     fn looped_output(&mut self, items: &[Expr], objects: &mut Objects, format: Option<Expr>) -> Result<Option<Stmt>> {

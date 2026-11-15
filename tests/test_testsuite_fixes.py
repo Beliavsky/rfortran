@@ -794,6 +794,47 @@ print '(*(i0,:,1x))', r(2)%p, q(3)%p
 end
 """, "6 7 8 9 10 6 7 8 9 10" + chr(10))
 
+    def test_derived_component_defaults_in_record_arrays(self):
+        # Default values of derived components, nested and with keyword
+        # constructor arguments, in fixed-size and ALLOCATABLE arrays of records.
+        self.check("""module m
+implicit none
+type a
+   integer :: i = 1
+   real :: x = 0.5
+end type a
+type b
+   type(a) :: acomp = a(5, 2.5)
+   type(a) :: plain
+   integer :: n = 3
+end type b
+type c
+   type(b) :: inner = b(a(x=7.5, i=8), a(), 9)
+   logical :: f = .true.
+end type c
+end module m
+program p
+use m
+implicit none
+type(b) :: fixed(2), one
+type(b), allocatable :: grown(:)
+type(c) :: deep(2)
+allocate(grown(3))
+print '(i0,1x,f0.1,1x,i0,1x,f0.1,1x,i0)', fixed(2)%acomp%i, fixed(2)%acomp%x, fixed(1)%plain%i, fixed(1)%plain%x, fixed(1)%n
+print '(i0,1x,f0.1,1x,i0)', grown(3)%acomp%i, grown(3)%acomp%x, grown(2)%n
+print '(i0,1x,f0.1,1x,i0,1x,f0.1,1x,i0,1x,l1)', deep(1)%inner%acomp%i, deep(1)%inner%acomp%x, deep(2)%inner%plain%i, &
+   deep(2)%inner%plain%x, deep(2)%inner%n, deep(1)%f
+print '(i0,1x,f0.1)', one%acomp%i, one%acomp%x
+grown(1)%acomp%i = 40
+print '(*(i0,:,1x))', grown%acomp%i
+end program p
+""", """5 2.5 1 .5 3
+5 2.5 3
+8 7.5 1 .5 9 T
+5 2.5
+40 5 5
+""")
+
 
 if __name__ == "__main__":
     unittest.main()

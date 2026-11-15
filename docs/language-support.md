@@ -2178,7 +2178,10 @@ Arrays of records may have scalar or array POINTER components of numeric or
 LOGICAL type, disassociated by default: `v(i)%p => t(2:4)`, `allocate(v(i)%p(n))`,
 `v(i)%p(j) = x`, sections such as `v(j)%p => v(i)%p(2:3)`, `nullify`,
 `associated`, `size`, output (including inside implied-DOs) and copies of
-whole records, which copy the pointer associations. A type without components
+whole records, which copy the pointer associations. A derived component of such
+an element type may have a default value, as `type(a) :: acomp = a(5)`, with
+nested constructors and keyword arguments; it overrides the defaults of the
+component's own type. A type without components
 may also be the type of an array, as the base of an extension often is. Pointer
 assignment of components in FORALL, and constructors giving values for POINTER
 components of arrays of records, are not yet supported.
