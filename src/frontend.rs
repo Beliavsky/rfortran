@@ -69,6 +69,7 @@ pub(crate) fn lower_program_body(
 ) -> Result<ast::Program> {
     (|| {
         do_variables::check(&program, src)?;
+        let program = crate::chains::resolve(program)?;
         let program = internal_procedures::disambiguate(program);
         let program = host_storage::resolve(program)?;
         let program = protected::resolve(program)?;

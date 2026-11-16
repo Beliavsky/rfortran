@@ -1276,5 +1276,56 @@ end subroutine
 end program
 """, "   -1.00000000    \n   42.0000000    \n")
 
+    def test_designators_with_several_subscripted_parts(self):
+        # y(1)%at(j)%i(k): components of elements of array components of
+        # elements (gfortran.dg/alloc_comp_assign_3.f90, derived_init_1.f90).
+        self.check("""program p
+  implicit none
+  type a
+    integer :: i(4)
+    character(len=3) :: s = 'abc'
+  end type
+  type b
+    type(a) :: at(2)
+    real :: w = 1.5
+  end type
+  type c
+    type(b) :: bs(3)
+  end type
+  type(b) :: y(2)
+  type(c) :: z(2)
+  integer :: j, k
+  do j = 1, 2
+    do k = 1, 4
+      y(1)%at(j)%i(k) = 10*j + k
+    end do
+  end do
+  y(2) = y(1)
+  y(2)%at(2)%i(3) = 99
+  y(2)%at(1)%s = 'xyz'
+  print '(2i4,1x,a,1x,a)', y(2)%at(2)%i(3), y(2)%at(1)%i(2), y(2)%at(1)%s, y(1)%at(1)%s
+  print '(4i4)', y(2)%at(2)%i
+  print '(3i4)', sum(y(2)%at(2)%i), y(1)%at(2)%i(2:3)
+  y(1)%at(2)%i = 7
+  y(1)%at(1)%i(2:3) = [5, 6]
+  print '(4i4)', y(1)%at(1)%i, y(1)%at(2)%i
+  z(2)%bs(3)%at(2)%i(4) = 5
+  z(2)%bs(3)%at(1)%i = [1, 2, 3, 4]
+  print '(5i4,f5.1)', z(2)%bs(3)%at(2)%i(4), z(2)%bs(3)%at(1)%i, z(2)%bs(2)%w
+  print '(2i4)', y(2)%at(:)%i(4)
+  if (any(y(2)%at(:)%i(1) /= [11, 21])) stop 1
+end program
+""", '  99  12 xyz abc\n  21  22  99  24\n 166  22  23\n  11   5   6  14\n   7   7   7   7\n   5   1   2   3   4  1.5\n  14  24\n')
+
+    def test_data_type_parameter_inquiry_and_implicit_objects(self):
+        # gfortran.dg/pr87994_1.f90, pr87994_2.f90
+        self.check("""program p
+  real, parameter :: a = 1.0
+  integer :: n
+  data b /a%kind/, n /a%kind/
+  print '(f4.1,i3)', b, n
+end
+""", ' 4.0  4\n')
+
 if __name__ == "__main__":
     unittest.main()

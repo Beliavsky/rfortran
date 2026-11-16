@@ -528,6 +528,16 @@ fn unit(body: &mut Vec<Stmt>, dummies: Option<&[String]>) -> Result<(), String> 
         let mut values = values.clone();
         let mut list = vec![];
         for object in objects {
+            // An undeclared scalar has its implicit type.
+            if let Expr::Ident(name) = object {
+                if !name.contains('%') && declared(body, name).is_none() && !body.iter().any(|s| matches!(s, Stmt::DerivedDecl { names, .. } if names.contains(name))) {
+                    let implicit: Vec<Stmt> = body.iter().filter(|s| matches!(s, Stmt::Implicit(_))).cloned().collect();
+                    if let Some(kind) = crate::parameters::implicit_type(&implicit, name) {
+                        let at = body.iter().rposition(|s| matches!(s, Stmt::Implicit(_) | Stmt::Use { .. })).map_or(0, |p| p + 1);
+                        body.insert(at, Stmt::VarDecl { kind, names: vec![name.clone()] });
+                    }
+                }
+            }
             targets(body, object, &HashMap::new(), &mut list)?;
         }
         let count = list.len();

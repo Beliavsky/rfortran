@@ -515,6 +515,44 @@ impl Expr {
 }
 
 // Preserve the existing rank-one section representation.
+/// A designator with subscripts on two or more parts, as `y(1)%at(j)%i(k)`:
+/// the array `base(args)` of records, then component paths each with its
+/// subscripts. Array components of derived type are stored with the axes of
+/// their own components first, so the chain is the component `at%i` of
+/// `y(1)` with the combined subscripts `(k, j)`: those of the last part first.
+#[derive(Debug, Clone)]
+pub struct Chain {
+    pub base: String,
+    pub args: Vec<Expr>,
+    pub parts: Vec<(String, Option<Vec<Expr>>)>,
+}
+/// Stands for every axis of the last part of a chain that has no subscripts.
+pub const WHOLE_AXES: &str = "@whole_component_axes";
+impl Chain {
+    fn path(&self) -> String {
+        self.parts.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>().join("%")
+    }
+    fn subscripts(&self, last: Option<Vec<Expr>>) -> Expr {
+        let mut all = match last {
+            Some(s) => s,
+            None => vec![Expr::Call(WHOLE_AXES.into(), vec![Expr::Str(self.path())])],
+        };
+        for (_, s) in self.parts.iter().rev() {
+            all.extend(s.iter().flatten().cloned());
+        }
+        Expr::Call("@component_subscripts".into(), all)
+    }
+    pub fn expr(self, last: Option<Vec<Expr>>) -> Expr {
+        let component = self.subscripts(last);
+        Expr::Call(format!("@record_component:{}", self.path()), vec![section_or_call(self.base, self.args), component])
+    }
+    pub fn assign(self, last: Option<Vec<Expr>>, value: Expr) -> Stmt {
+        let component = self.subscripts(last);
+        let mut indices = self.args.clone();
+        indices.push(component);
+        Stmt::AssignIndex { name: format!("{}%{}", self.base, self.path()), indices, value }
+    }
+}
 pub fn section_or_call(name: String, mut args: Vec<Expr>) -> Expr {
     let single_section = args.len() == 1 && matches!(&args[0], Expr::Section { name, .. } if name.is_empty());
     for arg in &mut args {

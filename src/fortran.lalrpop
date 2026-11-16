@@ -372,6 +372,17 @@ Designator: String = {
     <n:Ident> => n,
     <n:Designator> PERCENT <c:ComponentName> => format!("{n}%{c}"),
 };
+// A designator with two or more subscripted parts, as `y(1)%at(j)%i` (see
+// crate::ast::Chain). Its last part may take subscripts after it.
+DeepChain: crate::ast::Chain = {
+    <id:Designator> LPAREN <args:SubscriptList> RPAREN PERCENT <p:ComponentPath> LPAREN <s:SubscriptList> RPAREN PERCENT <q:ComponentPath> =>
+        crate::ast::Chain { base: id, args, parts: vec![(p, Some(s)), (q, None)] },
+    <mut c:DeepChain> LPAREN <s:SubscriptList> RPAREN PERCENT <q:ComponentPath> => {
+        c.parts.last_mut().unwrap().1 = Some(s);
+        c.parts.push((q, None));
+        c
+    },
+};
 Bindings: Vec<(String,String)> = {
     => vec![],
     <mut bindings:Bindings> <g:Ident> <attrs:(COMMA <BindingAttributes>)?> DCOLON <direction:Ident> LPAREN <form:Ident> RPAREN ARROW <specifics:IdentList> =>? {
@@ -760,6 +771,9 @@ Stmt: Stmt = {
         Stmt::AssignIndex{name:format!("{id}%{field}"),indices:args,value:rhs}
     },
     <name:Designator> ARROW <target:RhsExpr> => Stmt::CallSub {name:"@pointer_associate".into(),args:vec![Expr::Ident(name),target]},
+    <c:DeepChain> EQ <rhs:RhsExpr> => c.assign(None, rhs),
+    <c:DeepChain> LPAREN <s:SubscriptList> RPAREN EQ <rhs:RhsExpr> => c.assign(Some(s), rhs),
+    <c:DeepChain> ARROW <target:RhsExpr> => Stmt::CallSub {name:"@pointer_associate".into(),args:vec![c.expr(None),target]},
     // Bounds remapping, `p(lower:) => t` or `p(lower:upper, ...) => t`.
     <name:Designator> LPAREN <bounds:SubscriptList> RPAREN ARROW <target:RhsExpr> =>
         Stmt::CallSub {name:"@pointer_associate".into(),args:vec![Expr::Ident(name),target,Expr::Call("@pointer_remap".into(),bounds)]},
@@ -1020,6 +1034,8 @@ Primary: Expr = {
     <id: Designator> LPAREN <args: SubscriptList> RPAREN => crate::ast::section_or_call(id, args),
     <id: Designator> LPAREN <args: SubscriptList> RPAREN PERCENT <field:ComponentPath> =>
         Expr::Call(format!("@record_component:{field}"),vec![crate::ast::section_or_call(id,args)]),
+    <c:DeepChain> => c.expr(None),
+    <c:DeepChain> LPAREN <s:SubscriptList> RPAREN => c.expr(Some(s)),
     <id: Designator> LPAREN <args: SubscriptList> RPAREN PERCENT <field:ComponentPath> LPAREN <sub: SubscriptList> RPAREN =>
         Expr::Call(format!("@record_component:{field}"),vec![crate::ast::section_or_call(id,args),Expr::Call("@component_subscripts".into(),sub)]),
     <id: Designator> LPAREN <args: SubscriptList> RPAREN LPAREN <range: Subscript> RPAREN =>
@@ -1164,6 +1180,8 @@ DataConstant: Expr = {
     PLUS <n:INT> => Expr::IntLit(n),
     PLUS <f:FLOAT> => Expr::RealLit(f),
     <n:Ident> => Expr::Ident(n),
+    // A type parameter inquiry, `a%kind`, is a constant.
+    <n:Ident> PERCENT <c:ComponentName> => Expr::Ident(format!("{n}%{c}")),
     COMPLEX_OPEN <re:RhsExpr> COMMA <im:RhsExpr> RPAREN => Expr::Call("@complex_literal".into(),vec![re,im]),
 };
 // Index controls of DO CONCURRENT, then an optional mask. The items share

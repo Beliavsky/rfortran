@@ -166,7 +166,8 @@ impl Lower {
         *e = if indices.is_empty() {
             Expr::Ident(format!("{temp}%{field}"))
         } else {
-            Expr::Call(format!("{temp}%{field}"), indices)
+            // Bind sections, as `(2:3, 2)` of `y(1)%at(2)%i(2:3)`, to the storage.
+            crate::ast::section_or_call(format!("{temp}%{field}"), indices)
         };
         Ok(true)
     }
@@ -228,11 +229,14 @@ impl Lower {
                 value: value.clone(),
             }
         } else {
-            Stmt::AssignIndex {
-                name: format!("{temp}%{field}"),
-                indices: component,
-                value: value.clone(),
-            }
+            // Bind sections to the storage, as an assignment statement does.
+            let name = format!("{temp}%{field}");
+            let indices = match crate::ast::section_or_call(name.clone(), component) {
+                section @ Expr::Section { .. } => vec![section],
+                Expr::Call(_, args) => args,
+                _ => unreachable!(),
+            };
+            Stmt::AssignIndex { name, indices, value: value.clone() }
         };
         Ok(())
     }

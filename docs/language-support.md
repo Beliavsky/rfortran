@@ -347,8 +347,9 @@ checks with gfortran comparisons.
   end with a bare `END`.
 - `DATA a / 1 /, b, c / 2*0.5, 3.0 /` gives whole variables initial values,
   with `r*c` repeat counts (`r` may be a named constant), signed and BOZ
-  constants. The variables must be declared before the DATA statement; an
-  array must be the last variable of its value list. Array elements with
+  constants, and type parameter inquiries such as `a%kind`. Scalar variables
+  may be implicitly typed; others must be declared before the DATA statement.
+  An array must be the last variable of its value list. Array elements with
   constant subscripts and implied-DO lists, as in
   `data ((mm(i,j), j = 1, 4), i = 1, 2) / ... /`, may give an array its
   values element by element, if every element gets one; bounds may be named
@@ -2361,6 +2362,13 @@ and fixed array component layouts. Sibling components and their initialization
 state are preserved, and INTENT(IN) components remain read-only. The view does
 not own the parent's allocations. See `tests/test_derived_component_views.py`
 and `tests/test_component_array_assignment.py`.
+
+Designators may subscript several parts, as in `y(1)%at(j)%i(k)`,
+`z(2)%bs(3)%at(1)%i = [1, 2, 3, 4]` or `y(2)%at(:)%i(4)`, for array
+components of derived type with fixed bounds. A designator with two parts of
+nonzero rank, such as `y(1)%at%i`, which the standard forbids, is not yet
+rejected. Components that are ALLOCATABLE or
+POINTER arrays of derived type are not yet supported in these designators.
 
 Ordinary scalar derived-valued function results can be assigned to array
 elements, used as scalar broadcasts, or included in array constructors. Each

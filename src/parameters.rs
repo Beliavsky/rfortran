@@ -646,7 +646,7 @@ pub(crate) fn folded_integer_constant(expr: &Expr) -> Result<i64> {
 
 /// The type IMPLICIT statements, or the default rules (I to N INTEGER,
 /// otherwise REAL), give `name`; None under IMPLICIT NONE.
-fn implicit_type(implicit: &[Stmt], name: &str) -> Option<TypeSpec> {
+pub(crate) fn implicit_type(implicit: &[Stmt], name: &str) -> Option<TypeSpec> {
     use crate::ast::Implicit;
     let letter = name.chars().next()?.to_ascii_lowercase();
     let mut kind = if ('i'..='n').contains(&letter) { TypeSpec::Integer(None) } else { TypeSpec::Real };

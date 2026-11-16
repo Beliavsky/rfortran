@@ -42,6 +42,7 @@ mod integer_arithmetic;
 mod nocheck;
 mod input;
 mod namelists;
+mod chains;
 mod allocatable_scalars;
 mod allocatable_scalar_results;
 mod namelist_input;

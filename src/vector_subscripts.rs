@@ -67,7 +67,7 @@ fn section(e: &Expr, scope: &Scope) -> Result<(i64, i64, i64)> {
     let variable = scope
         .variables
         .get(name)
-        .context("undefined vector section source")?;
+        .with_context(|| format!("undefined vector section source `{name}`"))?;
     if variable.dims.len() != 1 {
         bail!("vector subscript sections must currently be rank one");
     }
@@ -222,7 +222,7 @@ fn info(e: &Expr, scope: &Scope) -> Result<Option<Info>> {
             kind: scope
                 .variables
                 .get(name)
-                .context("undefined vector section source")?
+                .with_context(|| format!("undefined vector section source `{name}`"))?
                 .kind
                 .clone(),
             shape: vec![section(e, scope)?.1],
