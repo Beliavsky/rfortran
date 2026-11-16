@@ -20,6 +20,9 @@ fn generic_declared(body: &[Stmt], name: &str) -> bool {
 }
 
 const DECLARATION:&str="@procedure_declaration";
+/// The origin of a name imported from two different entities, and the
+/// prefix of its marker in a scope's visible names.
+const AMBIGUOUS:&str="@ambiguous:";
 const REFERENCE:&str="@procedure_reference";
 pub(crate) fn declaration(name:String)->Stmt {Stmt::DummyIntent{name,intent:DECLARATION.into()}}
 /// A source-validated binding/generic may select a private implementation.
@@ -84,10 +87,12 @@ fn imported(body: &[Stmt], modules: &Modules) -> Result<Symbols> {
                 if aliases.is_empty() || only.as_ref().is_some_and(|names|names.iter().filter(|n|*n==remote).count()>aliases.len()) {aliases.push(remote);}
                 for name in aliases {
                 if let Some(previous) = selected.insert(name.clone(), origin.clone()) {
+                    // Different entities may share a local name while the
+                    // scope does not reference it; `name` rejects a reference.
                     if previous != *origin
                         && !(previous.starts_with("generic:") && origin.starts_with("generic:"))
                     {
-                        bail!("ambiguous imported name `{name}` from `{previous}` and `{origin}`");
+                        selected.insert(name.clone(), AMBIGUOUS.into());
                     }
                 }}
             }
@@ -103,6 +108,9 @@ struct Validator {
 impl Validator {
     fn name(&self, name: &str, visible: &HashSet<String>) -> Result<()> {
         let root = name.split('%').next().unwrap_or(name);
+        if visible.contains(&format!("{AMBIGUOUS}{root}")) {
+            bail!("ambiguous imported name `{root}`: USE makes two different entities with this name visible");
+        }
         if self.module_names.contains(root) && !visible.contains(root) {
             bail!("module entity `{root}` is not accessible in this scope; check USE ONLY and PUBLIC/PRIVATE");
         }
@@ -181,8 +189,18 @@ impl Validator {
             }
         }
         let mut visible = inherited.clone();
+        for n in &locals {
+            visible.remove(&format!("{AMBIGUOUS}{n}"));
+        }
         visible.extend(locals);
-        visible.extend(imports.into_keys());
+        for (n, origin) in imports {
+            if origin == AMBIGUOUS {
+                visible.insert(format!("{AMBIGUOUS}{n}"));
+            } else {
+                visible.remove(&format!("{AMBIGUOUS}{n}"));
+            }
+            visible.insert(n);
+        }
         visible.extend(body.iter().filter_map(|s|match s {
             Stmt::DummyIntent{name,intent} if intent==REFERENCE=>Some(name.clone()),_=>None,
         }));
@@ -191,11 +209,17 @@ impl Validator {
                 Stmt::Module { body, .. } => self.body(body, &HashSet::new())?,
                 Stmt::Function { params, body, .. } => {
                     let mut local = visible.clone();
+                    for p in params {
+                        local.remove(&format!("{AMBIGUOUS}{p}"));
+                    }
                     local.extend(params.iter().cloned());
                     self.body(body, &local)?;
                 }
                 Stmt::Subroutine { params, body, .. } => {
                     let mut local = visible.clone();
+                    for p in params {
+                        local.remove(&format!("{AMBIGUOUS}{p}"));
+                    }
                     local.extend(params.iter().cloned());
                     self.body(body, &local)?;
                 }

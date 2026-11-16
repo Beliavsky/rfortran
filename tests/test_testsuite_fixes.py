@@ -1043,6 +1043,89 @@ print *, s
 end program
 """, "CHARACTER kinds other than the default")
 
+    def test_nopass_bindings_and_unreferenced_ambiguous_imports(self):
+        self.check("""module shapes
+implicit none
+type :: shape
+   integer :: sides = 4
+contains
+   procedure, nopass :: describe
+   procedure, nopass :: twice_real
+   procedure :: twice_obj
+   generic :: twice => twice_real, twice_obj
+   procedure :: get
+end type
+contains
+subroutine describe(name, n)
+   character(len=*), intent(in) :: name
+   integer, intent(in) :: n
+   print '(a,1x,i0)', name, n
+end subroutine
+real function twice_real(x)
+   real, intent(in) :: x
+   twice_real = 2*x
+end function
+integer function twice_obj(self, i)
+   class(shape), intent(in) :: self
+   integer, intent(in) :: i
+   twice_obj = self%sides*i
+end function
+integer function get(self)
+   class(shape), intent(in) :: self
+   get = self%sides
+end function
+end module
+module first
+contains
+subroutine set(i)
+   integer, intent(out) :: i
+   i = 1
+end subroutine
+end module
+module second
+contains
+subroutine set(i)
+   integer, intent(out) :: i
+   i = 2
+end subroutine
+end module
+program p
+use shapes
+use first
+use second
+type(shape) :: s
+integer :: j
+call s%describe('square', s%get())
+print '(f0.1)', s%twice_real(5.0)
+print '(i0)', s%twice(7)
+print '(f0.1)', s%twice(1.5)
+j = 0
+print '(i0)', j
+end program
+""", "square 4\n10.0\n28\n3.0\n0\n")
+        self.reject("""module first
+contains
+subroutine set(i)
+   integer, intent(out) :: i
+   i = 1
+end subroutine
+end module
+module second
+contains
+subroutine set(i)
+   integer, intent(out) :: i
+   i = 2
+end subroutine
+end module
+program p
+use first
+use second
+integer :: j
+call set(j)
+print *, j
+end program
+""", "ambiguous imported name `set`")
+
 
 if __name__ == "__main__":
     unittest.main()

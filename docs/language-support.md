@@ -2522,8 +2522,11 @@ the actual arguments, as a generic interface does, and `generic :: operator(+) =
 add` and `generic :: assignment(=) => assign` bind an operator or assignment to
 the type. `interface assignment(=)` with two-argument subroutines defines
 assignment to a whole variable; assignment to an element or a component still
-uses intrinsic assignment. DEFERRED bindings are supported as described below;
-NOPASS remains unsupported.
+uses intrinsic assignment. DEFERRED bindings are supported as described below.
+A NOPASS binding is called without the object, so `call x%report(n)` calls
+`report(n)`; NOPASS specifics may be mixed with passed-object specifics in a
+GENERIC binding. NOPASS DEFERRED bindings, and calls through a CLASS object
+whose extensions override a NOPASS binding, remain unsupported.
 Run `python tests/test_derived_type_features.py`.
 
 ### Type extension
@@ -2598,8 +2601,8 @@ Contract errors report the binding declaration's source line. Standard modes
 before `-std=f2003` reject ABSTRACT types and DEFERRED bindings.
 
 This builds on scalar type specialization, with the existing limits on actual
-arguments, storage and results. NOPASS, PASS of a dummy other than the first, parameterized
-derived types remain unsupported. Scalar CLASS(*) dummies are described under
+arguments, storage and results. NOPASS DEFERRED bindings, PASS of a dummy other than the
+first, and parameterized derived types remain unsupported. Scalar CLASS(*) dummies are described under
 SELECT TYPE. Local scalar polymorphic
 allocation is supported as described below.
 Procedure-dummy interface comparison and nonconstant specification-expression
@@ -3038,7 +3041,7 @@ POINTER/VALUE CLASS dummies, and generic interfaces containing
 specialized CLASS specifics remain unsupported. Specialized CLASS(t) array
 dummies support defined formatted I/O through concrete dynamic views. Elements of
 [polymorphic ALLOCATABLE arrays](#polymorphic-allocatable-arrays-and-class-allocatable-objects) call the binding of the array's dynamic
-type. NOPASS and PASS of a dummy other than the first
+type. Overridden NOPASS bindings and PASS of a dummy other than the first
 retain their existing limitations.
 Local scalar polymorphic pointer receivers can borrow the concrete targets
 described in [scalar polymorphic POINTER objects](#scalar-polymorphic-pointer-objects).
@@ -4002,7 +4005,10 @@ Procedures can read module named constants and share mutable module variables.
 USE association supports variables, constants, procedures and derived types,
 including ONLY lists, renaming, reexports and generic interface extensions.
 PUBLIC/PRIVATE access and local shadowing are checked. Procedures with the same
-name in different modules retain distinct identities.
+name in different modules retain distinct identities. Two USE statements may
+import different entities with the same name as long as the scope does not
+reference that name; a reference is an "ambiguous imported name" error. A
+type-bound binding to such a procedure still calls its own module's procedure.
 
 Named generic procedures, defined operators and defined assignment can merge
 across USE-associated modules and local interface extensions. ONLY imports,

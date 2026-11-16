@@ -7,6 +7,11 @@ use crate::ast::{CaseItem, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
 type Names = HashMap<String, String>;
+/// The target of a name that two USE statements import from different entities.
+const AMBIGUOUS: &str = "@ambiguous$";
+thread_local! {
+    static AMBIGUITIES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 #[derive(Clone, Default)]
 struct Module {
     local: Names,
@@ -87,9 +92,13 @@ fn imports(body: &[Stmt], modules: &HashMap<String, Module>) -> Result<Names> {
                 }
                 for name in aliases {
                     let target = if definition.generics.contains(remote) { name } else { target };
+                    // Two different entities may share a name as long as the
+                    // scope never references it; `ambiguous_references` reports
+                    // any reference that remains after association.
                     if let Some(previous) = names.insert(name.clone(), target.clone()) {
                         if previous != *target {
-                            bail!("ambiguous imported name `{name}`");
+                            names.insert(name.clone(), format!("{AMBIGUOUS}{name}"));
+                            AMBIGUITIES.with(|a| a.set(true));
                         }
                     }
                 }
@@ -544,6 +553,7 @@ fn scope(
     Ok(())
 }
 pub(crate) fn associate(mut program: Program) -> Result<Program> {
+    AMBIGUITIES.with(|a| a.set(false));
     let mut modules = HashMap::new();
     let mut objects = HashSet::new();
     for statement in &program.body {
@@ -656,7 +666,20 @@ pub(crate) fn associate(mut program: Program) -> Result<Program> {
         &objects,
         None,
     )?;
+    ambiguous_references(&program)?;
     Ok(program)
+}
+/// Reject a reference to a name imported from two different entities.
+fn ambiguous_references(program: &Program) -> Result<()> {
+    if !AMBIGUITIES.with(|a| a.replace(false)) {
+        return Ok(());
+    }
+    let text = serde_json::to_string(program)?;
+    if let Some(start) = text.find(AMBIGUOUS) {
+        let name: String = text[start + AMBIGUOUS.len()..].chars().take_while(|c| *c != '"' && *c != '%').collect();
+        bail!("ambiguous imported name `{name}`");
+    }
+    Ok(())
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]

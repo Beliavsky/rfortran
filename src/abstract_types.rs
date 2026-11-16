@@ -278,6 +278,7 @@ struct Binding {
     target: String,
     deferred: bool,
     non_overridable: bool,
+    nopass: bool,
     position: Option<usize>,
 }
 #[derive(Clone)]
@@ -349,6 +350,9 @@ impl Contracts {
                                     let non_overridable = bindings
                                         .iter()
                                         .any(|(tag, _)| tag == &format!("@non_overridable:{n}"));
+                                    let nopass = bindings
+                                        .iter()
+                                        .any(|(tag, _)| tag == &format!("@nopass:{n}"));
                                     let position = bindings
                                         .iter()
                                         .find(|(tag, _)| tag == &format!("@binding_location:{n}"))
@@ -360,6 +364,7 @@ impl Contracts {
                                             target: target.clone(),
                                             deferred,
                                             non_overridable,
+                                            nopass,
                                             position,
                                         },
                                     )
@@ -570,7 +575,9 @@ impl Contracts {
                         binding.target
                     )
                 })?;
-                self.passed(sig, name, method)?;
+                if !binding.nopass {
+                    self.passed(sig, name, method)?;
+                }
                 if let Some(parent) = inherited.get(method) {
                     if parent.non_overridable {
                         bail!("cannot override NON_OVERRIDABLE binding `{method}`");

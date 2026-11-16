@@ -416,6 +416,7 @@ Bindings: Vec<(String,String)> = {
         }}
         for (name,target) in &items {if attrs.iter().any(|a|a=="non_overridable") {bindings.push((format!("@non_overridable:{name}"),target.clone()));}}
         for (name,_) in &items {bindings.extend(crate::ast::pass_argument(&attrs).map(|a|(format!("@pass:{name}"),a)));}
+        for (name,target) in &items {if attrs.iter().any(|a|a=="nopass") {bindings.push((format!("@nopass:{name}"),target.clone()));}}
         bindings.extend(items);
         Ok(bindings)
     },

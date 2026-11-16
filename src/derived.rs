@@ -56,6 +56,8 @@ fn when(cond: Expr, then_body: Vec<Stmt>, else_body: Option<Vec<Stmt>>) -> Stmt 
 struct Definition {
     components: Vec<Component>,
     bindings: HashMap<String, String>,
+    /// Bindings declared NOPASS, whose calls do not pass the object.
+    nopass: HashSet<String>,
 }
 #[derive(Clone)]
 struct Procedure {
@@ -326,6 +328,7 @@ impl Lowerer {
                         Definition {
                             components: fields,
                             bindings: methods,
+                            nopass: bindings.iter().filter_map(|(n, _)| n.strip_prefix("@nopass:").map(str::to_string)).collect(),
                         },
                     );
                 }
@@ -548,7 +551,8 @@ impl Lowerer {
             let procedure = self.procedures.get(target).with_context(|| {
                 format!("binding `{method}` refers to undefined procedure `{target}`")
             })?;
-            if !procedure.params.first().and_then(|(_, t)| t.as_deref()).is_some_and(|t| self.extends(ty, t)) {
+            let nopass = self.types[ty].nopass.contains(method);
+            if !nopass && !procedure.params.first().and_then(|(_, t)| t.as_deref()).is_some_and(|t| self.extends(ty, t)) {
                 bail!("binding `{method}` requires a first passed-object dummy of type `{ty}`");
             }
             // A CLASS object may have an extended dynamic type whose binding
@@ -560,7 +564,9 @@ impl Lowerer {
                     bail!("calling binding `{method}` of CLASS(`{ty}`) object `{object}` needs dynamic dispatch, because type `{other}` overrides it; this is not yet supported");
                 }
             }
-            args.insert(0, Expr::Ident(object.into()));
+            if !nopass {
+                args.insert(0, Expr::Ident(object.into()));
+            }
             *name = target.clone();
         }
         Ok(())

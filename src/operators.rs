@@ -295,9 +295,14 @@ impl Resolver {
                     self.methods
                         .insert(name.clone(), bindings.iter().filter(|(n, _)| !n.starts_with('@')).cloned().collect());
                     let mut generics = Bindings::new();
+                    // NOPASS specifics are called without the object, so they
+                    // are selected separately from the passed-object specifics.
+                    let nopass: HashSet<&String> = bindings.iter()
+                        .filter(|(n, _)| n.starts_with("@nopass:")).map(|(_, t)| t).collect();
                     for (n, target) in bindings {
                         if let Some(generic) = n.strip_prefix("@generic:") {
-                            generics.entry(format!("generic:{generic}")).or_default().push(target.clone());
+                            let key = if nopass.contains(target) { "nopass" } else { "generic" };
+                            generics.entry(format!("{key}:{generic}")).or_default().push(target.clone());
                         }
                     }
                     if !generics.is_empty() {
@@ -652,16 +657,37 @@ impl Resolver {
         let Some((object, generic)) = name.rsplit_once('%') else { return Ok(false) };
         let Ty::Derived(ty) = self.name_type(object, vars) else { return Ok(false) };
         let Some(bindings) = self.generic_methods.get(&ty) else { return Ok(false) };
-        if !bindings.contains_key(&format!("generic:{generic}")) {
+        let passed = bindings.contains_key(&format!("generic:{generic}"));
+        let nopass = bindings.get(&format!("nopass:{generic}"));
+        if !passed && nopass.is_none() {
             return Ok(false);
         }
         let mut actuals = vec![Expr::Ident(object.to_owned())];
-        actuals.extend(std::mem::take(args));
+        actuals.extend(args.iter().cloned());
         let mut actual_types = vec![Ty::Derived(ty.clone())];
-        actual_types.append(types);
+        actual_types.extend(types.iter().cloned());
         let generic = generic.to_owned();
-        let target = self.select_generic(&generic, &mut actuals, &actual_types, subroutine, bindings)?
-            .with_context(|| format!("no specific binding for `{generic}` of type `{ty}`"))?;
+        let selected = match passed {
+            true => self.select_generic(&generic, &mut actuals, &actual_types, subroutine, bindings),
+            false => Ok(None),
+        };
+        let selected = match (selected, nopass) {
+            (Ok(Some(target)), _) => Ok(Some(target)),
+            (selected, Some(nopass)) => {
+                let visible = Bindings::from([(format!("generic:{generic}"), nopass.clone())]);
+                let mut plain = args.clone();
+                match self.select_generic(&generic, &mut plain, types, subroutine, &visible) {
+                    Ok(Some(target)) => {
+                        actuals = plain;
+                        actual_types = types.clone();
+                        Ok(Some(target))
+                    }
+                    other => selected.and(other),
+                }
+            }
+            (selected, None) => selected,
+        };
+        let target = selected?.with_context(|| format!("no specific binding for `{generic}` of type `{ty}`"))?;
         *name = target;
         *args = actuals;
         *types = actual_types;
