@@ -1127,5 +1127,70 @@ end program
 """, "ambiguous imported name `set`")
 
 
+    def test_namelist_derived_members_module_groups_and_end(self):
+        self.check("""module config
+implicit none
+type :: inner
+   integer :: j = 0
+end type
+type :: tracer
+   character(len=4) :: sname = 'none'
+   logical :: lini = .false.
+end type
+type :: setup
+   type(inner) :: d(2)
+   real :: w(2) = 0.0
+   character(len=8) :: name = 'none'
+end type
+integer :: steps = 1
+type(setup) :: der
+namelist /run/ steps, der
+end module
+program p
+use config
+implicit none
+type :: rec
+   integer :: a = 0
+   real :: b(2) = 0.0
+   type(inner) :: k
+end type
+type(rec) :: x(3)
+type(tracer) :: tr(3)
+namelist /g/ x, tr
+open(10, status='scratch')
+write(10, '(a)') '&run steps = 4, der%d(2)%j = 9, der%w = 1.5, 2.5, der%name = "abc" /'
+write(10, '(a)') '&g x(2)%a = 5, x(3)%b = 1.5, 2.5, x(1)%k%j = 7, x%a = 1, 2,'
+write(10, '(a)') ' tr(2) = "bb", T, tr(3)%sname = "cc"'
+write(10, '(a)') '&end'
+rewind(10)
+read(10, nml=run)
+read(10, nml=g)
+close(10)
+print '(i0,1x,2(i0,1x),2(f0.1,1x),a)', steps, der%d%j, der%w, trim(der%name)
+print '(3(i0,1x),2(f0.1,1x),i0)', x%a, x(3)%b, x(1)%k%j
+print '(3(a,1x,l1,1x))', tr(1)%sname, tr(1)%lini, tr(2)%sname, tr(2)%lini, tr(3)%sname, tr(3)%lini
+open(11, status='scratch')
+write(11, nml=g)
+x(3)%b(2) = -1.0
+tr(2)%lini = .false.
+rewind(11)
+read(11, nml=g)
+close(11)
+print '(f0.1,1x,l1)', x(3)%b(2), tr(2)%lini
+end program
+""", "4 0 9 1.5 2.5 abc\n1 2 0 1.5 2.5 7\nnone F bb   T cc   F\n2.5 T\n")
+        self.reject("""program p
+type :: in
+   integer :: j
+end type
+type :: t
+   type(in) :: m(2)
+end type
+type(t) :: x(2)
+namelist /g/ x
+read(*, nml=g)
+end program
+""", "array of derived type within an array of derived type")
+
 if __name__ == "__main__":
     unittest.main()

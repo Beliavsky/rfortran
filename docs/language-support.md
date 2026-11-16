@@ -4217,7 +4217,21 @@ fixed-length CHARACTER scalars and fixed-size arrays. A visible group may also
 occupy the positional format slot, as in `write(unit,group)`. Use explicit
 `NML=group` when supplying status or message controls. Repeated NAMELIST
 statements extend a group. Groups declared in a host scope can be used by its
-internal procedures. `UNIT`, `NML`, `IOSTAT` and `IOMSG` keywords can be reordered.
+internal procedures, and groups and members declared in a module can be used
+through USE association, including ONLY lists and renames; as other compilers
+allow, a NAMELIST statement may extend a USE-associated group. `UNIT`, `NML`,
+`IOSTAT` and `IOMSG` keywords can be reordered.
+
+Members may also be derived-type scalars and arrays with literal bounds,
+including nested and inherited components and components that are arrays of
+derived type. Input may name a whole object (`x = 1, 2.5`, whose values define
+its components in order), a component (`x%c%w = 1.0`), an element of an array
+of derived type (`tr(2)%sname = 'bb'` or `tr(2) = 'bb', T`), or a component
+of every element (`tr%lini = T, F, T`). Output lists each intrinsic
+component, labeling the elements of an array of derived type as `tr(2)%w=`;
+gfortran reads this output and rfort reads gfortran's. An array of derived type within an
+element of another, and ALLOCATABLE or POINTER components, remain
+unsupported. Generated code does not grow with the number of array elements.
 
 ```fortran
 integer :: n, unit, status
@@ -4238,7 +4252,7 @@ strings with doubled quotes, multiline values, repetition counts and null
 values. Omitted members and null array entries retain their previous values
 and initialization state. Array values follow Fortran element order; input
 such as `values(2)=4.0` assigns the selected element. Element designators
-support ranks through 15, with rank and bounds checks. Ordinary CHARACTER
+support ranks through 15, with rank and bounds checks. `&END` also ends a group. Ordinary CHARACTER
 scalar variables can also serve as internal input files. Unknown names, bad
 conversions, invalid designators, array overruns and disconnected units report
 positive IOSTAT values; end of file reports a negative value. IOMSG is defined
@@ -4250,10 +4264,11 @@ REAL digits for round trips;
 its whitespace and record layout need not match another compiler's output.
 Tests read rfort output with gfortran and gfortran output with rfort.
 
-This is partial NAMELIST support. Members currently require explicit intrinsic
-declarations. Internal output, array sections/CHARACTER
-substrings in input designators, ALLOCATABLE/POINTER members, derived-type
-objects and USE association of group names remain unsupported. Controls other
+This is partial NAMELIST support. Members currently require explicit
+declarations. Internal output, array sections/CHARACTER substrings in input
+designators, ALLOCATABLE/POINTER members, and members of a renamed
+USE-associated group that are not themselves USE-associated remain
+unsupported. Controls other
 than UNIT/NML/IOSTAT/IOMSG (including DELIM, ERR and END) are rejected. The
 scanner currently accepts non-NUL ASCII input and limits each scalar token to
 4096 bytes, reporting an error rather than truncating it. CHARACTER output

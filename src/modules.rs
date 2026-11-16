@@ -38,7 +38,7 @@ fn declarations(body: &[Stmt]) -> HashSet<String> {
             Stmt::InitializedDecl { entities, .. } => {
                 names.extend(entities.iter().map(|(n, _)| n.clone()))
             }
-            _ => {}
+            s => names.extend(crate::imports::declared_name(s).cloned()),
         }
     }
     names

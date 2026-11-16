@@ -25,6 +25,8 @@ const DECLARATION:&str="@procedure_declaration";
 const AMBIGUOUS:&str="@ambiguous:";
 const REFERENCE:&str="@procedure_reference";
 pub(crate) fn declaration(name:String)->Stmt {Stmt::DummyIntent{name,intent:DECLARATION.into()}}
+/// The name a `declaration` marker declares.
+pub(crate) fn declared_name(s:&Stmt)->Option<&String> {match s {Stmt::DummyIntent{name,intent} if intent==DECLARATION=>Some(name),_=>None}}
 /// A source-validated binding/generic may select a private implementation.
 /// Grant that generated reference visibility without declaring a local entity.
 pub(crate) fn reference(name:String)->Stmt {Stmt::DummyIntent{name,intent:REFERENCE.into()}}

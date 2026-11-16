@@ -21,6 +21,15 @@ pub(crate) struct Session {
     new_assignment: bool,
     apply: bool,
     stride: i64,
+    /// Values per element when subscripts select a whole element of an array
+    /// of derived type, and the last value index of the selected element.
+    scale: i64,
+    element_end: i64,
+    /// Subscripts of the element of an array of derived type in a designator
+    /// such as `x(2)%a`, and the stride while linearizing them.
+    outer: [i64; 15],
+    outer_rank: usize,
+    outer_stride: i64,
 }
 impl Session {
     pub(crate) fn new(group: &[u8]) -> Self {
@@ -43,6 +52,11 @@ impl Session {
             new_assignment: false,
             apply: false,
             stride: 1,
+            scale: 1,
+            element_end: 0,
+            outer: [0; 15],
+            outer_rank: 0,
+            outer_stride: 1,
         };
         if group.len() <= 128 {
             for (a, b) in s.group.iter_mut().zip(group) {
@@ -193,6 +207,19 @@ impl Session {
                 self.finish_record(read)?;
                 return Ok(-2);
             }
+            // `&END` also ends a group, as in other compilers.
+            if c == b'&' {
+                let mut word = [0u8; 3];
+                for w in &mut word {
+                    *w = self.get(read)?.ok_or(-1)?.to_ascii_lowercase();
+                }
+                if &word != b"end" {
+                    return Err(3);
+                }
+                self.ended = true;
+                self.finish_record(read)?;
+                return Ok(-2);
+            }
             self.length = 0;
             self.null = false;
             if c == b',' {
@@ -230,7 +257,7 @@ impl Session {
                         || !self.token[0].is_ascii_alphabetic()
                         || self.token[..self.length]
                             .iter()
-                            .any(|c| !c.is_ascii_alphanumeric() && *c != b'_')
+                            .any(|c| !c.is_ascii_alphanumeric() && !matches!(*c, b'_' | b'%'))
                     {
                         return Err(3);
                     }
@@ -238,39 +265,79 @@ impl Session {
                     for j in 0..self.length {
                         self.field[j] = self.token[j].to_ascii_lowercase();
                     }
-                    self.rank = 0;
-                    if self.peek(read)? == Some(b'(') {
-                        self.get(read)?;
-                        loop {
-                            self.spaces(read)?;
-                            self.length = 0;
-                            if let Some(c @ (b'+' | b'-')) = self.peek(read)? {
-                                self.get(read)?;
-                                self.push(c)?;
-                            }
-                            while let Some(c) = self.peek(read)? {
-                                if !c.is_ascii_digit() {
-                                    break;
+                    // Subscripts followed by `%` select an element of an array
+                    // of derived type. They are kept as the outer subscripts
+                    // and the field becomes `x()%a`; only one array of derived
+                    // type may be subscripted. The final subscripts address
+                    // the object.
+                    self.outer_rank = 0;
+                    loop {
+                        self.rank = 0;
+                        if self.peek(read)? == Some(b'(') {
+                            self.get(read)?;
+                            loop {
+                                self.spaces(read)?;
+                                self.length = 0;
+                                if let Some(c @ (b'+' | b'-')) = self.peek(read)? {
+                                    self.get(read)?;
+                                    self.push(c)?;
                                 }
-                                self.get(read)?;
-                                self.push(c)?;
+                                while let Some(c) = self.peek(read)? {
+                                    if !c.is_ascii_digit() {
+                                        break;
+                                    }
+                                    self.get(read)?;
+                                    self.push(c)?;
+                                }
+                                if self.rank == 15 {
+                                    return Err(7);
+                                }
+                                self.subscripts[self.rank] =
+                                    core::str::from_utf8(&self.token[..self.length])
+                                        .map_err(|_| 7)?
+                                        .parse::<i64>()
+                                        .map_err(|_| 7)?;
+                                self.rank += 1;
+                                self.spaces(read)?;
+                                match self.get(read)? {
+                                    Some(b',') => continue,
+                                    Some(b')') => break,
+                                    _ => return Err(7),
+                                }
                             }
-                            if self.rank == 15 {
-                                return Err(7);
-                            }
-                            self.subscripts[self.rank] =
-                                core::str::from_utf8(&self.token[..self.length])
-                                    .map_err(|_| 7)?
-                                    .parse::<i64>()
-                                    .map_err(|_| 7)?;
-                            self.rank += 1;
                             self.spaces(read)?;
-                            match self.get(read)? {
-                                Some(b',') => continue,
-                                Some(b')') => break,
-                                _ => return Err(7),
-                            }
                         }
+                        if self.rank == 0 || self.peek(read)? != Some(b'%') {
+                            break;
+                        }
+                        self.get(read)?;
+                        if self.outer_rank != 0 {
+                            return Err(7);
+                        }
+                        self.outer[..self.rank].copy_from_slice(&self.subscripts[..self.rank]);
+                        self.outer_rank = self.rank;
+                        let mut text = [0u8; 128];
+                        let mut n = 0;
+                        for c in *b"()%" {
+                            text[n] = c;
+                            n += 1;
+                        }
+                        while let Some(c) = self.peek(read)? {
+                            if !c.is_ascii_alphanumeric() && !matches!(c, b'_' | b'%') {
+                                break;
+                            }
+                            self.get(read)?;
+                            if n == text.len() {
+                                return Err(3);
+                            }
+                            text[n] = c.to_ascii_lowercase();
+                            n += 1;
+                        }
+                        if self.field_len + n > self.field.len() {
+                            return Err(3);
+                        }
+                        self.field[self.field_len..self.field_len + n].copy_from_slice(&text[..n]);
+                        self.field_len += n;
                         self.spaces(read)?;
                     }
                     if self.get(read)? != Some(b'=') {
@@ -333,10 +400,37 @@ impl Session {
         if code != 0 && code != 2 {
             return code;
         }
+        // A negative axis linearizes the outer subscripts into `index`.
+        if axis < 0 {
+            let k = (-axis - 1) as usize;
+            if self.outer_rank as i64 != rank || k >= self.outer_rank {
+                return 7;
+            }
+            if k == 0 {
+                *index = 1;
+                self.outer_stride = 1;
+            }
+            let sub = self.outer[k];
+            if sub < lower || sub > upper {
+                return 4;
+            }
+            let Some(result) = sub.checked_sub(lower).and_then(|d| d.checked_mul(self.outer_stride)).and_then(|d| index.checked_add(d)) else {
+                return 4;
+            };
+            *index = result;
+            let Some(stride) = upper.checked_sub(lower).and_then(|d| d.checked_add(1)).and_then(|d| d.checked_mul(self.outer_stride)) else {
+                return 4;
+            };
+            self.outer_stride = stride;
+            return code;
+        }
         if axis == 0 {
             // A scalar array-element designator accepts one value. Expanded
             // element reads are a nonstandard extension in other compilers.
-            if !self.new_assignment && self.rank!=0 {return 4;}
+            // A whole element of an array of derived type accepts the values
+            // of its components (`lower` is the number of values per element).
+            if !self.new_assignment && self.rank!=0 && !(self.scale > 1 && self.index <= self.element_end) {return 4;}
+            if self.new_assignment {self.scale = lower.max(1);}
             self.apply = self.new_assignment && self.rank != 0;
             self.new_assignment = false;
             self.stride = 1;
@@ -365,6 +459,13 @@ impl Session {
             };
             *index = result;
             if axis == rank {
+                if self.scale > 1 {
+                    let Some(start) = index.checked_sub(1).and_then(|e| e.checked_mul(self.scale)).and_then(|e| e.checked_add(1)) else {
+                        return 4;
+                    };
+                    *index = start;
+                    self.element_end = start + self.scale - 1;
+                }
                 self.index = *index;
                 self.apply = false;
             } else {
