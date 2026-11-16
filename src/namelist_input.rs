@@ -30,6 +30,19 @@ pub(crate) struct Session {
     outer: [i64; 15],
     outer_rank: usize,
     outer_stride: i64,
+    /// Subscript triplets `[lo]:[hi][:step]` of an array section designator:
+    /// per axis, whether it is a triplet, its upper bound (if given), its
+    /// step, and whether the lower bound was given. Values then define the
+    /// section's elements in array element order.
+    triplet: [bool; 15],
+    upper: [Option<i64>; 15],
+    step: [i64; 15],
+    given: [bool; 15],
+    section: bool,
+    /// While mapping a value of a section: the element ordinal still to be
+    /// distributed over the axes, the linear index and its stride.
+    remaining: i64,
+    linear: i64,
 }
 impl Session {
     pub(crate) fn new(group: &[u8]) -> Self {
@@ -57,6 +70,13 @@ impl Session {
             outer: [0; 15],
             outer_rank: 0,
             outer_stride: 1,
+            triplet: [false; 15],
+            upper: [None; 15],
+            step: [1; 15],
+            given: [false; 15],
+            section: false,
+            remaining: 0,
+            linear: 1,
         };
         if group.len() <= 128 {
             for (a, b) in s.group.iter_mut().zip(group) {
@@ -271,34 +291,38 @@ impl Session {
                     // type may be subscripted. The final subscripts address
                     // the object.
                     self.outer_rank = 0;
+                    self.section = false;
                     loop {
                         self.rank = 0;
                         if self.peek(read)? == Some(b'(') {
                             self.get(read)?;
                             loop {
-                                self.spaces(read)?;
-                                self.length = 0;
-                                if let Some(c @ (b'+' | b'-')) = self.peek(read)? {
-                                    self.get(read)?;
-                                    self.push(c)?;
-                                }
-                                while let Some(c) = self.peek(read)? {
-                                    if !c.is_ascii_digit() {
-                                        break;
-                                    }
-                                    self.get(read)?;
-                                    self.push(c)?;
-                                }
                                 if self.rank == 15 {
                                     return Err(7);
                                 }
-                                self.subscripts[self.rank] =
-                                    core::str::from_utf8(&self.token[..self.length])
-                                        .map_err(|_| 7)?
-                                        .parse::<i64>()
-                                        .map_err(|_| 7)?;
+                                let k = self.rank;
+                                let first = self.integer(read)?;
+                                self.triplet[k] = false;
+                                self.given[k] = first.is_some();
+                                self.subscripts[k] = first.unwrap_or(0);
+                                self.upper[k] = None;
+                                self.step[k] = 1;
+                                if self.peek(read)? == Some(b':') {
+                                    self.get(read)?;
+                                    self.triplet[k] = true;
+                                    self.section = true;
+                                    self.upper[k] = self.integer(read)?;
+                                    if self.peek(read)? == Some(b':') {
+                                        self.get(read)?;
+                                        self.step[k] = self.integer(read)?.ok_or(7)?;
+                                        if self.step[k] == 0 {
+                                            return Err(7);
+                                        }
+                                    }
+                                } else if first.is_none() {
+                                    return Err(7);
+                                }
                                 self.rank += 1;
-                                self.spaces(read)?;
                                 match self.get(read)? {
                                     Some(b',') => continue,
                                     Some(b')') => break,
@@ -311,7 +335,7 @@ impl Session {
                             break;
                         }
                         self.get(read)?;
-                        if self.outer_rank != 0 {
+                        if self.outer_rank != 0 || self.section {
                             return Err(7);
                         }
                         self.outer[..self.rank].copy_from_slice(&self.subscripts[..self.rank]);
@@ -424,6 +448,9 @@ impl Session {
             self.outer_stride = stride;
             return code;
         }
+        if self.section && axis >= 0 {
+            return self.section_layout(index, code, axis, rank, lower, upper);
+        }
         if axis == 0 {
             // A scalar array-element designator accepts one value. Expanded
             // element reads are a nonstandard extension in other compilers.
@@ -478,6 +505,88 @@ impl Session {
                 };
                 self.stride = extent;
             }
+        }
+        code
+    }
+    /// An optionally signed integer, after optional blanks; `None` if there
+    /// are no digits.
+    fn integer(&mut self, read: &mut impl FnMut() -> Result<Option<u8>, ()>) -> Result<Option<i64>, i64> {
+        self.spaces(read)?;
+        self.length = 0;
+        if let Some(c @ (b'+' | b'-')) = self.peek(read)? {
+            self.get(read)?;
+            self.push(c)?;
+        }
+        while let Some(c) = self.peek(read)? {
+            if !c.is_ascii_digit() {
+                break;
+            }
+            self.get(read)?;
+            self.push(c)?;
+        }
+        self.spaces(read)?;
+        if self.length == 0 {
+            return Ok(None);
+        }
+        let n = core::str::from_utf8(&self.token[..self.length])
+            .map_err(|_| 7)?
+            .parse::<i64>()
+            .map_err(|_| 7)?;
+        self.length = 0;
+        Ok(Some(n))
+    }
+    /// Map the current value of a section designator to its linear index.
+    /// The value ordinal (`self.index`) selects an element of the section, in
+    /// array element order; a whole element of an array of derived type
+    /// takes `scale` values.
+    fn section_layout(&mut self, index: &mut i64, code: i64, axis: i64, rank: i64, lower: i64, upper: i64) -> i64 {
+        if axis == 0 {
+            if self.new_assignment {
+                self.scale = lower.max(1);
+            }
+            self.new_assignment = false;
+            if self.rank as i64 != rank {
+                return 7;
+            }
+            let ordinal = self.index - 1;
+            self.remaining = ordinal / self.scale;
+            self.linear = 1;
+            self.stride = 1;
+            return code;
+        }
+        let k = (axis - 1) as usize;
+        if k >= self.rank {
+            return 7;
+        }
+        let sub = if self.triplet[k] {
+            // Omitted bounds are the declared bounds, whatever the step.
+            let lo = if self.given[k] { self.subscripts[k] } else { lower };
+            let hi = self.upper[k].unwrap_or(upper);
+            let n = ((hi - lo) / self.step[k] + 1).max(0);
+            if n == 0 {
+                return 4;
+            }
+            let last = lo + (n - 1) * self.step[k];
+            if lo.min(last) < lower || lo.max(last) > upper {
+                return 4;
+            }
+            let sub = lo + (self.remaining % n) * self.step[k];
+            self.remaining /= n;
+            sub
+        } else {
+            self.subscripts[k]
+        };
+        if sub < lower || sub > upper {
+            return 4;
+        }
+        self.linear += (sub - lower) * self.stride;
+        self.stride *= upper - lower + 1;
+        if axis == rank {
+            if self.remaining > 0 {
+                return 4;
+            }
+            let within = (self.index - 1) % self.scale;
+            *index = (self.linear - 1) * self.scale + within + 1;
         }
         code
     }

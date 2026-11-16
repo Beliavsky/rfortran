@@ -160,7 +160,22 @@ pub fn controls(
     ))
 }
 type Symbols = HashMap<String, (T, Vec<E>, Vec<String>)>;
-type Groups = HashMap<String, Vec<String>>;
+/// NAMELIST groups by local name: the group's own name, which input and
+/// output use, and its members as (local designator, label) pairs. The
+/// members of a USE-associated group are accessed through hidden USE renames,
+/// since the scope need not import them itself.
+type Groups = HashMap<String, (String, Vec<(String, String)>)>;
+/// Replace the leading member designator of `field` by its label.
+fn label(field: &str, members: &[(String, String)]) -> String {
+    for (access, shown) in members {
+        if let Some(rest) = field.strip_prefix(access.as_str()) {
+            if rest.is_empty() || rest.starts_with('%') || rest.starts_with('(') {
+                return format!("{shown}{rest}");
+            }
+        }
+    }
+    field.to_string()
+}
 /// Derived objects: name -> (type name, dims, attributes).
 type Objects = HashMap<String, (String, Vec<E>, Vec<String>)>;
 /// A component: name, intrinsic type or derived type name, dims, attributes.
@@ -287,7 +302,7 @@ impl Types {
             out.push(Entry { field: format!("{name}{suffix}"), dims: vec![], records: Some((dims.to_vec(), false)), ..part });
         }
         if complete {
-            out.push(Entry { field: name.into(), leaves, dims: dims.to_vec(), scaled: true, records: Some((dims.to_vec(), false)), output: false });
+            out.push(Entry { field: name.into(), leaves, dims: dims.to_vec(), scaled: true, records: Some((dims.to_vec(), false)), output: false, label: String::new() });
         }
         Ok(())
     }
@@ -349,13 +364,15 @@ struct Entry {
     records: Option<(Vec<E>, bool)>,
     /// NAMELIST output lists this designator.
     output: bool,
+    /// The designator as input and output spell it.
+    label: String,
 }
 impl Entry {
     fn leaf(leaf: &Leaf) -> Entry {
-        Entry { field: leaf.field.clone(), leaves: vec![leaf.clone()], dims: leaf.dims.clone(), scaled: false, records: None, output: true }
+        Entry { field: leaf.field.clone(), leaves: vec![leaf.clone()], dims: leaf.dims.clone(), scaled: false, records: None, output: true, label: String::new() }
     }
     fn whole(field: &str, leaves: Vec<Leaf>) -> Entry {
-        Entry { field: field.into(), leaves, dims: vec![], scaled: false, records: None, output: false }
+        Entry { field: field.into(), leaves, dims: vec![], scaled: false, records: None, output: false, label: String::new() }
     }
     /// The number of values of the object or of one element.
     fn values(&self) -> E {
@@ -406,10 +423,15 @@ fn indices(dims: &[E], index: E) -> Vec<E> {
 /// Record the variables, derived objects and NAMELIST groups that
 /// `statements` declare or USE-associate.
 /// Returns the USE-associated group names.
-fn declare(statements: &[S], types: &Types, symbols: &mut Symbols, objects: &mut Objects, groups: &mut Groups) -> HashSet<String> {
+fn declare(statements: &mut Vec<S>, types: &Types, symbols: &mut Symbols, objects: &mut Objects, groups: &mut Groups) -> HashSet<String> {
     let mut local = HashSet::new();
     let mut imported = HashSet::new();
-    for s in statements.iter() {
+    let existing: HashSet<String> = statements.iter().flat_map(|s| match s {
+        S::Use { renames, .. } => renames.iter().map(|(l, _)| l.clone()).collect(),
+        _ => vec![],
+    }).collect();
+    let mut hidden: Vec<(usize, S)> = vec![];
+    for (position, s) in statements.iter().enumerate() {
         if let S::Use { module, only, renames, .. } = s {
             let Some((m_symbols, m_objects, m_groups)) = types.modules.get(module) else { continue };
             let names: HashSet<&String> = m_symbols.keys().chain(m_objects.keys()).chain(m_groups.keys()).collect();
@@ -430,8 +452,29 @@ fn declare(statements: &[S], types: &Types, symbols: &mut Symbols, objects: &mut
                         symbols.remove(alias);
                         objects.insert(alias.clone(), x.clone());
                     }
-                    if let Some(x) = m_groups.get(remote) {
-                        groups.insert(alias.clone(), x.clone());
+                    if let Some((group_name, members)) = m_groups.get(remote) {
+                        // Each member is reached through a hidden rename of
+                        // the module's entity.
+                        let mut renamed = vec![];
+                        for (access, shown) in members {
+                            let hidden_name = format!("@nml_use_{module}_{}", access.trim_start_matches('@'));
+                            if let Some(x) = m_symbols.get(access) {
+                                symbols.insert(hidden_name.clone(), x.clone());
+                            }
+                            if let Some(x) = m_objects.get(access) {
+                                objects.insert(hidden_name.clone(), x.clone());
+                            }
+                            if !existing.contains(&hidden_name) && !hidden.iter().any(|(_, h)| matches!(h, S::Use { renames, .. } if renames[0].0 == hidden_name)) {
+                                hidden.push((position, S::Use {
+                                    module: module.clone(),
+                                    nature: None,
+                                    only: Some(vec![access.clone()]),
+                                    renames: vec![(hidden_name.clone(), access.clone())],
+                                }));
+                            }
+                            renamed.push((hidden_name, shown.clone()));
+                        }
+                        groups.insert(alias.clone(), (group_name.clone(), renamed));
                         imported.insert(alias.clone());
                     }
                 }
@@ -471,18 +514,21 @@ fn declare(statements: &[S], types: &Types, symbols: &mut Symbols, objects: &mut
                 // A local NAMELIST statement starts a new group, except that
                 // it extends a USE-associated group, as other compilers allow.
                 if local.insert(group.clone()) && !imported.contains(group) {
-                    groups.insert(group.clone(), vec![]);
+                    groups.insert(group.clone(), (group.clone(), vec![]));
                 }
-                let members = groups.get_mut(group).unwrap();
+                let members = &mut groups.get_mut(group).unwrap().1;
                 for e in &args[1..] {
                     let E::Ident(n) = e else { unreachable!() };
-                    if !members.contains(n) {
-                        members.push(n.clone());
+                    if !members.iter().any(|(m, _)| m == n) {
+                        members.push((n.clone(), n.clone()));
                     }
                 }
             }
             _ => {}
         }
+    }
+    for (position, s) in hidden.into_iter().rev() {
+        statements.insert(position + 1, s);
     }
     imported
 }
@@ -550,11 +596,11 @@ pub fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Program> 
                         let E::Str(group) = &args[1] else {
                             unreachable!()
                         };
-                        let members = groups
+                        let (group_name, members) = groups
                             .get(group)
                             .ok_or_else(|| anyhow::anyhow!("unknown NAMELIST group `{group}`"))?;
                         let mut entries = vec![];
-                        for n in members {
+                        for (n, _) in members {
                             if let Some((ty, dims, attrs)) = objects.get(n) {
                                 ensure!(!attrs.iter().any(|a| matches!(a.as_str(), "allocatable" | "pointer")),
                                     "NAMELIST member `{n}` currently requires nonallocatable, nonpointer variable storage");
@@ -586,7 +632,7 @@ pub fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Program> 
                             );
                         }
                         if read {
-                            for n in members.iter().filter(|n| symbols.contains_key(*n)) {
+                            for (n, _) in members.iter().filter(|(n, _)| symbols.contains_key(n)) {
                                 ensure!(
                                     !symbols[n].2.iter().any(|a| a == "intent(in)"),
                                     "NAMELIST READ cannot define INTENT(IN) member `{n}`"
@@ -594,7 +640,13 @@ pub fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Program> 
                             }
                         }
                         *serial += 1;
-                        *s = transfer(args, read, &entries, &symbols, *serial)?;
+                        let mut args = args.clone();
+                        args[1] = text(group_name);
+                        let mut entries = entries;
+                        for entry in &mut entries {
+                            entry.label = label(&entry.field, members);
+                        }
+                        *s = transfer(&args, read, &entries, &symbols, *serial, members)?;
                         return Ok(());
                     }
                 }
@@ -609,7 +661,7 @@ pub fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Program> 
     }
     let mut types = Types::default();
     types.collect(&program.body);
-    for s in &program.body {
+    for s in program.body.iter_mut() {
         if let S::Module { name, body } = s {
             let (mut symbols, mut objects, mut groups) = Default::default();
             declare(body, &types, &mut symbols, &mut objects, &mut groups);
@@ -625,6 +677,7 @@ fn transfer(
     entries: &[Entry],
     symbols: &Symbols,
     serial: usize,
+    members: &[(String, String)],
 ) -> Result<S> {
     let [unit, E::Str(group), status, message] = args else {
         unreachable!()
@@ -665,14 +718,60 @@ fn transfer(
             decl(T::Character(Some(128)), &field),
             decl(T::Character(Some(4096)), &token),
         ]);
-        let internal = matches!(unit,E::Ident(n) if matches!(symbols.get(n),Some((T::Character(_)|T::CharacterLength(_),d,_)) if d.is_empty()));
+        let mut internal = matches!(unit,E::Ident(n) if matches!(symbols.get(n),Some((T::Character(_)|T::CharacterLength(_),d,_)) if d.is_empty()));
+        let mut unit = unit.clone();
+        // A CHARACTER array internal file: its records are joined, separated
+        // by blanks, into one buffer.
+        if let E::Ident(n) = &unit {
+            if let Some((kind, dims, _)) = symbols.get(n).filter(|(_, d, _)| !d.is_empty()) {
+                if let T::Character(_) | T::CharacterLength(_) = kind {
+                    let T::Character(Some(width)) = kind else {
+                        bail!("NAMELIST READ from a CHARACTER array internal file currently requires a constant length");
+                    };
+                    let mut total = 1i64;
+                    for d in dims {
+                        let (E::IntLit(lo), E::IntLit(hi)) = bounds(d) else {
+                            bail!("NAMELIST READ from a CHARACTER array internal file currently requires constant bounds");
+                        };
+                        let (lo, hi): (i64, i64) = (lo.parse()?, hi.parse()?);
+                        total *= (hi - lo + 1).max(0);
+                    }
+                    let joined = temp("records");
+                    let (k, at) = (temp("record_number"), temp("record_at"));
+                    let size = (*width as i64 + 1) * total.max(1);
+                    ensure!(size <= 1 << 24, "NAMELIST READ internal file is too large");
+                    let range = |name: &str, lower: E, upper: E| E::Section { name: name.into(), lower: Some(Box::new(lower)), upper: Some(Box::new(upper)), stride: None };
+                    out.extend([
+                        decl(T::Character(Some(size as usize)), &joined),
+                        decl(T::Integer(Some(8)), &k),
+                        decl(T::Integer(Some(8)), &at),
+                        set(&joined, text("")),
+                        S::Do {
+                            var: k.clone(),
+                            start: i(1),
+                            end: i(total),
+                            body: vec![
+                                set(&at, bin(B::Add, bin(B::Mul, bin(B::Sub, v(&k), i(1)), i(*width as i64 + 1)), i(1))),
+                                S::AssignIndex {
+                                    name: joined.clone(),
+                                    indices: vec![range("", v(&at), bin(B::Add, v(&at), i(*width as i64 - 1)))],
+                                    value: element(n, dims, v(&k)),
+                                },
+                            ],
+                        },
+                    ]);
+                    unit = v(&joined);
+                    internal = true;
+                }
+            }
+        }
         out.push(call(
             if internal {
                 "@nml_internal_begin"
             } else {
                 "@nml_begin"
             },
-            vec![v(&h), v(&code), unit.clone(), text(group)],
+            vec![v(&h), v(&code), unit, text(group)],
         ));
         let mut work = vec![
             call(
@@ -833,7 +932,7 @@ fn transfer(
             matched.push(branch(bin(B::Eq, v(&code), i(0)), store));
 
             dispatch = vec![S::If {
-                cond: bin(B::Eq, v(&field), text(&entry.field)),
+                cond: bin(B::Eq, v(&field), text(&entry.label)),
                 then_body: matched,
                 else_body: Some(dispatch),
             }];
@@ -855,24 +954,103 @@ fn transfer(
         out.push(call("@nml_end", vec![v(&h)]));
         out.push(branch(bin(B::Eq, v(&code), i(-2)), vec![set(&code, i(0))]));
     } else {
-        ensure!(
-            !matches!(unit,E::Ident(n) if matches!(symbols.get(n),Some((T::Character(_)|T::CharacterLength(_),_,_)))),
-            "internal NAMELIST WRITE is not yet supported"
-        );
+        // An internal file: a scalar CHARACTER variable receives the whole
+        // group as one record, and each element of a CHARACTER array one
+        // output record, as in gfortran.
+        let internal = match unit {
+            E::Ident(n) => match symbols.get(n) {
+                Some((T::Character(_) | T::CharacterLength(_), dims, _)) => Some((n.clone(), !dims.is_empty())),
+                _ => None,
+            },
+            _ => None,
+        };
         let unit_temp = temp("unit");
-        out.extend([
-            decl(T::Integer(Some(8)), &unit_temp),
-            set(&unit_temp, unit.clone()),
-        ]);
+        let (piece, cursor, line, used) = (temp("piece"), temp("cursor"), temp("line"), temp("used"));
+        match &internal {
+            None => out.extend([
+                decl(T::Integer(Some(8)), &unit_temp),
+                set(&unit_temp, unit.clone()),
+            ]),
+            Some((name, array)) => {
+                out.extend([decl(T::Character(Some(8192)), &piece), decl(T::Integer(Some(8)), &cursor)]);
+                if *array {
+                    out.extend([
+                        decl(T::Character(Some(8192)), &line),
+                        decl(T::Integer(Some(8)), &used),
+                        set(&line, text("")),
+                        set(&used, i(0)),
+                        set(&cursor, bin(B::Sub, E::Call("lbound".into(), vec![v(name), i(1)]), i(1))),
+                    ]);
+                } else {
+                    out.extend([set(name, text("")), set(&cursor, i(0))]);
+                }
+            }
+        }
         let unit = v(&unit_temp);
         let record = temp("record");
         out.push(decl(T::Character(Some(8192)), &record));
-        let emit = |e: E| {
-            branch(
-                bin(B::Eq, v(&code), i(0)),
-                vec![call("@nml_record", vec![v(&code), unit.clone(), e])],
-            )
+        let range = |name: &str, lower: E, upper: E| E::Section { name: name.into(), lower: Some(Box::new(lower)), upper: Some(Box::new(upper)), stride: None };
+        // Store the pending line of a CHARACTER array internal file in its
+        // next element.
+        let flush = |name: &str| {
+            vec![
+                set(&cursor, bin(B::Add, v(&cursor), i(1))),
+                S::If {
+                    cond: bin(B::Gt, v(&cursor), E::Call("ubound".into(), vec![v(name), i(1)])),
+                    then_body: vec![set(&code, i(5))],
+                    else_body: Some(vec![S::AssignIndex { name: name.into(), indices: vec![v(&cursor)], value: v(&line) }]),
+                },
+                set(&line, text("")),
+                set(&used, i(0)),
+            ]
         };
+        // `new` starts a record: a CHARACTER array internal file holds the
+        // values of an item in the record of its label while they fit.
+        let emit_record = |e: E, new: bool| {
+            let body = match &internal {
+                None => vec![call("@nml_record", vec![v(&code), unit.clone(), e])],
+                Some((name, true)) => {
+                    let n = E::Call("len_trim".into(), vec![v(&piece)]);
+                    let end = bin(B::Add, v(&used), n.clone());
+                    let width = E::Call("len".into(), vec![v(name)]);
+                    let full = bin(B::Gt, end.clone(), width.clone());
+                    let start = if new { bin(B::Or, full, bin(B::Gt, v(&used), i(0))) } else { bin(B::And, full, bin(B::Gt, v(&used), i(0))) };
+                    vec![
+                        set(&piece, e),
+                        branch(start, flush(name)),
+                        S::If {
+                            cond: bin(B::Gt, n.clone(), width),
+                            then_body: vec![set(&code, i(5))],
+                            else_body: Some(vec![
+                                S::AssignIndex { name: line.clone(), indices: vec![range("", bin(B::Add, v(&used), i(1)), end.clone())], value: range(&piece, i(1), n) },
+                                set(&used, end),
+                            ]),
+                        },
+                    ]
+                }
+                Some((name, false)) => {
+                    let n = E::Call("len_trim".into(), vec![v(&piece)]);
+                    let end = bin(B::Add, v(&cursor), n.clone());
+                    vec![
+                        set(&piece, e),
+                        S::If {
+                            cond: bin(B::Gt, end.clone(), E::Call("len".into(), vec![v(name)])),
+                            then_body: vec![set(&code, i(5))],
+                            else_body: Some(vec![
+                                S::AssignIndex {
+                                    name: name.clone(),
+                                    indices: vec![range("", bin(B::Add, v(&cursor), i(1)), end.clone())],
+                                    value: range(&piece, i(1), n),
+                                },
+                                set(&cursor, end),
+                            ]),
+                        },
+                    ]
+                }
+            };
+            branch(bin(B::Eq, v(&code), i(0)), body)
+        };
+        let emit = |e: E| emit_record(e, true);
         out.push(emit(text(&format!("&{group}"))));
         // Output lists each intrinsic leaf; a derived object's components
         // appear as `x%a=` designators.
@@ -883,7 +1061,7 @@ fn transfer(
         out.extend([decl(T::Integer(Some(8)), &rec), set(&rec, i(1)), decl(T::Integer(Some(8)), &position)]);
         for (m, entry) in entries.iter().filter(|e| e.output).enumerate() {
             let leaf = &entry.leaves[0];
-            let (n, kind) = (&entry.field, &leaf.kind);
+            let (n, kind) = (&entry.label, &leaf.kind);
             let ix = format!("@nml_{serial}_item_{m}");
             out.push(decl(T::Integer(Some(8)), &ix));
             let per = count(&leaf.dims);
@@ -898,7 +1076,7 @@ fn transfer(
             // subscripts, as `tr(2)%w=`: `tr%w` is not a valid designator
             // when the component is an array.
             if let (Some((elements, false)), Some((base, index, path))) = (&entry.records, &leaf.record) {
-                let format = format!("(' {base}(',{},')%{path}=')", vec!["i0"; elements.len()].join(",',',"));
+                let format = format!("(' {}(',{},')%{path}=')", label(base, members), vec!["i0"; elements.len()].join(",',',"));
                 let mut label = vec![v(&record), text(&format)];
                 label.extend(index.iter().cloned());
                 body.push(branch(bin(B::Eq, v(&position), i(1)), vec![
@@ -929,7 +1107,7 @@ fn transfer(
             let mut write = vec![v(&record), text(format)];
             write.extend(values);
             body.push(call("@write", write));
-            body.push(emit(E::Call("trim".into(), vec![v(&record)])));
+            body.push(emit_record(E::Call("trim".into(), vec![v(&record)]), false));
             if !matches!(entry.records, Some((_, false))) {
                 out.push(emit(text(&format!(" {n}="))));
             }
@@ -941,6 +1119,9 @@ fn transfer(
             });
         }
         out.push(emit(text("/")));
+        if let Some((name, true)) = &internal {
+            out.push(branch(bin(B::And, bin(B::Eq, v(&code), i(0)), bin(B::Gt, v(&used), i(0))), flush(name)));
+        }
     }
     if let E::Ident(n) = message {
         let mut error = vec![set(

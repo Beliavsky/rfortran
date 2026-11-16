@@ -1192,5 +1192,89 @@ read(*, nml=g)
 end program
 """, "array of derived type within an array of derived type")
 
+    def test_namelist_renamed_group_and_internal_array_files(self):
+        # A group renamed by USE ONLY keeps its name and its module members,
+        # which the scope does not import; internal WRITE and READ with a
+        # CHARACTER array, one item with its values per element.
+        self.check("""module m
+implicit none
+real :: x = -1
+integer :: n(3) = [1, 2, 3]
+namelist /foo/ x, n
+end module
+program p
+use m, only: bar => foo
+implicit none
+real :: x = 42
+character(len=40) :: lines(8)
+character(len=3000) :: buf
+buf = "&foo x=7.5 n(2:3)=8 9 /"
+read(buf, nml=bar)
+call show
+lines = '-'
+write(lines, nml=bar)
+buf = "&foo x=0 n=0 0 0 /"
+read(buf, nml=bar)
+read(lines, nml=bar)
+call show
+print '(a,f5.1,a)', 'local ', x, ' ' // trim(lines(8))
+contains
+subroutine show
+use m, only: x, n
+print '(f5.1,3i3)', x, n
+end subroutine
+end program
+""", '  7.5  1  8  9\n  7.5  1  8  9\nlocal  42.0 -\n')
+
+    def test_namelist_input_sections_and_internal_scalar_files(self):
+        self.check("""module shapes
+implicit none
+type :: t
+   integer :: i = 0
+   real :: r = 0
+end type
+end module
+program p
+use shapes
+implicit none
+integer :: a(6) = 0, b(3,4) = 0, c(-2:2) = 0
+type(t) :: e(4)
+character(len=40) :: input(4)
+character(len=1000) :: buf
+namelist /g/ a, b, c, e
+namelist /h/ a, c
+input(1) = "&g a(2:6:2) = 1, 2, 3, a(:2) = 7 8"
+input(2) = " b(2,:) = 1 2 3 4, b(1:3:2, 4) = 5, 6"
+input(3) = " c(2:-2:-1) = 1 2 3 4 5"
+input(4) = " e(2:3) = 5 1.5 6 2.5 /"
+read(input, nml=g)
+print '(12i2)', b
+print '(4(i2,f4.1))', e
+write(buf, nml=h)
+a = 0; c = 0
+read(buf, nml=h)
+print '(6i2)', a
+print '(5i2)', c
+end program
+""", ' 0 1 0 0 2 0 0 3 0 5 4 6\n 0 0.0 5 1.5 6 2.5 0 0.0\n 7 8 0 2 0 3\n 5 4 3 2 1\n')
+
+    def test_internal_procedure_use_hides_host_variable(self):
+        self.check("""module m
+implicit none
+real :: x = -1
+end module
+program p
+implicit none
+real :: x = 42
+call show
+print *, x
+contains
+subroutine show
+use m, only: x
+print *, x
+end subroutine
+end program
+""", "   -1.00000000    \n   42.0000000    \n")
+
 if __name__ == "__main__":
     unittest.main()

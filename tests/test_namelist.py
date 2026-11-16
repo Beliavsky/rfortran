@@ -40,7 +40,7 @@ read(*,nml=g,iostat=ios)
 print *,ios,a
 end
 """, "0 -1 10 11 -1 -1 -1 -1 20\n",data="&g a(0,0)=10,a(1,0)=11, a(2,1)=20 /\n")
-        for designator in ("a(-2,0)","a(0)","a(0:1,0)"):
+        for designator in ("a(-2,0)","a(0)","a(0:3,0)"):
             self.check("integer::a(-1:2,0:1),ios\nnamelist /g/ a\na=7\nread(*,nml=g,iostat=ios)\nprint *,ios>0,all(a==7)\nend\n",
                        "T T\n",data="&g "+designator+"=5 /\n",reference=False)
 

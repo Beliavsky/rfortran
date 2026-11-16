@@ -4219,7 +4219,10 @@ occupy the positional format slot, as in `write(unit,group)`. Use explicit
 statements extend a group. Groups declared in a host scope can be used by its
 internal procedures, and groups and members declared in a module can be used
 through USE association, including ONLY lists and renames; as other compilers
-allow, a NAMELIST statement may extend a USE-associated group. `UNIT`, `NML`,
+allow, a NAMELIST statement may extend a USE-associated group. A renamed group
+keeps its own name in input and output, and its members remain the module's
+variables even when the scope does not import them (or declares other
+variables with their names). `UNIT`, `NML`,
 `IOSTAT` and `IOMSG` keywords can be reordered.
 
 Members may also be derived-type scalars and arrays with literal bounds,
@@ -4251,9 +4254,16 @@ Input recognizes case-insensitive group/member names, `!` comments, quoted
 strings with doubled quotes, multiline values, repetition counts and null
 values. Omitted members and null array entries retain their previous values
 and initialization state. Array values follow Fortran element order; input
-such as `values(2)=4.0` assigns the selected element. Element designators
-support ranks through 15, with rank and bounds checks. `&END` also ends a group. Ordinary CHARACTER
-scalar variables can also serve as internal input files. Unknown names, bad
+such as `values(2)=4.0` assigns the selected element, and a section such as
+`values(2:3)=4.0,5.0`, `b(2,:)` or `c(4:1:-1)` assigns its elements in array
+element order (omitted bounds are the declared bounds, as in gfortran). A
+section of an array of derived type, such as `tr(:)='aa',T`, takes the values
+of each element in turn. Designators support ranks through 15, with rank and
+bounds checks. `&END` also ends a group. CHARACTER
+scalar variables and arrays with constant length and bounds can also serve as
+internal files. As in gfortran, internal WRITE to a scalar writes the whole
+group as one record, and to an array writes each item, with its values, in the
+next element while it fits; writing beyond the internal file is an error. Unknown names, bad
 conversions, invalid designators, array overruns and disconnected units report
 positive IOSTAT values; end of file reports a negative value. IOMSG is defined
 on an error and left unchanged on success. An error without IOSTAT stops
@@ -4265,10 +4275,9 @@ its whitespace and record layout need not match another compiler's output.
 Tests read rfort output with gfortran and gfortran output with rfort.
 
 This is partial NAMELIST support. Members currently require explicit
-declarations. Internal output, array sections/CHARACTER substrings in input
-designators, ALLOCATABLE/POINTER members, and members of a renamed
-USE-associated group that are not themselves USE-associated remain
-unsupported. Controls other
+declarations. CHARACTER substrings and sections within an element of an array
+of derived type (`x(1:2)%a`) in input designators, and ALLOCATABLE/POINTER
+members, remain unsupported. Controls other
 than UNIT/NML/IOSTAT/IOMSG (including DELIM, ERR and END) are rejected. The
 scanner currently accepts non-NUL ASCII input and limits each scalar token to
 4096 bytes, reporting an error rather than truncating it. CHARACTER output

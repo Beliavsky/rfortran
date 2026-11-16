@@ -391,7 +391,15 @@ impl Lower {
             let mut names = HashSet::new();
             mentions(b, &mut names);
             let own = declared(b);
-            let only: Vec<String> = moved.iter().filter(|n| names.contains(*n) && !own.statements.contains_key(*n) && !p.contains(n)).cloned().collect();
+            // A name the procedure itself USE-associates hides the host's.
+            let mut used = HashSet::new();
+            for u in b.iter() {
+                if let Stmt::Use { only: Some(only), renames, .. } = u {
+                    used.extend(renames.iter().map(|(local, _)| local.clone()));
+                    used.extend(only.iter().filter(|n| !renames.iter().any(|(_, remote)| remote == *n)).cloned());
+                }
+            }
+            let only: Vec<String> = moved.iter().filter(|n| names.contains(*n) && !own.statements.contains_key(*n) && !p.contains(n) && !used.contains(*n)).cloned().collect();
             if !only.is_empty() {
                 b.insert(0, Stmt::Use { module: module.clone(), nature: None, only: Some(only), renames: vec![] });
             }
