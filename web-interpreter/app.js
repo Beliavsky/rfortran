@@ -35,6 +35,10 @@ function updateSourceControls() {
   byId("open-file").disabled = locked;
   byId("source-file").disabled = locked || isRepl();
   byId("run").disabled = locked;
+  byId("check").disabled = locked;
+  byId("check").hidden = isRepl();
+  byId("warning-options").hidden = isRepl();
+  for (const id of warningIds) byId(id).disabled = locked;
   byId("mode").disabled = locked;
   byId("example").disabled = locked;
   byId("source-description").textContent = isRepl() ? "Persistent interpreter" : programFilename;
@@ -88,6 +92,19 @@ for (const [id, fallback, max] of limitSettings) {
     if (validLimit(byId(id).value, max)) saveDraft(`rfortran.web.${id}`, byId(id).value);
   });
 }
+// Warning options for Run and Check, as on the command line. A link's
+// ?flags=Wall,Wstyle chooses them; otherwise the last choice is kept.
+const warningOptions = new Map([["warn-all", "-Wall"], ["warn-extra", "-Wextra"], ["warn-style", "-Wstyle"]]);
+const warningIds = [...warningOptions.keys()];
+const selectedWarnings = () => warningIds.filter(id => byId(id).checked).map(id => warningOptions.get(id));
+function chooseWarnings(options) {
+  for (const id of warningIds) byId(id).checked = options.includes(warningOptions.get(id));
+}
+const linkedFlags = new URLSearchParams(window.location?.search || "").get("flags");
+chooseWarnings((linkedFlags ?? readDraft("rfortran.web.warnings", "")).split(/[\s,]+/)
+  .filter(Boolean).map(f => f.startsWith("-") ? f : `-${f}`));
+for (const id of warningIds)
+  byId(id).addEventListener("change", () => saveDraft("rfortran.web.warnings", selectedWarnings().join(" ")));
 byId("source").value = readDraft("rfortran.web.source", examples.hello);
 byId("stdin").value = readDraft("rfortran.web.stdin", "");
 byId("stdin").addEventListener("input", () => saveDraft("rfortran.web.stdin", byId("stdin").value));
@@ -350,6 +367,12 @@ byId("run").addEventListener("click", () => {
     send({source:sourceText()});
   }
 });
+byId("check").addEventListener("click", () => {
+  if (busy || loadingSource || isRepl()) return;
+  byId("output").textContent = "";
+  byId("errors").textContent = "";
+  send({type:"check", source:sourceText()});
+});
 byId("stop").addEventListener("click", () => {
   if (lastRun) lastRun.status = "Stopped";
   finish("Stopped");
@@ -433,7 +456,8 @@ function send(payload) {
   for (const id of ["run", "repl-submit", "mode", "clear-session"]) byId(id).disabled = true;
   updateSourceControls();
   byId("stop").disabled = false;
-  lastRun = {source:sourceText(),
+  const warnings = isRepl() ? [] : selectedWarnings();
+  lastRun = {source:sourceText(), warnings,
     build:lastRun ? lastRun.build : "Unavailable (interpreter not loaded)", status:"Running"};
   if (!worker) {
     const current = worker = new Worker("worker.mjs", {type:"module"});
@@ -469,8 +493,9 @@ function send(payload) {
           byId("output").textContent = data.output;
           byId("errors").textContent = data.errors;
         }
-        lastRun.status = data.ok ? "Finished" : "Failed";
-        finish(`${data.pending ? "Waiting for more code" : data.ok ? "Ready" : "Failed"} / ${data.seconds.toFixed(3)} s`, data.repl);
+        lastRun.status = data.check ? (data.ok ? "Checked" : "Check failed") : data.ok ? "Finished" : "Failed";
+        const outcome = data.pending ? "Waiting for more code" : data.check ? (data.ok ? "Checked" : "Errors found") : data.ok ? "Ready" : "Failed";
+        finish(`${outcome} / ${data.seconds.toFixed(3)} s`, data.repl);
         if (data.repl) byId("repl-command").focus();
       } else if (data.type === "error") {
         appendText("errors", data.text);
@@ -486,7 +511,7 @@ function send(payload) {
       finish("Unable to run");
     };
   }
-  worker.postMessage({...payload, sourceLimit, input:byId("stdin").value,
+  worker.postMessage({...payload, sourceLimit, input:byId("stdin").value, warnings,
     autoDeclare:isRepl() && capabilities.autoDeclare && byId("auto-declare").checked});
   timer = timeLimit === 0 ? null : setTimeout(() => {
     lastRun.status = "Time limit reached";
@@ -582,11 +607,13 @@ function reportSourceSection(included) {
   return "## Fortran source\n" + (included ? reportBlock(source, "fortran") : "Not included. Please provide a minimal reproducer if possible.");
 }
 function reportBody() {
-  const snapshot = lastRun || {source:sourceText(), build:"Unavailable (no program run)", status:"Not run"};
+  const snapshot = lastRun || {source:sourceText(), warnings:isRepl() ? [] : selectedWarnings(),
+    build:"Unavailable (no program run)", status:"Not run"};
   const parts = [
     "## Problem\nDescribe what went wrong and the steps to reproduce it.",
     "## Expected behavior\nDescribe the expected output or behavior.",
-    `## Environment\nBuild: ${snapshot.build}\nRun status: ${snapshot.status}\nBrowser: ${navigator.userAgent}`,
+    `## Environment\nBuild: ${snapshot.build}\nRun status: ${snapshot.status}\n` +
+      `Warning options: ${snapshot.warnings?.length ? snapshot.warnings.join(" ") : "none"}\nBrowser: ${navigator.userAgent}`,
     reportSourceSection(byId("report-source").checked),
     "## Output\n" + reportBlock(byId("output").textContent || "(none)"),
     "## Warnings and errors\n" + reportBlock(byId("errors").textContent || "(none)"),

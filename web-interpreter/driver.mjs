@@ -3,13 +3,21 @@
 const LIMIT = 200_000;
 const OUTPUT_LIMIT = 1_000_000;
 const operations = new Map([
-  ["program", "runProgram"], ["repl-init", "startSession"],
+  ["program", "runProgram"], ["check", "checkProgram"], ["repl-init", "startSession"],
   ["repl-submit", "submit"], ["repl-replay", "replay"],
 ]);
 function text(value, label, limit = LIMIT) {
   if (typeof value !== "string" || (limit !== 0 && value.length > limit))
     throw new Error(`${label} must be text of at most ${limit} characters.`);
   return value;
+}
+// Warning options the page offers; the interpreter rejects any other option.
+export const WARNING_OPTIONS = ["-Wall", "-Wextra", "-Wstyle"];
+function warningOptions(value) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some(o => !WARNING_OPTIONS.includes(o)))
+    throw new Error(`Warning options must be chosen from ${WARNING_OPTIONS.join(", ")}.`);
+  return [...new Set(value)];
 }
 function output(value) {
   const s = typeof value === "string" ? value : "";
@@ -30,14 +38,15 @@ export function createDriver({loadRuntime, emit, now = () => performance.now()})
       const type = request?.type ?? "program";
       const method = operations.get(type);
       if (!method) throw new Error("Unknown interpreter operation.");
-      const repl = type !== "program";
+      const repl = type !== "program" && type !== "check";
       const sourceLimit = request.sourceLimit ?? LIMIT;
       if (!Number.isSafeInteger(sourceLimit) || sourceLimit < 0)
         throw new Error("Source limit must be a nonnegative safe integer (0 means no limit).");
       const input = text(request.input ?? "", "Standard input");
       const source = text(request.source ?? "", "Source", sourceLimit);
       const command = text(request.command ?? "", "REPL command", sourceLimit);
-      if (type === "program" || type === "repl-init" || type === "repl-replay") await dispose();
+      const warnings = warningOptions(request.warnings);
+      if (!repl || type === "repl-init" || type === "repl-replay") await dispose();
       if (type === "repl-submit" && !session) throw new Error("Start a REPL session before submitting a command.");
       if (!runtime) {
         runtime = await loadRuntime();
@@ -50,11 +59,12 @@ export function createDriver({loadRuntime, emit, now = () => performance.now()})
       const capabilities = runtime.capabilities ?? {};
       const result = await runtime[method]({source, command, input,
         fast:Boolean(capabilities.fast && request.fast),
-        autoDeclare:Boolean(capabilities.autoDeclare && request.autoDeclare)});
+        autoDeclare:Boolean(capabilities.autoDeclare && request.autoDeclare),
+        warnings:repl || !capabilities.warnings ? [] : warnings});
       if (!result || typeof result.ok !== "boolean") throw new Error("Interpreter adapter returned an invalid result.");
       if (repl && typeof result.source !== "string") throw new Error("REPL adapter must return the accepted session source.");
       if (repl) session = true;
-      emit({type:"done", repl, ok:result.ok, seconds:Math.max(0, (now()-start)/1000),
+      emit({type:"done", repl, check:type === "check", ok:result.ok, seconds:Math.max(0, (now()-start)/1000),
         output:output(result.output), errors:output(result.errors),
         source:repl ? result.source : undefined,
         variables:repl ? output(result.variables) : undefined,

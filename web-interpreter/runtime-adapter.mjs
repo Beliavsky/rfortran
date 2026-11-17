@@ -28,15 +28,18 @@ export function createWasiRuntime(module, {build="development"} = {}) {
   let snapshot = null;
   let view = {source:"", variables:"(no variables)", pending:false};
   const reset = () => { snapshot=null; view={source:"",variables:"(no variables)",pending:false}; };
-  async function invoke({source="", input="", command="", autoDeclare}, operation="program") {
+  async function invoke({source="", input="", command="", autoDeclare, warnings=[]}, operation="program") {
       const stdout=capture(), stderr=capture();
-      const repl=operation!=="program";
+      const repl=operation!=="program" && operation!=="check";
       const files=new Map([["program.f90",new File(encoder.encode(source),{readonly:true})]]);
       if (repl) {
         files.set("request.json",new File(encoder.encode(JSON.stringify({operation,source,command,automatic:autoDeclare})),{readonly:true}));
         if (snapshot!==null) files.set("session.json",new File(encoder.encode(snapshot),{readonly:true}));
       }
-      const host=new WASI(repl ? ["rfort-browser","repl"] : ["rfort-browser"], ["NO_COLOR=1", "TERM=dumb"], [
+      // rfort-browser [check] [warning options...]
+      const argv=repl ? ["rfort-browser","repl"]
+        : ["rfort-browser",...(operation==="check" ? ["check"] : []),...warnings];
+      const host=new WASI(argv, ["NO_COLOR=1", "TERM=dumb"], [
         new OpenFile(new File(encoder.encode(input))),stdout.fd,stderr.fd,
         new PreopenDirectory("/",files),
       ],{debug:false});
@@ -87,8 +90,9 @@ export function createWasiRuntime(module, {build="development"} = {}) {
   }
   return {
     build:`rfortran ${build} / WASI interpreter`,
-    capabilities:{fast:false,autoDeclare:true,autoEnd:false,repl:true},
+    capabilities:{fast:false,autoDeclare:true,autoEnd:false,repl:true,warnings:true,check:true},
     runProgram:args=>invoke(args),
+    checkProgram:args=>invoke(args,"check"),
     startSession:args=>{reset();return invoke(args,"init");},
     submit:args=>{
       if (snapshot===null) throw new Error("Start a REPL session first.");

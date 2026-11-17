@@ -90,3 +90,6 @@ body.focus-mode.repl-mode .editor-panel .CodeMirror { height:max(300px,calc(100d
 .source-menu-options { position:absolute; z-index:10; top:calc(100% + 6px); left:0; min-width:175px; padding:6px; background:var(--paper); border:1px solid var(--line); border-radius:6px; box-shadow:0 4px 12px #19342d22; }
 .source-menu-options button { display:block; width:100%; text-align:left; margin:0; }
 #url-error { color:#a44331; }
+.warning-options { display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px; border:1px solid var(--line); border-radius:6px; padding:6px 4px; }
+.warning-options[hidden] { display:none; }
+.warning-options label { font:12px var(--mono); margin:0 6px; display:inline-flex; align-items:center; gap:5px; cursor:pointer; }

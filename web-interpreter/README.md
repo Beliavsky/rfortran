@@ -39,6 +39,25 @@ Opening such a link loads the source into Program mode without executing it.
 Existing edited drafts still require replacement confirmation. Downloads from
 external hosts omit credentials and the playground's referrer.
 
+## Warning options and Check
+
+In Program mode, the **-Wall**, **-Wextra** and **-Wstyle** checkboxes beside
+Run choose the warning groups, as the same options do on the command line (see
+`docs/usage.md`). They are off by default, `-Wextra` does not imply `-Wall`,
+and the browser remembers the last choice. **Check** reports errors and the
+chosen warnings without running the program, which suits programs that read
+input or run for a long time. Warnings appear under Warnings & errors.
+
+A link can choose the options with `flags=`, separated by commas, with or
+without the leading `-`; it overrides the remembered choice:
+
+```text
+https://beliavsky.github.io/rfortran/?flags=Wall,Wstyle&source=...
+```
+
+Bug reports list the options of the last run or check. Other options are
+refused, both by the page and by the interpreter.
+
 ## Build and run locally
 
 From the repository root, with Rust, Python and Node.js 22 or later installed:

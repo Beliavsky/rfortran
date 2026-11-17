@@ -208,7 +208,6 @@ fn first_positional(args: &[std::ffi::OsString]) -> Option<String> {
 
 impl Cli {
     pub fn from_command_line() -> Self {
-        let mut args = Vec::<std::ffi::OsString>::new();
         let mut original=std::env::args_os().collect::<Vec<_>>();
         let mut run_args=Vec::new();
         if let Some(split)=original.iter().position(|a|a=="--") {
@@ -216,6 +215,23 @@ impl Cli {
                 run_args=original.split_off(split+1);original.pop();
             }
         }
+        let args = Self::gcc_style_options(original);
+        let mut app = Self::clap();
+        if first_positional(&args).is_some_and(|a| a.contains(['.', '/', '\\'])) {
+            // clap rejects a source named like a subcommand, such as run.f90
+            // or hello.f, as a mistyped subcommand. Inferring subcommands turns
+            // that check off; no subcommand name contains these characters,
+            // so a source cannot be inferred as one.
+            app = app.setting(structopt::clap::AppSettings::InferSubcommands);
+        }
+        let mut cli=Self::from_clap(&app.get_matches_from(args));cli.run_args=run_args;cli
+    }
+
+    /// Rewrite gfortran-style options such as `-Wall`, `-Wextra`, `-std=f2018`
+    /// and `-DNAME` into the long options that clap parses. The browser
+    /// playground uses this too.
+    pub fn gcc_style_options(original: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+        let mut args = Vec::<std::ffi::OsString>::new();
         for arg in original {
             let text = arg.to_string_lossy();
             match text.as_ref() {
@@ -247,15 +263,7 @@ impl Cli {
                 _ => args.push(arg),
             }
         }
-        let mut app = Self::clap();
-        if first_positional(&args).is_some_and(|a| a.contains(['.', '/', '\\'])) {
-            // clap rejects a source named like a subcommand, such as run.f90
-            // or hello.f, as a mistyped subcommand. Inferring subcommands turns
-            // that check off; no subcommand name contains these characters,
-            // so a source cannot be inferred as one.
-            app = app.setting(structopt::clap::AppSettings::InferSubcommands);
-        }
-        let mut cli=Self::from_clap(&app.get_matches_from(args));cli.run_args=run_args;cli
+        args
     }
 
     /// Whether `path` is fixed source form: by option, else by extension.

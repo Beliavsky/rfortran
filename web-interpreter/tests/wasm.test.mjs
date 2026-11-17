@@ -188,3 +188,43 @@ end
   assert.equal(result.ok,true,result.errors);
   assert.equal(words(result.output),"0 -1 -1 command execution is not supported");
 });
+const warningDemo=`program demo
+implicit none
+integer :: i, unused_count
+real :: x
+x = 0
+do i = 1, 3
+   x = x + i
+end do
+print '(f0.1,1x,i0)', x, command_argument_count()
+end program demo
+`;
+async function runWith(warnings,check=false) {
+  const runtime=createWasiRuntime(await compiled);
+  return check ? runtime.checkProgram({source:warningDemo,warnings}) : runtime.runProgram({source:warningDemo,warnings});
+}
+check("WASM warning options select their warnings and are not program arguments",async()=>{
+  const plain=await runWith([]);
+  assert.equal(plain.ok,true,plain.errors);assert.equal(plain.errors,"");
+  assert.equal(words(plain.output),"6.0 0");
+  const all=await runWith(["-Wall"]);
+  assert.equal(all.ok,true,all.errors);assert.equal(words(all.output),"6.0 0");
+  assert.match(all.errors,/`unused_count` is never used \[unused-variable\]/);
+  assert.doesNotMatch(all.errors,/default-real/);
+  const style=await runWith(["-Wstyle"]);
+  assert.match(style.errors,/`x` declared as default REAL \[default-real\]/);
+  assert.doesNotMatch(style.errors,/unused-variable/);
+  const both=await runWith(["-Wall","-Wextra","-Wstyle"]);
+  assert.match(both.errors,/unused-variable/);assert.match(both.errors,/default-real/);
+});
+check("WASM Check reports warnings and errors without running the program",async()=>{
+  const checked=await runWith(["-Wall"],true);
+  assert.equal(checked.ok,true,checked.errors);
+  assert.match(checked.errors,/unused-variable/);
+  assert.equal(checked.output.trim(),"No errors found. The program was checked, not run.");
+  const runtime=createWasiRuntime(await compiled);
+  const failed=await runtime.checkProgram({source:"program p\nimplicit none\nprint *, y\nend program p\n"});
+  assert.equal(failed.ok,false);assert.match(failed.errors,/\by\b/);assert.equal(failed.output,"");
+  const refused=await runtime.runProgram({source:warningDemo,warnings:["-o","x"]});
+  assert.equal(refused.ok,false);assert.match(refused.errors,/accepts only warning options/);
+});

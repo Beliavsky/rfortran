@@ -481,3 +481,35 @@ test("file reading stops at the limit and locks execution until reading finishes
   await selectFile(p,localFile("blocked.f90","end"));
   assert.notEqual(p.get("source").value,"end");
 });
+test("warning options go with Run and Check, persist, follow ?flags= and appear in reports",()=>{
+  const p=page();
+  assert.equal(p.get("warn-all").checked,false);
+  p.get("warn-all").checked=true;p.get("warn-all").emit("change");
+  p.get("warn-style").checked=true;p.get("warn-style").emit("change");
+  assert.equal(p.storage.get("rfortran.web.warnings"),"-Wall -Wstyle");
+  p.get("check").click();
+  const worker=p.workers[0];
+  assert.equal(worker.sent[0].type,"check");
+  assert.deepEqual([...worker.sent[0].warnings],["-Wall","-Wstyle"]);
+  assert.ok(p.get("check").disabled);assert.ok(p.get("warn-all").disabled);
+  done(worker,{check:true,output:"No errors found.",errors:"warning: x [default-real]"});
+  assert.match(p.get("status").textContent,/^Checked/);
+  assert.equal(p.get("check").disabled,false);
+  p.get("report").click();
+  assert.match(p.get("report-preview").value,/Run status: Checked\nWarning options: -Wall -Wstyle\n/);
+  p.get("run").click();
+  assert.equal(p.workers[1].sent[0].type,undefined);
+  assert.deepEqual([...p.workers[1].sent[0].warnings],["-Wall","-Wstyle"]);
+  const saved=page({drafts:{"rfortran.web.warnings":"-Wextra"}});
+  assert.equal(saved.get("warn-extra").checked,true);assert.equal(saved.get("warn-all").checked,false);
+  const linked=page({search:"?flags=Wall,-Wextra,Wbogus",drafts:{"rfortran.web.warnings":"-Wstyle"}});
+  assert.deepEqual([linked.get("warn-all").checked,linked.get("warn-extra").checked,linked.get("warn-style").checked],[true,true,false]);
+  assert.equal(linked.workers.length,0);
+});
+test("REPL mode hides Check and the warning options",()=>{
+  const p=page();p.get("mode").value="repl";p.get("mode").emit("change");
+  assert.ok(p.get("check").hidden);assert.ok(p.get("warning-options").hidden);
+  p.get("check").emit("click");
+  assert.equal(p.workers[0].sent.length,1);assert.equal(p.workers[0].sent[0].type,"repl-init");
+  assert.deepEqual([...p.workers[0].sent[0].warnings],[]);
+});

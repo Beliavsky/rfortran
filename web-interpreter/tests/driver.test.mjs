@@ -96,3 +96,27 @@ test("configured source limits accept larger programs and apply to replay and co
   await f.driver.handle({sourceLimit:0,input:source});
   assert.match(f.events.at(-1).text,/Standard input.*200000/);
 });
+
+test("Check and warning options reach a capable adapter and other options are refused",async () => {
+  const events=[], calls=[];
+  const adapter=(capabilities) => async () => ({
+    capabilities,
+    runProgram:async args => { calls.push(["run",args]); return {ok:true,output:""}; },
+    checkProgram:async args => { calls.push(["check",args]); return {ok:true,output:"No errors found."}; },
+  });
+  const driver=createDriver({emit:e=>events.push(e),loadRuntime:adapter({warnings:true,check:true})});
+  await driver.handle({type:"check",source:"end",warnings:["-Wall","-Wstyle","-Wall"]});
+  assert.deepEqual(calls[0][0],"check");
+  assert.deepEqual(calls[0][1].warnings,["-Wall","-Wstyle"]);
+  assert.equal(events.at(-1).check,true);assert.equal(events.at(-1).repl,false);
+  await driver.handle({source:"end",warnings:["-Wextra"]});
+  assert.deepEqual(calls[1],["run",calls[1][1]]);assert.deepEqual(calls[1][1].warnings,["-Wextra"]);
+  for (const warnings of [["-o","x"],["-Wno-unused"],"-Wall"]) {
+    await driver.handle({source:"end",warnings});
+    assert.match(events.at(-1).text,/Warning options must be chosen from -Wall, -Wextra, -Wstyle/);
+  }
+  assert.equal(calls.length,2);
+  const old=createDriver({emit:e=>events.push(e),loadRuntime:adapter({})});
+  await old.handle({source:"end",warnings:["-Wall"]});
+  assert.deepEqual(calls[2][1].warnings,[]);
+});
