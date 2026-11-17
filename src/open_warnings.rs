@@ -239,7 +239,10 @@ pub(crate) fn check(
     let (mut enabled, error) = crate::unused::selected(CATEGORY, false, settings, options);
     let disabled = options.iter().rev().find(|o| o.trim_start_matches("no-") == CATEGORY).is_some_and(|o| o.starts_with("no-"));
     if !disabled && !settings.allow.contains(CATEGORY) { enabled = true; }
-    let (fixed, fixed_error) = crate::unused::selected(FIXED, false, settings, options);
+    // -Wfixed-unit is in -Wextra, not -Wall.
+    let mut extra_only = settings.clone();
+    extra_only.wall = false;
+    let (fixed, fixed_error) = crate::unused::selected(FIXED, false, &extra_only, options);
     if !enabled && !fixed { return Ok(()); }
     let tokens = crate::lexer::lex(src);
     let mut failed = vec![];
