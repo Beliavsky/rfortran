@@ -6,10 +6,10 @@ import {readFileSync} from "node:fs";
 const html=readFileSync(new URL("../index.html",import.meta.url),"utf8");
 const script=readFileSync(new URL("../app.js",import.meta.url),"utf8");
 const indentScript=readFileSync(new URL("../indent.js",import.meta.url),"utf8");
-function page({drafts={},brokenStorage=false,withEditor=false,confirmResult=true,search="",fetchImpl=async()=>{throw new TypeError("Network error");}}={}) {
+function page({drafts={},brokenStorage=false,withEditor=false,confirmResult=true,search="",hash="",clipboardFails=false,fetchImpl=async()=>{throw new TypeError("Network error");}}={}) {
   const nodes=new Map(),workers=[],downloads=[],opened=[],timers=new Map(),blobs=[];
   const storage=new Map(Object.entries(drafts));
-  const confirmations=[];
+  const confirmations=[], clipboard=[], prompts=[];
   const requests=[];
   let focus=null, serial=0;
   class Element {
@@ -83,7 +83,9 @@ function page({drafts={},brokenStorage=false,withEditor=false,confirmResult=true
   const context=vm.createContext({document,Worker,URL:TestURL,URLSearchParams,Blob,TextDecoder,AbortController,
     fetch:(...args)=>{requests.push(args);return fetchImpl(...args);},
     CodeMirror:withEditor ? CodeMirror : undefined,
-    navigator:{userAgent:"test browser"},window:{location:{search},open:(...args)=>opened.push(args)},
+    navigator:{userAgent:"test browser",clipboard:{writeText:async text=>{if(clipboardFails)throw Error("denied");clipboard.push(text);}}},
+    window:{location:{search,hash,origin:"https://example.test",pathname:"/rfortran/"},open:(...args)=>opened.push(args)},
+    prompt:(message,value)=>{prompts.push(value);return null;},
     localStorage:{getItem:key=>{if(brokenStorage)throw Error();return storage.get(key)??null;},
       setItem:(key,value)=>{if(brokenStorage)throw Error();storage.set(key,value);}},
     confirm:message=>{confirmations.push(message);return confirmResult;},alert:()=>{},
@@ -92,7 +94,7 @@ function page({drafts={},brokenStorage=false,withEditor=false,confirmResult=true
   });
   vm.runInContext(indentScript,context);
   vm.runInContext(script,context);
-  return {get:id=>nodes.get(id),requests,confirmations,workers,downloads,opened,blobs,storage,classes,timers,editor:codeEditor,editorOptions};
+  return {get:id=>nodes.get(id),clipboard,prompts,requests,confirmations,workers,downloads,opened,blobs,storage,classes,timers,editor:codeEditor,editorOptions};
 }
 function done(worker,props={}) {
   worker.reply({type:"done",ok:true,output:"",errors:"",seconds:0.01,...props});
@@ -518,4 +520,45 @@ test("-Weverything is a fourth warning option and a flags= value",()=>{
   assert.equal(p.get("warn-every").checked,true);
   p.get("check").click();
   assert.deepEqual([...p.workers[0].sent[0].warnings],["-Weverything"]);
+});
+test("#code= links load the program without running it, as fortran-playground writes them",()=>{
+  const source='program p\nprint *, "a & b = 50%"\nend program p\n';
+  const encoded=encodeURIComponent(source).replace(/[!'()*]/g,c=>"%"+c.charCodeAt(0).toString(16).toUpperCase());
+  const p=page({hash:"#code="+encoded});
+  assert.equal(p.get("source").value,source);
+  assert.equal(p.workers.length,0);assert.equal(p.requests.length,0);
+  assert.match(p.get("status").textContent,/Loaded the program in the link/);
+  const both=page({hash:"#code="+encoded,search:"?source=https%3A%2F%2Fexample.com%2Fx.f90"});
+  assert.equal(both.get("source").value,source);assert.equal(both.requests.length,0);
+  assert.match(both.get("errors").textContent,/both #code= and \?source=/);
+  const kept=page({hash:"#code="+encoded,drafts:{"rfortran.web.source":"my edits"},confirmResult:false});
+  assert.equal(kept.get("source").value,"my edits");assert.equal(kept.confirmations.length,1);
+  const bad=page({hash:"#code=%E0%A4%A"});
+  assert.match(bad.get("errors").textContent,/not valid percent-encoded/);
+  const big=page({hash:"#code="+"x".repeat(11),drafts:{"rfortran.web.source-limit":"10"}});
+  assert.match(big.get("errors").textContent,/11 characters, more than the 10-character source limit/);
+  assert.match(big.get("source").value,/Hello from rfortran/);
+});
+test("Copy link puts the program and warning options in a link that opens it again",async()=>{
+  const source='program p\nprint *, "x#y&z"\nend program p\n';
+  const p=page({drafts:{"rfortran.web.source":source,"rfortran.web.warnings":"-Wall -Wstyle"}});
+  await p.get("copy-link").emit("click");
+  const link=p.clipboard[0];
+  assert.equal(link,"https://example.test/rfortran/?flags=Wall,Wstyle#code="+encodeURIComponent(source));
+  assert.match(p.get("status").textContent,/Link copied/);
+  const url=new URL(link);
+  const opened=page({search:url.search,hash:url.hash});
+  assert.equal(opened.get("source").value,source);
+  assert.equal(opened.get("warn-all").checked,true);assert.equal(opened.get("warn-style").checked,true);
+  const fallback=page({drafts:{"rfortran.web.source":source},clipboardFails:true});
+  await fallback.get("copy-link").emit("click");
+  assert.equal(fallback.prompts[0],"https://example.test/rfortran/#code="+encodeURIComponent(source));
+  const long=page({drafts:{"rfortran.web.source":"x".repeat(9000)}});
+  await long.get("copy-link").emit("click");
+  assert.match(long.get("errors").textContent,/characters long/);
+  const empty=page({drafts:{"rfortran.web.source":"  "}});
+  await empty.get("copy-link").emit("click");
+  assert.equal(empty.clipboard.length,0);assert.match(empty.get("status").textContent,/Nothing to share/);
+  const repl=page();repl.get("mode").value="repl";repl.get("mode").emit("change");
+  assert.ok(repl.get("copy-link").hidden);
 });

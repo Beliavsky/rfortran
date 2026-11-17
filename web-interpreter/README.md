@@ -39,6 +39,26 @@ Opening such a link loads the source into Program mode without executing it.
 Existing edited drafts still require replacement confirmation. Downloads from
 external hosts omit credentials and the playground's referrer.
 
+A link can also carry the program itself, after `#code=`, percent-encoded:
+
+```text
+https://beliavsky.github.io/rfortran/?flags=Wall#code=program%20hello%0Aprint%20%2A%2C%20%22hi%22%0Aend%20program%20hello%0A
+```
+
+**Copy link** makes one from the editor, with the chosen warning options in
+`?flags=`; when the browser does not allow copying, it shows the link to copy
+by hand. Nothing is uploaded: browsers do not send the part after `#` to the
+server. Links longer than 8,000 characters work, but some chat and mail tools
+cut them off, so the playground warns; for a long program, put the file online
+and share a `?source=` link instead. Opening a `#code=` link loads the program
+without running it, asks before replacing edited code, and applies the source
+limit; when a link has both `#code=` and `?source=`, `#code=` is used.
+
+The format is that of
+[fortran-playground](https://github.com/beliavsky/fortran-playground)'s links,
+so its `xplayground_links.py` makes links for this playground with
+`--playground-url https://beliavsky.github.io/rfortran/`.
+
 ## Warning options and Check
 
 In Program mode, the **-Wall**, **-Wextra**, **-Wstyle** and **-Weverything**

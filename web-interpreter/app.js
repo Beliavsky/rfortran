@@ -28,6 +28,7 @@ const isRepl = () => byId("mode").value === "repl";
 function updateSourceControls() {
   const locked = busy || loadingSource;
   byId("open-source").hidden = isRepl();
+  byId("copy-link").hidden = isRepl();
   byId("open-url").disabled = locked;
   byId("url-load").disabled = locked;
   byId("source-url").readOnly = locked;
@@ -398,6 +399,33 @@ byId("source").addEventListener("keydown", event => {
     sourceChanged();
   }
 });
+// Copy link: a link with the editor's program in #code= and the chosen
+// warning options in ?flags=.
+const LONG_LINK = 8000;
+function shareLink() {
+  const flags = selectedWarnings().map(f => f.slice(1)).join(",");
+  const base = `${window.location?.origin || ""}${window.location?.pathname || ""}`;
+  return base + (flags ? `?flags=${flags}` : "") + "#code=" + encodeURIComponent(sourceText());
+}
+byId("copy-link").addEventListener("click", async () => {
+  if (isRepl()) return;
+  if (!sourceText().trim()) {
+    byId("status").textContent = "Nothing to share: the editor is empty";
+    return;
+  }
+  let link;
+  try { link = shareLink(); }
+  catch {
+    appendText("errors", "The source contains text that cannot be put in a link.");
+    return;
+  }
+  let copied = false;
+  try { await navigator.clipboard.writeText(link); copied = true; } catch { /* Shown below instead. */ }
+  if (!copied) prompt("Copy this link:", link);
+  byId("status").textContent = copied ? `Link copied (${link.length} characters)` : "Copy the link from the dialog";
+  if (link.length > LONG_LINK)
+    appendText("errors", `The link is ${link.length} characters long. Some chat and mail tools cut off links that long; for a long program, put the file online and share a ?source= link to its raw URL.`);
+});
 byId("download").addEventListener("click", () => {
   let source = sourceText();
   if (isRepl()) {
@@ -673,9 +701,36 @@ byId("report-close").addEventListener("click", () => byId("report-dialog").close
 
 updateSourceControls();
 
-// Shared links load source only; they never start the interpreter.
+// Shared links load source only; they never start the interpreter. #code=
+// carries the program itself, percent-encoded, in the format of
+// fortran-playground's links; ?source= names a file to fetch. The fragment
+// after # is never sent to a server.
+function loadLinkedCode(encoded, alsoSource) {
+  let text;
+  try { text = decodeURIComponent(encoded); }
+  catch {
+    appendText("errors", "The link's #code= part is not valid percent-encoded text, so nothing was loaded.");
+    return;
+  }
+  if (!text.trim()) {
+    appendText("errors", "The link's #code= part is empty, so nothing was loaded.");
+    return;
+  }
+  const limit = validLimit(byId("source-limit").value, Number.MAX_SAFE_INTEGER) ? Number(byId("source-limit").value) : 200000;
+  if (limit && text.length > limit) {
+    appendText("errors", `The program in the link has ${text.length} characters, more than the ${limit}-character source limit. Increase Source limit under Execution limits, or set it to 0, and open the link again.`);
+    return;
+  }
+  if (acceptSource(text, "program.f90", byId("status").textContent)) {
+    byId("status").textContent = "Loaded the program in the link";
+    if (alsoSource) appendText("errors", "This link has both #code= and ?source=; the program in #code= was loaded.");
+  }
+}
+const linkedCode = /(?:^#|&)code=([^&]*)/.exec(window.location?.hash || "")?.[1];
 const linkedSource = new URLSearchParams(window.location?.search || "").get("source");
-if (linkedSource) {
+if (linkedCode !== undefined) {
+  loadLinkedCode(linkedCode, linkedSource !== null);
+} else if (linkedSource) {
   byId("source-url").value = linkedSource;
   byId("open-url").click();
   void loadSourceUrl();
