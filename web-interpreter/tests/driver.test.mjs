@@ -113,7 +113,7 @@ test("Check and warning options reach a capable adapter and other options are re
   assert.deepEqual(calls[1],["run",calls[1][1]]);assert.deepEqual(calls[1][1].warnings,["-Wextra"]);
   for (const warnings of [["-o","x"],["-Wno-unused"],"-Wall"]) {
     await driver.handle({source:"end",warnings});
-    assert.match(events.at(-1).text,/Warning options must be chosen from -Wall, -Wextra, -Wstyle/);
+    assert.match(events.at(-1).text,/Warning options must be chosen from -Wall, -Wextra, -Wstyle, -Weverything/);
   }
   assert.equal(calls.length,2);
   const old=createDriver({emit:e=>events.push(e),loadRuntime:adapter({})});

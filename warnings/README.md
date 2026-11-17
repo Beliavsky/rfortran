@@ -15,7 +15,9 @@ Each program starts with a header:
 ```
 
 `Enabled by` names the settings that report it: `default` (reported without
-options), `-Wall`, `-Wextra`, `-Wstyle`, or `-W<category> only`. A line
+options), `-Wall`, `-Wextra`, `-Wstyle`, `-Weverything` for advice that no
+other group includes, or `-W<category> only`. `-Weverything` reports every
+category except those marked `only`. A line
 `! gfortran: no (reason)` marks a program using a feature gfortran does not
 support yet.
 
@@ -24,6 +26,11 @@ Every line that should be reported carries a comment naming the category:
 ```fortran
 integer :: counter    ! expect: unused-variable
 ```
+
+A comment line `! expect-next: <category>` marks the line after it instead,
+for code that a comment of its own would change: `could-be-one-line-if` is not
+reported for a block containing a comment, which the one-line form could not
+keep.
 
 The other lines are deliberately similar code that should **not** be
 reported, such as the same check guarded correctly, or a variable that is used.
@@ -34,6 +41,7 @@ A tool that reports them gives a false alarm.
 ```cmd
 rfort -Wunused-variable check unused-variable.f90
 rfort -Wall check unused-variable.f90
+rfort -Weverything check unused-variable.f90
 ```
 
 Without installing rfortran, use the **try it** links below, which open the
@@ -158,6 +166,20 @@ run.
 | [`trailing-whitespace`](trailing-whitespace.f90) | `-Wstyle` | A free-form line ending in spaces or tabs, invisible in most editors and a source of spurious differences between versions. | [try it](https://beliavsky.github.io/rfortran/?flags=Wstyle&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Ftrailing-whitespace.f90) |
 | [`unnamed-exit`](unnamed-exit.f90) | `-Wstyle` | EXIT or CYCLE without a construct name. | [try it](https://beliavsky.github.io/rfortran/?flags=Wstyle&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Funnamed-exit.f90) |
 | [`use-without-only`](use-without-only.f90) | `-Wstyle` | USE without ONLY imports every public name of the module, so a reader cannot tell where a name comes from, and names added to the module later can clash. | [try it](https://beliavsky.github.io/rfortran/?flags=Wstyle&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Fuse-without-only.f90) |
+| [`constant-condition-all`](constant-condition-all.f90) | `-Weverything` | A condition whose value is known from named constants, such as a debug setting. -Wconstant-condition, in -Wextra, does not report named constants, since they are usually settings; this reports them too. | [try it](https://beliavsky.github.io/rfortran/?flags=Weverything&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Fconstant-condition-all.f90) |
+| [`conversion`](conversion.f90) | `-Weverything` | An implicit conversion that may lose information: REAL to INTEGER, a wider kind to a narrower one, or COMPLEX to REAL. | [try it](https://beliavsky.github.io/rfortran/?flags=Weverything&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Fconversion.f90) |
+| [`could-be-at`](could-be-at.f90) | `-Weverything` | trim(s) in an output list, which the Fortran 2023 AT edit descriptor replaces: AT writes a CHARACTER value without its trailing blanks. | [try it](https://beliavsky.github.io/rfortran/?flags=Weverything&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Fcould-be-at.f90) |
+| [`could-be-conditional`](could-be-conditional.f90) | `-Weverything` | An IF block whose branches each assign one value to the same variable, which a Fortran 2023 conditional expression writes in one statement: y = (x > 0 ? sqrt(x) : -1.0). | [try it](https://beliavsky.github.io/rfortran/?flags=Weverything&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Fcould-be-conditional.f90) |
+| [`could-be-function`](could-be-function.f90) | `-Weverything` | A subroutine whose only effect is to define one INTENT(OUT) argument. | [try it](https://beliavsky.github.io/rfortran/?flags=Weverything&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Fcould-be-function.f90) |
+| [`could-be-one-line-if`](could-be-one-line-if.f90) | `-Weverything` | An IF block holding a single action statement, which a one-line IF writes more compactly, as `if (x > 0) x = sqrt(x)`, when it fits on the line. -Wone-line-if reports the reverse. | [try it](https://beliavsky.github.io/rfortran/?flags=Weverything&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Fcould-be-one-line-if.f90) |
+| [`early-return`](early-return.f90) | `-Weverything` | A RETURN after which statements of the procedure can still run, as `if (n <= 0) return`. | [try it](https://beliavsky.github.io/rfortran/?flags=Weverything&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Fearly-return.f90) |
+| [`implicit-interface`](implicit-interface.f90) | `-Weverything` | A call of an external procedure without an explicit interface. | [try it](https://beliavsky.github.io/rfortran/?flags=Weverything&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Fimplicit-interface.f90) |
+| [`integer-division-all`](integer-division-all.f90) | `-Weverything` | Every integer division, which truncates toward zero: -7/2 is -3, while Python's -7//2 is -4. | [try it](https://beliavsky.github.io/rfortran/?flags=Weverything&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Finteger-division-all.f90) |
+| [`merge-evaluation`](merge-evaluation.f90) | `-Weverything` | A MERGE argument that computes something, as x + 1 or f(x). | [try it](https://beliavsky.github.io/rfortran/?flags=Weverything&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Fmerge-evaluation.f90) |
+| [`quote-style`](quote-style.f90) | `-Weverything` | A CHARACTER literal in single quotes, when double quotes are preferred (the default), or in double quotes with -Wquote-style=single. | [try it](https://beliavsky.github.io/rfortran/?flags=Weverything&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Fquote-style.f90) |
+| [`real-literal-kind`](real-literal-kind.f90) | `-Weverything` | A REAL literal without a kind suffix or D exponent, which is default REAL whatever it is assigned to. | [try it](https://beliavsky.github.io/rfortran/?flags=Weverything&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Freal-literal-kind.f90) |
+| [`unhandled-io-error`](unhandled-io-error.f90) | `-Weverything` | In a procedure, an OPEN without IOSTAT= or ERR=, or a READ without IOSTAT=, ERR= or END=. | [try it](https://beliavsky.github.io/rfortran/?flags=Weverything&source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Fwarnings%2Funhandled-io-error.f90) |
+| [`one-line-if`](one-line-if.f90) | `-Wone-line-if` only | A one-line IF statement, for projects that always write the IF block form, which takes further statements without restructuring. |  |
 
 ## License
 

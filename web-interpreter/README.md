@@ -41,10 +41,11 @@ external hosts omit credentials and the playground's referrer.
 
 ## Warning options and Check
 
-In Program mode, the **-Wall**, **-Wextra** and **-Wstyle** checkboxes beside
-Run choose the warning groups, as the same options do on the command line (see
-`docs/usage.md`). They are off by default, `-Wextra` does not imply `-Wall`,
-and the browser remembers the last choice. **Check** reports errors and the
+In Program mode, the **-Wall**, **-Wextra**, **-Wstyle** and **-Weverything**
+checkboxes beside Run choose the warning groups, as the same options do on the
+command line (see `docs/usage.md`); `-Weverything` enables every warning.
+They are off by default, `-Wextra` does not imply `-Wall`, and the browser
+remembers the last choice. **Check** reports errors and the
 chosen warnings without running the program, which suits programs that read
 input or run for a long time. Warnings appear under Warnings & errors.
 

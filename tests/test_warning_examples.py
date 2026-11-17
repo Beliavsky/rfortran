@@ -9,7 +9,9 @@ deliberately not reported. This checks, for each file:
   lines;
 - the group in the header reports the same lines, and a narrower setting
   reports none (no option for a -Wall warning; -Wall, -Wextra and -Wstyle
-  together for one enabled only by its own option);
+  together for one enabled only by -Weverything or its own option);
+- -Weverything reports the same lines, unless the header says the category
+  is enabled by its own option only;
 - gfortran, when installed, accepts the program.
 
 Run after cargo build --bin rfort: python tests/test_warning_examples.py
@@ -26,6 +28,7 @@ from test_record_read import ROOT, COMPILER
 
 EXAMPLES = ROOT / "warnings"
 GROUPS = ("-Wall", "-Wextra", "-Wstyle")
+EVERYTHING = "-Weverything"
 
 
 def header(path):
@@ -39,11 +42,14 @@ def header(path):
 
 
 def expected_lines(path, category):
+    """The lines marked `! expect: <category>`, and the lines after a
+    comment line `! expect-next: <category>`, for code that a comment of its
+    own would change."""
     lines = set()
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        marker = re.search(r"!\s*expect:\s*([\w\-, ]+)", line)
-        if marker and category in [c.strip() for c in marker.group(1).split(",")]:
-            lines.add(number)
+        marker = re.search(r"!\s*expect(-next)?:\s*([\w\-, ]+)", line)
+        if marker and category in [c.strip() for c in marker.group(2).split(",")]:
+            lines.add(number + 1 if marker.group(1) else number)
     return lines
 
 
@@ -79,13 +85,18 @@ class WarningExamples(unittest.TestCase):
                 for setting in enabled:
                     if setting == "default":
                         options = []
-                    elif setting in GROUPS:
+                    elif setting in GROUPS or setting == EVERYTHING:
                         options = [setting]
                     else:
                         self.assertEqual(setting, f"-W{category} only", f"unknown setting {setting!r}")
                         continue
                     got, output = reported_lines(path, category, options)
                     self.assertEqual(got, expected, f"with {options or 'no options'}:\n{output}")
+                # -Weverything reports every category but those enabled by
+                # their own option only.
+                only = f"-W{category} only" in enabled
+                got, output = reported_lines(path, category, [EVERYTHING])
+                self.assertEqual(got, set() if only else expected, f"with {EVERYTHING}:\n{output}")
                 if "default" not in enabled:
                     # Neither no options nor the other groups report it.
                     others = [g for g in GROUPS if g not in enabled]

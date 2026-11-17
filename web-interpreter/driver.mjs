@@ -12,7 +12,7 @@ function text(value, label, limit = LIMIT) {
   return value;
 }
 // Warning options the page offers; the interpreter rejects any other option.
-export const WARNING_OPTIONS = ["-Wall", "-Wextra", "-Wstyle"];
+export const WARNING_OPTIONS = ["-Wall", "-Wextra", "-Wstyle", "-Weverything"];
 function warningOptions(value) {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.some(o => !WARNING_OPTIONS.includes(o)))

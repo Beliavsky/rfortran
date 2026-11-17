@@ -122,6 +122,9 @@ pub fn print_help() {
     println!("                      unchecked-status, intrinsic-shadow, keyword-name, fixed-unit,");
     println!("                      preconnected-unit");
     println!("                      As in gfortran, it does not imply -Wall; use -Wall -Wextra");
+    println!("  -Weverything        Enable every warning: -Wall, -Wextra, -Wstyle and all opt-in advice,");
+    println!("                      except -Wone-line-if, the reverse of -Wcould-be-one-line-if;");
+    println!("                      -Wno-<category> still turns one off");
     println!("  -std=<revision>     Check implemented features: f90, f95, f2003, f2008, f2018, f2023");
     println!("                      Default: permissive; revision checks are partial");
     println!("  -Wunused             Enable all unused-declaration warnings");

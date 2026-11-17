@@ -186,6 +186,10 @@ const STYLE: &[&str] = &[
     "old-array-constructor",
     "redundant-use",
 ];
+/// Categories that -Weverything leaves out: `one-line-if` reports the one-line
+/// IFs that `could-be-one-line-if` suggests. (`quote-style` is included with
+/// its default, double quotes.)
+pub(crate) const EVERYTHING_EXCEPT: &[&str] = &["one-line-if"];
 fn canonical(name: &str) -> &str {
     match name {
         "unused-constant" => "unused-parameter",
@@ -202,7 +206,7 @@ pub fn validate_options(options: &[String]) -> Result<()> {
         let name = canonical(name);
         let line_length = name.strip_prefix("line-length=").is_some_and(|n| n.parse::<usize>().is_ok_and(|n| n > 0));
         let quote_style = matches!(name, "quote-style=double" | "quote-style=single");
-        if !CATEGORIES.contains(&name) && !line_length && !quote_style && !matches!(name, "unused" | "unused-private" | "extra" | "style") {
+        if !CATEGORIES.contains(&name) && !line_length && !quote_style && !matches!(name, "unused" | "unused-private" | "extra" | "style" | "everything") {
             bail!("unknown warning option `{option}`");
         }
     }
@@ -272,6 +276,11 @@ pub(crate) fn selected_as(
         }
     }
     // -Wstyle is a group in the same way.
+    // -Weverything: every category except the reverse preferences, which
+    // would report the opposite of another category's advice.
+    if !EVERYTHING_EXCEPT.contains(&category) && options.iter().any(|o| o == "everything") {
+        enabled = true;
+    }
     if style {
         for option in options {
             match option.as_str() {

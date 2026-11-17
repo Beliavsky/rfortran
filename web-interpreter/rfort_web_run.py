@@ -31,9 +31,9 @@ import urllib.request
 from pathlib import Path
 
 SITE = "https://beliavsky.github.io/rfortran/"
-WARNINGS = ("-Wall", "-Wextra", "-Wstyle")
+WARNINGS = ("-Wall", "-Wextra", "-Wstyle", "-Weverything")
 # What the interpreter accepts beyond running a program, as build.json lists it.
-NEEDS = {"check": "--check", "warnings": "-Wall, -Wextra and -Wstyle"}
+NEEDS = {"check": "--check", "warnings": "-Wall, -Wextra and -Wstyle", "everything": "-Weverything"}
 
 
 def cache_dir():
@@ -108,7 +108,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                      epilog="Options are those of the playground; see " + SITE)
     parser.add_argument("sources", nargs="+", type=Path, help="Fortran source files, joined in order")
-    for option, text in zip(WARNINGS, ("common warnings", "opt-in advice that -Wall leaves out", "style advice")):
+    for option, text in zip(WARNINGS, ("common warnings", "opt-in advice that -Wall leaves out", "style advice",
+                                       "every warning")):
         parser.add_argument(option, action="append_const", const=option, dest="warnings", help=f"enable {text}")
     parser.add_argument("--check", action="store_true", help="report errors and warnings without running the program")
     parser.add_argument("--stdin", metavar="FILE", help="standard input for the program; - reads this script's input")
@@ -134,7 +135,8 @@ def main(argv=None):
         print(f"rfort_web_run: {error}", file=sys.stderr)
         return 2
     features = set(info.get("features", []))
-    for feature, wanted in (("check", args.check), ("warnings", bool(warnings))):
+    for feature, wanted in (("check", args.check), ("warnings", bool(warnings)),
+                            ("everything", "-Weverything" in warnings)):
         if wanted and feature not in features:
             print(f"rfort_web_run: the playground's interpreter (build {info.get('commit')}) does not support "
                   f"{NEEDS[feature]} yet", file=sys.stderr)

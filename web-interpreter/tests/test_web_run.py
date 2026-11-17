@@ -63,6 +63,12 @@ class WebRun(unittest.TestCase):
         self.assertIn("[default-real]", warned.stderr)
         self.assertIn("demo.f90:3:", warned.stderr)
 
+    def test_everything(self):
+        (self.dir / "quotes.f90").write_text("program q\nimplicit none\nprint *, 'single'\nend program q\n", encoding="utf-8")
+        result = self.run_script("-Weverything", "--check", "quotes.f90")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("[quote-style]", result.stderr)
+
     def test_check_does_not_run(self):
         result = self.run_script("--check", "-Wall", "demo.f90")
         self.assertEqual(result.returncode, 0, result.stderr)

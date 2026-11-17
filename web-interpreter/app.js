@@ -94,7 +94,7 @@ for (const [id, fallback, max] of limitSettings) {
 }
 // Warning options for Run and Check, as on the command line. A link's
 // ?flags=Wall,Wstyle chooses them; otherwise the last choice is kept.
-const warningOptions = new Map([["warn-all", "-Wall"], ["warn-extra", "-Wextra"], ["warn-style", "-Wstyle"]]);
+const warningOptions = new Map([["warn-all", "-Wall"], ["warn-extra", "-Wextra"], ["warn-style", "-Wstyle"], ["warn-every", "-Weverything"]]);
 const warningIds = [...warningOptions.keys()];
 const selectedWarnings = () => warningIds.filter(id => byId(id).checked).map(id => warningOptions.get(id));
 function chooseWarnings(options) {

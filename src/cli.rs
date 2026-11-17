@@ -243,6 +243,13 @@ impl Cli {
                 // Maximum speed: the heaviest optimization, without run-time checks.
                 "-fast" | "--fast" => { args.push("--nocheck".into()); args.push("-O3".into()); }
                 "--Wextra" | "--wextra" => { args.push("--warning".into()); args.push("extra".into()); }
+                // Every warning: -Wall, which also enables older checks, and
+                // every opt-in category.
+                "-Weverything" | "--Weverything" => {
+                    args.push("--Wall".into());
+                    args.push("--warning".into());
+                    args.push("everything".into());
+                }
                 "-ffixed-form" | "-ffree-form" | "-fd-lines-as-code" => args.push(format!("-{text}").into()),
                 "-fd-lines-as-comments" => {}
                 "-cpp" | "-nocpp" => args.push(format!("-{text}").into()),

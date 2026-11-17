@@ -115,6 +115,16 @@ and lifetime diagnostics also identify the related declaration or assignment.
 either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 `-Wno-extra` turns the group off again.
 
+`-Weverything` enables every warning: `-Wall`, `-Wextra`, `-Wstyle` and all
+the opt-in advice that no group includes, such as `-Wconversion`,
+`-Wimplicit-interface` and `-Wquote-style` (with its default, double
+quotes). It leaves out `-Wone-line-if`, which reports the one-line IFs that
+`-Wcould-be-one-line-if` suggests; name it to enable it too. As with the
+other groups, a category option overrides it in either order, so
+`-Weverything -Wno-indentation` drops only indentation advice. It is meant
+for exploring what rfort can report; for a project, choose the groups and
+categories it wants.
+
 | Option | In `-Wall` | In `-Wextra` | Initial scope |
 | --- | --- | --- | --- |
 | `-Wshadow` | No | Yes | Local data declarations hiding enclosing variables or named constants, including USE-associated names |

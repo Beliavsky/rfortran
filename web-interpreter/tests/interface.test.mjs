@@ -513,3 +513,9 @@ test("REPL mode hides Check and the warning options",()=>{
   assert.equal(p.workers[0].sent.length,1);assert.equal(p.workers[0].sent[0].type,"repl-init");
   assert.deepEqual([...p.workers[0].sent[0].warnings],[]);
 });
+test("-Weverything is a fourth warning option and a flags= value",()=>{
+  const p=page({search:"?flags=Weverything"});
+  assert.equal(p.get("warn-every").checked,true);
+  p.get("check").click();
+  assert.deepEqual([...p.workers[0].sent[0].warnings],["-Weverything"]);
+});

@@ -228,3 +228,11 @@ check("WASM Check reports warnings and errors without running the program",async
   const refused=await runtime.runProgram({source:warningDemo,warnings:["-o","x"]});
   assert.equal(refused.ok,false);assert.match(refused.errors,/accepts only warning options/);
 });
+check("WASM -Weverything reports opt-in advice that no other group includes",async()=>{
+  const source="program q\nimplicit none\nprint *, 'single'\nend program q\n";
+  const runtime=createWasiRuntime(await compiled);
+  const groups=await runtime.checkProgram({source,warnings:["-Wall","-Wextra","-Wstyle"]});
+  assert.doesNotMatch(groups.errors,/quote-style/);
+  const every=await runtime.checkProgram({source,warnings:["-Weverything"]});
+  assert.equal(every.ok,true,every.errors);assert.match(every.errors,/\[quote-style\]/);
+});

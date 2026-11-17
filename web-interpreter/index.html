@@ -21,6 +21,7 @@
         <label title="Common warnings, such as unused declarations, format mismatches, unreachable code and infinite loops"><input id="warn-all" type="checkbox"> -Wall</label>
         <label title="Opt-in advice that -Wall leaves out, such as missing INTENT, shadowed names and INTENT(INOUT) arguments that could be INTENT(IN); it does not imply -Wall"><input id="warn-extra" type="checkbox"> -Wextra</label>
         <label title="Style advice after Clerman and Spector, such as old relational operators, declarations without ::, GO TO, obsolescent features and default REAL kinds"><input id="warn-style" type="checkbox"> -Wstyle</label>
+        <label title="Every warning: -Wall, -Wextra, -Wstyle and all opt-in advice, except -Wone-line-if, the reverse of -Wcould-be-one-line-if"><input id="warn-every" type="checkbox"> -Weverything</label>
       </span>
       <select id="example" aria-label="Example program"><option value="hello">Hello, Fortran</option><option value="arrays">Array calculations</option><option value="input">Reading input</option></select>
       <details id="open-source" class="source-menu">
