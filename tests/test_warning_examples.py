@@ -104,10 +104,12 @@ class WarningExamples(unittest.TestCase):
                         got, output = reported_lines(path, category, options)
                         self.assertEqual(got, set(), f"with {options or 'no options'}:\n{output}")
 
-    def test_readme_lists_every_example(self):
+    def test_readme_and_usage_link_every_example(self):
         readme = (EXAMPLES / "README.md").read_text(encoding="utf-8")
+        usage = (ROOT / "docs" / "usage.md").read_text(encoding="utf-8")
         for path in sorted(EXAMPLES.glob("*.f90")):
             self.assertIn(f"]({path.name})", readme, f"{path.name} is missing from warnings/README.md")
+            self.assertIn(f"](../warnings/{path.name})", usage, f"docs/usage.md does not link {path.name}")
 
     @unittest.skipUnless(shutil.which("gfortran"), "gfortran is not installed")
     def test_gfortran_accepts_examples(self):

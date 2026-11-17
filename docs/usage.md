@@ -102,14 +102,20 @@ Regression checks: `python tests/test_integer_overflow.py`.
 
 ## Warnings
 
+Each warning has a small, complete example program in
+[`warnings/`](../warnings/README.md), named after it and linked from the
+warning's name below, with the lines it reports marked. The
+[README](../warnings/README.md) lists them with links that open each one in
+the browser playground.
+
 The following source advice shares the existing `-Wno-<category>`,
 `-Werror=<category>`, and `!#allow(category)` / `!#deny(category)` controls.
 Diagnostics identify original source locations; shadowing, dead-store, aliasing,
 and lifetime diagnostics also identify the related declaration or assignment.
 
 `-Wextra` enables selected opt-in advice that `-Wall` leaves out (including
-`-Wmissing-intent` and `-Wfixed-unit`). `-Wconversion`, `-Wimplicit-interface`,
-`-Wmodule-default-public`, `-Wuse-without-only`, `-Wcould-be-parameter` and `-Wliteral-kind` remain individually selectable. As in gfortran,
+[`-Wmissing-intent`](../warnings/missing-intent.f90) and `-Wfixed-unit`). `-Wconversion`, `-Wimplicit-interface`,
+[`-Wmodule-default-public`](../warnings/module-default-public.f90), `-Wuse-without-only`, `-Wcould-be-parameter` and `-Wliteral-kind` remain individually selectable. As in gfortran,
 `-Wextra` does not imply `-Wall`; use
 `-Wall -Wextra` for both. An option naming a category overrides the group in
 either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
@@ -117,9 +123,9 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 
 `-Weverything` enables every warning: `-Wall`, `-Wextra`, `-Wstyle` and all
 the opt-in advice that no group includes, such as `-Wconversion`,
-`-Wimplicit-interface` and `-Wquote-style` (with its default, double
+[`-Wimplicit-interface`](../warnings/implicit-interface.f90) and `-Wquote-style` (with its default, double
 quotes). It leaves out `-Wone-line-if`, which reports the one-line IFs that
-`-Wcould-be-one-line-if` suggests; name it to enable it too. As with the
+[`-Wcould-be-one-line-if`](../warnings/could-be-one-line-if.f90) suggests; name it to enable it too. As with the
 other groups, a category option overrides it in either order, so
 `-Weverything -Wno-indentation` drops only indentation advice. It is meant
 for exploring what rfort can report; for a project, choose the groups and
@@ -127,85 +133,85 @@ categories it wants.
 
 | Option | In `-Wall` | In `-Wextra` | Initial scope |
 | --- | --- | --- | --- |
-| `-Wshadow` | No | Yes | Local data declarations hiding enclosing variables or named constants, including USE-associated names |
+| [`-Wshadow`](../warnings/shadow.f90) | No | Yes | Local data declarations hiding enclosing variables or named constants, including USE-associated names |
 | `-Wmodule-default-public` | No | No | User modules without a standalone default PRIVATE or PUBLIC statement; entity accessibility attributes and lists do not set a default |
-| `-Wuse-without-only` | No | No | USE statements without ONLY for modules in the program or loaded from `.rmod` files, with the suggested ONLY list; see [USE without ONLY](#use-without-only) |
-| `-Wcould-be-parameter` | No | No | Local scalars defined once from a constant expression and never modified, with the suggested PARAMETER declaration; see [Variables that could be named constants](#variables-that-could-be-named-constants) |
-| `-Wliteral-kind` | No | No | Kind numbers in type specifications, literal suffixes and conversion KIND arguments, such as `real(8)`, `real*8`, `1.0_8` and `int(n, 8)`, with ISO_FORTRAN_ENV names suggested; see [Kind numbers](#kind-numbers) |
-| `-Wdefault-real` | No | No | REAL and COMPLEX declarations without a kind; see [Default REAL declarations](#default-real-declarations) |
-| `-Wshadow-dummy-argument` | No | Yes | The corresponding check for dummy arguments, separately selectable |
-| `-Wdead-store` | No | Yes | Straight-line assignments to local scalars overwritten before a read |
-| `-Winteger-division` | Yes | No | Constant integer divisions with a nonzero discarded remainder, including named constants, and integer quotients converted to REAL or COMPLEX, such as `x = n/m` with REAL `x` or `1/n*x`; `real(n/m)` marks truncation as intended |
-| `-Winteger-division-all` | No | No | Every other integer division, including `real(n/m)`, which truncates toward zero (`-7/2` is `-3`, while Python's `-7//2` is `-4`); for code ported from or to Python |
-| `-Wdimension-override` | No | Yes | An entity's own shape or length overriding DIMENSION(...) or the CHARACTER length of its declaration, as `y` in `real, dimension(2) :: x, y(3)`, with the statement rewritten as a suggestion |
-| `-Windentation` | No | No | Free-form construct bodies not indented past their opening statement, statements of one body in different columns, and END, ELSE and CASE statements not aligned with the construct; see [Indentation](#indentation) |
-| `-Wearly-return` | No | No | RETURN statements after which statements of the procedure can still run, such as `if (n <= 0) return` or a RETURN in a loop; a final RETURN is not reported; see [Early RETURN](#early-return) |
-| `-Wcompare-reals` | No | Yes | `==` and `/=` with a REAL or COMPLEX operand, except comparisons with an exact zero |
-| `-Wlogical-comparison` | No | Yes | Comparisons with `.true.` or `.false.`, such as `flag == .true.`, with the LOGICAL value or its `.not.` suggested; also in `-Wstyle` |
+| [`-Wuse-without-only`](../warnings/use-without-only.f90) | No | No | USE statements without ONLY for modules in the program or loaded from `.rmod` files, with the suggested ONLY list; see [USE without ONLY](#use-without-only) |
+| [`-Wcould-be-parameter`](../warnings/could-be-parameter.f90) | No | No | Local scalars defined once from a constant expression and never modified, with the suggested PARAMETER declaration; see [Variables that could be named constants](#variables-that-could-be-named-constants) |
+| [`-Wliteral-kind`](../warnings/literal-kind.f90) | No | No | Kind numbers in type specifications, literal suffixes and conversion KIND arguments, such as `real(8)`, `real*8`, `1.0_8` and `int(n, 8)`, with ISO_FORTRAN_ENV names suggested; see [Kind numbers](#kind-numbers) |
+| [`-Wdefault-real`](../warnings/default-real.f90) | No | No | REAL and COMPLEX declarations without a kind; see [Default REAL declarations](#default-real-declarations) |
+| [`-Wshadow-dummy-argument`](../warnings/shadow-dummy-argument.f90) | No | Yes | The corresponding check for dummy arguments, separately selectable |
+| [`-Wdead-store`](../warnings/dead-store.f90) | No | Yes | Straight-line assignments to local scalars overwritten before a read |
+| [`-Winteger-division`](../warnings/integer-division.f90) | Yes | No | Constant integer divisions with a nonzero discarded remainder, including named constants, and integer quotients converted to REAL or COMPLEX, such as `x = n/m` with REAL `x` or `1/n*x`; `real(n/m)` marks truncation as intended |
+| [`-Winteger-division-all`](../warnings/integer-division-all.f90) | No | No | Every other integer division, including `real(n/m)`, which truncates toward zero (`-7/2` is `-3`, while Python's `-7//2` is `-4`); for code ported from or to Python |
+| [`-Wdimension-override`](../warnings/dimension-override.f90) | No | Yes | An entity's own shape or length overriding DIMENSION(...) or the CHARACTER length of its declaration, as `y` in `real, dimension(2) :: x, y(3)`, with the statement rewritten as a suggestion |
+| [`-Windentation`](../warnings/indentation.f90) | No | No | Free-form construct bodies not indented past their opening statement, statements of one body in different columns, and END, ELSE and CASE statements not aligned with the construct; see [Indentation](#indentation) |
+| [`-Wearly-return`](../warnings/early-return.f90) | No | No | RETURN statements after which statements of the procedure can still run, such as `if (n <= 0) return` or a RETURN in a loop; a final RETURN is not reported; see [Early RETURN](#early-return) |
+| [`-Wcompare-reals`](../warnings/compare-reals.f90) | No | Yes | `==` and `/=` with a REAL or COMPLEX operand, except comparisons with an exact zero |
+| [`-Wlogical-comparison`](../warnings/logical-comparison.f90) | No | Yes | Comparisons with `.true.` or `.false.`, such as `flag == .true.`, with the LOGICAL value or its `.not.` suggested; also in `-Wstyle` |
 | `-Wstyle` | No | No | The style group below; see [Style warnings](#style-warnings) |
-| `-Wold-relational` | No | No | `.lt.`, `.le.`, `.eq.`, `.ne.`, `.gt.` and `.ge.`, with the statement rewritten using `<`, `<=`, `==`, `/=`, `>` and `>=` |
-| `-Wmissing-double-colon` | No | No | Type declarations without `::`, such as `integer i, j` |
-| `-Wlabeled-do` | No | No | DO loops ended by a labeled statement, such as `do 10 i = 1, n ... 10 continue` |
-| `-Wdouble-precision` | No | No | DOUBLE PRECISION and DOUBLE COMPLEX, with `real(dp)` and `complex(dp)` suggested |
-| `-Wbare-end` | No | No | END statements of programs, modules, procedures and derived types without the name, such as `end` or `end subroutine` |
-| `-Wkeyword-case` | No | No | Keywords written in more than one case in a file, in one warning per file |
-| `-Wtabs` | No | No | Tab characters in free-form code, in one warning per file |
-| `-Wline-length[=N]` | No | No | Free-form lines longer than 132 characters, or N, in one warning per file |
-| `-Wsemicolon` | No | No | Lines with more than one statement, such as `x = 1; y = 2`, and free-form lines ending in a semicolon; a CASE, TYPE IS, CLASS IS or RANK selector followed by one statement, such as `case ("cos"); y = cos(x)`, is not reported; in one warning per file |
-| `-Wtrailing-whitespace` | No | No | Free-form lines ending in spaces or tabs, in one warning per file |
-| `-Wunnamed-exit` | No | No | EXIT and CYCLE without a construct name, in one warning per DO loop |
-| `-Wgoto` | No | No | GO TO statements |
-| `-Wobsolescent` | No | No | Obsolescent and deleted features: computed and assigned GO TO, arithmetic IF, ASSIGN, COMMON, EQUIVALENCE, ENTRY, BLOCK DATA, FORALL, PAUSE, CHARACTER*length and alternate returns |
-| `-Wstop-in-procedure` | No | No | STOP in a function or subroutine; ERROR STOP is not reported |
-| `-Wassumed-size` | No | No | Assumed-size dummy arrays, such as `x(*)` or `y(n,*)`, outside BIND(C) procedures |
-| `-Wredundant-implicit` | No | No | IMPLICIT NONE in a module or internal procedure, or a submodule, whose host's IMPLICIT NONE already applies; interface bodies, which do not inherit, are not reported |
-| `-Wname-case` | No | No | A name written in a case different from its declaration, or from its first appearance, such as `X` for a variable declared `x`; in one warning per name |
-| `-Wduplicate-constant` | No | No | REAL and COMPLEX named constants, and kind parameters such as `dp`, defined in more than one scope, such as `pi` in several procedures or modules; definitions with different values, such as `3.14159` and `3.141592653589793_dp`, are reported as such |
-| `-Wdeclaration-order` | No | No | Procedures that declare a dummy argument after a local variable or the function result, or the result after a local, and declarations that mix the groups, such as `real :: x, tmp` with dummy `x`; a local needed in a dummy's or the result's declaration, such as a named constant used as a bound or kind, may come first |
-| `-Wargument-order` | No | No | Argument lists with a required INTENT(IN) argument after an INTENT(OUT) or INTENT(INOUT) one, or a required argument after an OPTIONAL one, with the reordered list suggested; see [Style warnings](#style-warnings) |
-| `-Wdo-while-true` | No | No | `do while (.true.)`, an endless loop, with `do` suggested |
-| `-Wold-array-constructor` | No | No | Array constructors written `(/ ... /)`, with the statement rewritten using `[ ... ]`; not reported when `-std` selects a standard before Fortran 2003 |
-| `-Wquote-style[=double\|single]` | No | No | CHARACTER literals in the other kind of quotes than the preferred one, double by default, with the statement rewritten; not in `-Wstyle`; see [Style warnings](#style-warnings) |
-| `-Wredundant-use` | No | No | USE statements, or names in their ONLY lists, that the host or an earlier USE in the scope already imports, such as a module procedure repeating its module's `use iso_fortran_env, only: int32`; see [Style warnings](#style-warnings) |
-| `-Wcould-be-function` | No | No | Subroutines whose only effect is to define one INTENT(OUT) argument, with a PURE function suggested; not in `-Wstyle`; see [Style warnings](#style-warnings) |
-| `-Wfunction-result` | No | No | FUNCTION statements with the result type in the prefix, such as `real function f(x)`, or without a RESULT clause, with the preferred `function f(x) result(y)` form suggested |
-| `-Wcould-be-conditional` | No | No | IF blocks whose two or three branches each assign one value to the same variable, with a Fortran 2023 conditional expression suggested, such as `y = (x > 0 ? sqrt(x) : -1.0)` |
+| [`-Wold-relational`](../warnings/old-relational.f90) | No | No | `.lt.`, `.le.`, `.eq.`, `.ne.`, `.gt.` and `.ge.`, with the statement rewritten using `<`, `<=`, `==`, `/=`, `>` and `>=` |
+| [`-Wmissing-double-colon`](../warnings/missing-double-colon.f90) | No | No | Type declarations without `::`, such as `integer i, j` |
+| [`-Wlabeled-do`](../warnings/labeled-do.f90) | No | No | DO loops ended by a labeled statement, such as `do 10 i = 1, n ... 10 continue` |
+| [`-Wdouble-precision`](../warnings/double-precision.f90) | No | No | DOUBLE PRECISION and DOUBLE COMPLEX, with `real(dp)` and `complex(dp)` suggested |
+| [`-Wbare-end`](../warnings/bare-end.f90) | No | No | END statements of programs, modules, procedures and derived types without the name, such as `end` or `end subroutine` |
+| [`-Wkeyword-case`](../warnings/keyword-case.f90) | No | No | Keywords written in more than one case in a file, in one warning per file |
+| [`-Wtabs`](../warnings/tabs.f90) | No | No | Tab characters in free-form code, in one warning per file |
+| [`-Wline-length[=N]`](../warnings/line-length.f90) | No | No | Free-form lines longer than 132 characters, or N, in one warning per file |
+| [`-Wsemicolon`](../warnings/semicolon.f90) | No | No | Lines with more than one statement, such as `x = 1; y = 2`, and free-form lines ending in a semicolon; a CASE, TYPE IS, CLASS IS or RANK selector followed by one statement, such as `case ("cos"); y = cos(x)`, is not reported; in one warning per file |
+| [`-Wtrailing-whitespace`](../warnings/trailing-whitespace.f90) | No | No | Free-form lines ending in spaces or tabs, in one warning per file |
+| [`-Wunnamed-exit`](../warnings/unnamed-exit.f90) | No | No | EXIT and CYCLE without a construct name, in one warning per DO loop |
+| [`-Wgoto`](../warnings/goto.f90) | No | No | GO TO statements |
+| [`-Wobsolescent`](../warnings/obsolescent.f90) | No | No | Obsolescent and deleted features: computed and assigned GO TO, arithmetic IF, ASSIGN, COMMON, EQUIVALENCE, ENTRY, BLOCK DATA, FORALL, PAUSE, CHARACTER*length and alternate returns |
+| [`-Wstop-in-procedure`](../warnings/stop-in-procedure.f90) | No | No | STOP in a function or subroutine; ERROR STOP is not reported |
+| [`-Wassumed-size`](../warnings/assumed-size.f90) | No | No | Assumed-size dummy arrays, such as `x(*)` or `y(n,*)`, outside BIND(C) procedures |
+| [`-Wredundant-implicit`](../warnings/redundant-implicit.f90) | No | No | IMPLICIT NONE in a module or internal procedure, or a submodule, whose host's IMPLICIT NONE already applies; interface bodies, which do not inherit, are not reported |
+| [`-Wname-case`](../warnings/name-case.f90) | No | No | A name written in a case different from its declaration, or from its first appearance, such as `X` for a variable declared `x`; in one warning per name |
+| [`-Wduplicate-constant`](../warnings/duplicate-constant.f90) | No | No | REAL and COMPLEX named constants, and kind parameters such as `dp`, defined in more than one scope, such as `pi` in several procedures or modules; definitions with different values, such as `3.14159` and `3.141592653589793_dp`, are reported as such |
+| [`-Wdeclaration-order`](../warnings/declaration-order.f90) | No | No | Procedures that declare a dummy argument after a local variable or the function result, or the result after a local, and declarations that mix the groups, such as `real :: x, tmp` with dummy `x`; a local needed in a dummy's or the result's declaration, such as a named constant used as a bound or kind, may come first |
+| [`-Wargument-order`](../warnings/argument-order.f90) | No | No | Argument lists with a required INTENT(IN) argument after an INTENT(OUT) or INTENT(INOUT) one, or a required argument after an OPTIONAL one, with the reordered list suggested; see [Style warnings](#style-warnings) |
+| [`-Wdo-while-true`](../warnings/do-while-true.f90) | No | No | `do while (.true.)`, an endless loop, with `do` suggested |
+| [`-Wold-array-constructor`](../warnings/old-array-constructor.f90) | No | No | Array constructors written `(/ ... /)`, with the statement rewritten using `[ ... ]`; not reported when `-std` selects a standard before Fortran 2003 |
+| [`-Wquote-style[=double\|single]`](../warnings/quote-style.f90) | No | No | CHARACTER literals in the other kind of quotes than the preferred one, double by default, with the statement rewritten; not in `-Wstyle`; see [Style warnings](#style-warnings) |
+| [`-Wredundant-use`](../warnings/redundant-use.f90) | No | No | USE statements, or names in their ONLY lists, that the host or an earlier USE in the scope already imports, such as a module procedure repeating its module's `use iso_fortran_env, only: int32`; see [Style warnings](#style-warnings) |
+| [`-Wcould-be-function`](../warnings/could-be-function.f90) | No | No | Subroutines whose only effect is to define one INTENT(OUT) argument, with a PURE function suggested; not in `-Wstyle`; see [Style warnings](#style-warnings) |
+| [`-Wfunction-result`](../warnings/function-result.f90) | No | No | FUNCTION statements with the result type in the prefix, such as `real function f(x)`, or without a RESULT clause, with the preferred `function f(x) result(y)` form suggested |
+| [`-Wcould-be-conditional`](../warnings/could-be-conditional.f90) | No | No | IF blocks whose two or three branches each assign one value to the same variable, with a Fortran 2023 conditional expression suggested, such as `y = (x > 0 ? sqrt(x) : -1.0)` |
 | `-Wcould-be-one-line-if` | No | No | IF blocks holding a single action statement, with the one-line IF suggested when it fits the line length, such as `if (x > 0) x = sqrt(x)` |
-| `-Wone-line-if` | No | No | The reverse: one-line IFs, with the block form suggested, for projects that always use block IFs |
-| `-Wunchecked-status` | No | Yes | Local scalar IOSTAT, allocation STAT, and intrinsic status results not inspected or forwarded |
-| `-Wtarget-lifetime` | Yes | No | Pointer associations escaping a known automatic local target |
-| `-Winfinite-loop` | Yes | No | DO loops without loop control, or `DO WHILE (.true.)`, that nothing in their body can end |
-| `-Wloop-runs-once` | Yes | No | DO loops whose body cannot start a second iteration, because every path ends in EXIT, RETURN or STOP |
-| `-Wreal-do-variable` | Yes | No | DO loops with a REAL variable, a feature deleted from Fortran 95 |
-| `-Wredundant-cycle` | No | Yes | CYCLE as the last statement of a loop body, directly or at the end of an IF or CASE branch that ends it |
-| `-Wmaybe-uninitialized` | No | Yes | Local scalars read where some path from the start of the procedure reaches the read without assigning them; see [Uninitialized variables](#uninitialized-variables) |
-| `-Wintent-out-unset` | No | Yes | INTENT(OUT) dummy arguments that some path to the end of the procedure, or to a RETURN, does not assign; one never assigned is reported as "was never assigned" by default |
-| `-Wcould-be-intent-out` | No | Yes | INTENT(INOUT) scalar dummy arguments that every path assigns before anything reads them or passes them to a procedure |
-| `-Wunchecked-conformance` | No | Yes | Procedures that combine two assumed-shape dummies in a way that requires a size relationship, such as `x*y`, `dot_product(x, y)`, `matmul(a, b)` or `y = x`, and never compare their sizes; see [Array conformance](#array-conformance) |
-| `-Wconformance` | Yes | No | Calls whose actual arguments, of sizes known at compile time, break such a relationship, as `sumproduct([1.0, 2.0], [3.0])` |
-| `-Wsequence-association` | No | Yes | Calls that pass a whole array of known shape to an explicit-shape dummy of another known shape, which is then associated with the leading elements of the actual in array element order, as `dst(2,3)` receiving a `4x3` array |
-| `-Wmaybe-nonconforming` | No | Yes | Elemental operations on arrays whose sizes, from PACK or ALLOCATE, may differ, as `x1 - x2` for two PACK results; see [Array conformance](#array-conformance) |
-| `-Wmaybe-out-of-bounds` | No | Yes | Constant subscripts of PACK results, which may have fewer elements, as `x1(1)` when the mask selects nothing |
-| `-Wconstant-condition` | No | Yes | Conditions, or parts of them, whose values are known at compile time, such as `.true. .or. (x > y)`, `n == n` or `n > 5 .and. n < 3`; see [Constant conditions](#constant-conditions) |
-| `-Wconstant-condition-all` | No | No | The same, also for values that come from named constants, such as `debug .or. n > 2` with a PARAMETER `debug` |
-| `-Wcould-be-intent-in` | No | Yes | INTENT(INOUT) dummy arguments that nothing in the procedure can modify; POINTER, TARGET and polymorphic dummies are not reported |
-| `-Wunused-only` | No | Yes | Names in a USE ONLY list that the scope never uses, with the shortened ONLY list suggested |
-| `-Waliasing` | Yes | No | Known overlapping actuals when a defined procedure's OUT dummy, or modified INOUT dummy, conflicts with another dummy's reads |
-| `-Wconversion` | No | No | Potential information loss in implicit numeric conversions and CMPLX calls without KIND |
-| `-Wcmplx-kind` | Yes | No | Wider REAL arguments to CMPLX without KIND; also enabled by `-Wconversion` |
-| `-Wprecision-loss` | Yes | No | Lower-precision literals or calculations subsequently widened to a higher real/complex kind |
-| `-Wreal-literal-kind` | No | No | Real literals without an explicit kind suffix or D exponent, including exactly representable literals such as `1.0` |
-| `-Wexcess-real-digits` | Yes | No | More significant decimal digits than the literal's own REAL kind guarantees (6 for REAL(4), 15 for REAL(8)); exactly representable values are exempt |
-| `-Wpointer-init` | Yes | No | Derived-type pointer components lacking default initialization |
-| `-Wdo-subscript` | Yes | No | Loop-derived scalar subscript ranges extending beyond known fixed array bounds |
-| `-Wenum-exhaustive` | Yes | No | SELECT CASE without CASE DEFAULT missing declared values of an enumeration type or named interoperable enum type |
+| [`-Wone-line-if`](../warnings/one-line-if.f90) | No | No | The reverse: one-line IFs, with the block form suggested, for projects that always use block IFs |
+| [`-Wunchecked-status`](../warnings/unchecked-status.f90) | No | Yes | Local scalar IOSTAT, allocation STAT, and intrinsic status results not inspected or forwarded |
+| [`-Wtarget-lifetime`](../warnings/target-lifetime.f90) | Yes | No | Pointer associations escaping a known automatic local target |
+| [`-Winfinite-loop`](../warnings/infinite-loop.f90) | Yes | No | DO loops without loop control, or `DO WHILE (.true.)`, that nothing in their body can end |
+| [`-Wloop-runs-once`](../warnings/loop-runs-once.f90) | Yes | No | DO loops whose body cannot start a second iteration, because every path ends in EXIT, RETURN or STOP |
+| [`-Wreal-do-variable`](../warnings/real-do-variable.f90) | Yes | No | DO loops with a REAL variable, a feature deleted from Fortran 95 |
+| [`-Wredundant-cycle`](../warnings/redundant-cycle.f90) | No | Yes | CYCLE as the last statement of a loop body, directly or at the end of an IF or CASE branch that ends it |
+| [`-Wmaybe-uninitialized`](../warnings/maybe-uninitialized.f90) | No | Yes | Local scalars read where some path from the start of the procedure reaches the read without assigning them; see [Uninitialized variables](#uninitialized-variables) |
+| [`-Wintent-out-unset`](../warnings/intent-out-unset.f90) | No | Yes | INTENT(OUT) dummy arguments that some path to the end of the procedure, or to a RETURN, does not assign; one never assigned is reported as "was never assigned" by default |
+| [`-Wcould-be-intent-out`](../warnings/could-be-intent-out.f90) | No | Yes | INTENT(INOUT) scalar dummy arguments that every path assigns before anything reads them or passes them to a procedure |
+| [`-Wunchecked-conformance`](../warnings/unchecked-conformance.f90) | No | Yes | Procedures that combine two assumed-shape dummies in a way that requires a size relationship, such as `x*y`, `dot_product(x, y)`, `matmul(a, b)` or `y = x`, and never compare their sizes; see [Array conformance](#array-conformance) |
+| [`-Wconformance`](../warnings/conformance.f90) | Yes | No | Calls whose actual arguments, of sizes known at compile time, break such a relationship, as `sumproduct([1.0, 2.0], [3.0])` |
+| [`-Wsequence-association`](../warnings/sequence-association.f90) | No | Yes | Calls that pass a whole array of known shape to an explicit-shape dummy of another known shape, which is then associated with the leading elements of the actual in array element order, as `dst(2,3)` receiving a `4x3` array |
+| [`-Wmaybe-nonconforming`](../warnings/maybe-nonconforming.f90) | No | Yes | Elemental operations on arrays whose sizes, from PACK or ALLOCATE, may differ, as `x1 - x2` for two PACK results; see [Array conformance](#array-conformance) |
+| [`-Wmaybe-out-of-bounds`](../warnings/maybe-out-of-bounds.f90) | No | Yes | Constant subscripts of PACK results, which may have fewer elements, as `x1(1)` when the mask selects nothing |
+| [`-Wconstant-condition`](../warnings/constant-condition.f90) | No | Yes | Conditions, or parts of them, whose values are known at compile time, such as `.true. .or. (x > y)`, `n == n` or `n > 5 .and. n < 3`; see [Constant conditions](#constant-conditions) |
+| [`-Wconstant-condition-all`](../warnings/constant-condition-all.f90) | No | No | The same, also for values that come from named constants, such as `debug .or. n > 2` with a PARAMETER `debug` |
+| [`-Wcould-be-intent-in`](../warnings/could-be-intent-in.f90) | No | Yes | INTENT(INOUT) dummy arguments that nothing in the procedure can modify; POINTER, TARGET and polymorphic dummies are not reported |
+| [`-Wunused-only`](../warnings/unused-only.f90) | No | Yes | Names in a USE ONLY list that the scope never uses, with the shortened ONLY list suggested |
+| [`-Waliasing`](../warnings/aliasing.f90) | Yes | No | Known overlapping actuals when a defined procedure's OUT dummy, or modified INOUT dummy, conflicts with another dummy's reads |
+| [`-Wconversion`](../warnings/conversion.f90) | No | No | Potential information loss in implicit numeric conversions and CMPLX calls without KIND |
+| [`-Wcmplx-kind`](../warnings/cmplx-kind.f90) | Yes | No | Wider REAL arguments to CMPLX without KIND; also enabled by `-Wconversion` |
+| [`-Wprecision-loss`](../warnings/precision-loss.f90) | Yes | No | Lower-precision literals or calculations subsequently widened to a higher real/complex kind |
+| [`-Wreal-literal-kind`](../warnings/real-literal-kind.f90) | No | No | Real literals without an explicit kind suffix or D exponent, including exactly representable literals such as `1.0` |
+| [`-Wexcess-real-digits`](../warnings/excess-real-digits.f90) | Yes | No | More significant decimal digits than the literal's own REAL kind guarantees (6 for REAL(4), 15 for REAL(8)); exactly representable values are exempt |
+| [`-Wpointer-init`](../warnings/pointer-init.f90) | Yes | No | Derived-type pointer components lacking default initialization |
+| [`-Wdo-subscript`](../warnings/do-subscript.f90) | Yes | No | Loop-derived scalar subscript ranges extending beyond known fixed array bounds |
+| [`-Wenum-exhaustive`](../warnings/enum-exhaustive.f90) | Yes | No | SELECT CASE without CASE DEFAULT missing declared values of an enumeration type or named interoperable enum type |
 | `-Wimplicit-interface` | No | No | Calls lacking a known explicit interface; module/internal procedures, interface blocks, generics and known intrinsics are exempt |
-| `-Wintrinsic-shadow` | No | Yes | Defined or declared user procedures sharing a known intrinsic procedure name; ordinary data names are exempt |
-| `-Wkeyword-name` | No | Yes | Variables, dummy arguments and procedures named like Fortran statement keywords or attributes, such as `block`, `exit`, `if`, `data` or `result`; legal, since Fortran has no reserved words, but harder to read. Intrinsic procedure names such as `len` are left to `-Wintrinsic-shadow` |
-| `-Wunderflow` | Yes | No | Supported nonzero constant expressions or assignments rounding to zero in REAL(4)/REAL(8) |
-| `-Wempty-case` | Yes | No | Reversed constant INTEGER, CHARACTER or enumeration CASE ranges |
-| `-Wunused-label` | Yes | No | Unreferenced statement labels within each program unit, including FORMAT labels |
-| `-Wcharacter-truncation` | Yes | No | CHARACTER values of compile-time length (literals, fixed-length variables and PARAMETERs, concatenations, constant substrings, array constructors) assigned or initialized into a shorter fixed-length variable, element, component or substring, as gfortran's `-Wcharacter-truncation`. Deferred-length destinations reallocate and are exempt; actual arguments and DATA statements are not checked |
+| [`-Wintrinsic-shadow`](../warnings/intrinsic-shadow.f90) | No | Yes | Defined or declared user procedures sharing a known intrinsic procedure name; ordinary data names are exempt |
+| [`-Wkeyword-name`](../warnings/keyword-name.f90) | No | Yes | Variables, dummy arguments and procedures named like Fortran statement keywords or attributes, such as `block`, `exit`, `if`, `data` or `result`; legal, since Fortran has no reserved words, but harder to read. Intrinsic procedure names such as `len` are left to `-Wintrinsic-shadow` |
+| [`-Wunderflow`](../warnings/underflow.f90) | Yes | No | Supported nonzero constant expressions or assignments rounding to zero in REAL(4)/REAL(8) |
+| [`-Wempty-case`](../warnings/empty-case.f90) | Yes | No | Reversed constant INTEGER, CHARACTER or enumeration CASE ranges |
+| [`-Wunused-label`](../warnings/unused-label.f90) | Yes | No | Unreferenced statement labels within each program unit, including FORMAT labels |
+| [`-Wcharacter-truncation`](../warnings/character-truncation.f90) | Yes | No | CHARACTER values of compile-time length (literals, fixed-length variables and PARAMETERs, concatenations, constant substrings, array constructors) assigned or initialized into a shorter fixed-length variable, element, component or substring, as gfortran's `-Wcharacter-truncation`. Deferred-length destinations reallocate and are exempt; actual arguments and DATA statements are not checked |
 
 Interface advice distinguishes optional warnings from language requirements.
 Keyword calls without an explicit interface are errors. When a procedure body
@@ -338,7 +344,7 @@ Regression checks: `python tests/test_source_advice.py` and
 `python tests/test_value_warnings.py` (after building the debug compiler, or with
 `RFORT_TEST_COMPILER` set to the desired executable).
 
-`-Wshort-circuit`, enabled by `-Wall`/`--wall`, warns when a logical expression
+[`-Wshort-circuit`](../warnings/short-circuit.f90), enabled by `-Wall`/`--wall`, warns when a logical expression
 combines an intrinsic `ALLOCATED` or `ASSOCIATED` inquiry with an access that
 needs valid allocation or association. For example,
 `if (allocated(x) .and. size(x)>0)` is unsafe unless allocation is already
@@ -366,7 +372,7 @@ multi-source locations, and loaded `.rmod` definitions are not diagnosed again.
 Example: `rfort -Wall tests/programs/xshort_circuit_warnings.f90 --run`.
 Regression checks: `python tests/test_short_circuit_warnings.py`.
 
-`-Wimplicit-save`, enabled by `-Wall`/`--wall`, warns when declaration
+[`-Wimplicit-save`](../warnings/implicit-save.f90), enabled by `-Wall`/`--wall`, warns when declaration
 initialization gives a procedure-local variable implicit `SAVE`. For example,
 `integer :: count=0` initializes persistent storage, rather than resetting
 `count` on each call. The warning includes array and pointer initializers, and
@@ -393,7 +399,7 @@ from `.rmod` files are not diagnosed again. Example:
 (or `-Wall -Wextra`).
 Regression checks: `python tests/test_declaration_warnings.py`.
 
-`-Wformat`, enabled by `-Wall`/`--wall`, checks known formats against known
+[`-Wformat`](../warnings/format.f90), enabled by `-Wall`/`--wall`, checks known formats against known
 I/O-list types for formatted PRINT, WRITE and READ, including internal I/O.
 For example, `print '(2i4)',1,1.1` warns that the second I4 expects INTEGER
 but receives REAL. Literal formats, CHARACTER named constants and labelled
@@ -451,12 +457,12 @@ items before the first such array are reported as usual, once.
 Two further checks of the same formats are in `-Wextra`. Each needs the
 number of list items to be known at compile time.
 
-- `-Wformat-reversion` reports a list with more items than the format has
+- [`-Wformat-reversion`](../warnings/format-reversion.f90) reports a list with more items than the format has
   data edit descriptors, such as `print '(f0.4)', x(1:3)`, which writes three
   records. A format whose descriptors or groups have a repeat count, such as
   `(10f8.3)`, is taken to revert on purpose, and an unlimited repeat such as
   `(*(g0,1x))` never reverts.
-- `-Wformat-unused` reports data edit descriptors that no item reaches, such
+- [`-Wformat-unused`](../warnings/format-unused.f90) reports data edit descriptors that no item reaches, such
   as the `f8.4` of `print '(i6, f8.4)', 123`, which often means a missing
   item, with the shortened format suggested. String and control edit
   descriptors before the first unused one are kept in the suggestion, since
@@ -466,7 +472,7 @@ number of list items to be known at compile time.
   only when a single statement uses it, since another statement may need the
   whole format.
 
-`-Wcould-be-at` suggests the Fortran 2023 AT edit descriptor, which writes a
+[`-Wcould-be-at`](../warnings/could-be-at.f90) suggests the Fortran 2023 AT edit descriptor, which writes a
 CHARACTER value without its trailing blanks, in place of `trim`:
 
 ```
@@ -485,7 +491,7 @@ statements with a literal format are checked, and only rewrites that shorten
 the statement are suggested. The check is opt-in, since compilers without
 Fortran 2023 support reject AT; with `--std=f2023` it is also in `-Wstyle`.
 
-`-Wunreachable-code`, enabled by `-Wall`/`--wall`, warns once at the first
+[`-Wunreachable-code`](../warnings/unreachable-code.f90), enabled by `-Wall`/`--wall`, warns once at the first
 statement of each provably unreachable sequence. This includes statements after
 `STOP`, `ERROR STOP`, `RETURN`, `EXIT` or `CYCLE`, branches whose conditions are
 constant expressions, and code after an `IF` whose branches both transfer
@@ -519,7 +525,7 @@ STOP, the statements after it are reported by `-Wunreachable-code`. Disable
 with `-Wno-infinite-loop`, or use `!#allow(infinite-loop)` for a program meant
 to run until it is stopped. Run `python tests/test_infinite_loop.py`.
 
-`-Wimplicit-typing` warns once per implicitly typed variable at its first use,
+[`-Wimplicit-typing`](../warnings/implicit-typing.f90) warns once per implicitly typed variable at its first use,
 including loop indices and dummy arguments without explicit types. For example,
 `i=3` without a declaration warns that `i` is implicitly typed as `INTEGER(4)`.
 The warning is enabled by `-Wall`/`--wall`; suppress it with
@@ -531,9 +537,9 @@ Run `python tests/test_implicit_warnings.py` for regression checks.
 
 Unused-declaration warnings are opt-in and run before lowering. Enable them with
 `-Wall` (also `--Wall`/`--wall`) or `-Wunused`, or select categories individually:
-`-Wunused-type`, `-Wunused-variable`, `-Wunused-but-set-variable`,
-`-Wunused-parameter` (named constants), `-Wunused-dummy-argument`, and
-`-Wunused-function` (functions and subroutines). `-Wunused-constant` and
+[`-Wunused-type`](../warnings/unused-type.f90), [`-Wunused-variable`](../warnings/unused-variable.f90), [`-Wunused-but-set-variable`](../warnings/unused-but-set-variable.f90),
+[`-Wunused-parameter`](../warnings/unused-parameter.f90) (named constants), [`-Wunused-dummy-argument`](../warnings/unused-dummy-argument.f90), and
+[`-Wunused-function`](../warnings/unused-function.f90) (functions and subroutines). `-Wunused-constant` and
 `-Wunused-procedure` are aliases. The variable category also enables warnings
 for assigned-but-never-read variables. Prefix an option with `-Wno-` to disable
 it, for example `-Wall -Wno-unused-type`; matching options apply in command-line
@@ -557,7 +563,7 @@ messages saying "parameter" or duplicate local-variable warnings.
 `tests/programs/xunused.f90` demonstrates these diagnostics; run `rfort -Wall tests/programs/xunused.f90` or
 `python tests/test_unused_warnings.py` for the regression checks.
 
-`-Wimplicit-open` is **on by default**. A READ or WRITE on an unconnected unit
+[`-Wimplicit-open`](../warnings/implicit-open.f90) is **on by default**. A READ or WRITE on an unconnected unit
 1..1023 (other than the preconnected 0, 5 and 6) connects it to the file
 `fort.N` in the working directory, as gfortran and ifx do: the file is created
 if absent and positioned at its start, so a READ of a new unit reaches end of
@@ -570,7 +576,7 @@ variable turns the check off, since it might connect any unit. Disable with
 `-Werror=implicit-open`. `-std=` does not change the behavior. Regression
 checks: `python tests/test_implicit_open.py`.
 
-`-Wmemory-leak` is **on by default**. It warns when storage allocated through a
+[`-Wmemory-leak`](../warnings/memory-leak.f90) is **on by default**. It warns when storage allocated through a
 local POINTER of a procedure is lost without DEALLOCATE: when the procedure
 returns, or when ALLOCATE, NULLIFY or `=>` reassigns the pointer. A leak on
 every path "is not deallocated"; a leak on some paths "may not be deallocated",
@@ -588,7 +594,7 @@ are skipped. Disable with `-Wno-memory-leak` or `!#allow(memory-leak)`;
 promote with `-Werror=memory-leak`. Regression checks:
 `python tests/test_memory_leak.py`.
 
-`-Wallocation-state` is **on by default**. It warns about DEALLOCATE of a local
+[`-Wallocation-state`](../warnings/allocation-state.f90) is **on by default**. It warns about DEALLOCATE of a local
 ALLOCATABLE that is unallocated on every path reaching the statement, and
 ALLOCATE of one that is allocated on every path, when the statement has no
 STAT=; either stops the program with an error when it runs. Intrinsic,
@@ -607,7 +613,7 @@ Disable with `-Wno-allocation-state` or `!#allow(allocation-state)`; promote
 with `-Werror=allocation-state`. Regression checks:
 `python tests/test_allocation_state.py`.
 
-`-Waction-mismatch` is **on by default**. It warns about a READ from a unit
+[`-Waction-mismatch`](../warnings/action-mismatch.f90) is **on by default**. It warns about a READ from a unit
 opened with `ACTION='WRITE'`, or a WRITE to one opened with `ACTION='READ'`,
 when that action holds on every path reaching the statement; either stops the
 program with an error when it runs. Units are integer literals or local named
@@ -621,7 +627,7 @@ procedures with GO TO or with ERR= or END= branches are skipped. Disable with
 `-Werror=action-mismatch`. Regression checks:
 `python tests/test_action_mismatch.py`.
 
-`-Wfixed-unit` is opt-in and enabled by `-Wextra`. It warns about an OPEN of a
+[`-Wfixed-unit`](../warnings/fixed-unit.f90) is opt-in and enabled by `-Wextra`. It warns about an OPEN of a
 constant unit (an integer literal or a named constant) in a procedure or
 module, since a fixed number may already be connected elsewhere in the
 program. A main program owns its units and is exempt; its internal
@@ -631,7 +637,7 @@ opens the same constant unit, the warning names it. The note suggests
 revision before Fortran 2008. Disable with `-Wno-fixed-unit`, promote with
 `-Werror=fixed-unit`, or use `!#allow(fixed-unit)` / `!#deny(fixed-unit)`.
 
-`-Wrecursive-io` is **on by default**. It warns about an input/output
+[`-Wrecursive-io`](../warnings/recursive-io.f90) is **on by default**. It warns about an input/output
 statement in a procedure that a function referenced by another input/output
 statement can reach, directly or through the procedures it calls, when both
 use the same external unit. Such recursive input/output is not allowed
@@ -644,7 +650,7 @@ inner statement, with a label at each reference that can reach it. Disable
 with `-Wno-recursive-io` or `!#allow(recursive-io)`; promote with
 `-Werror=recursive-io`.
 
-`-Wunit-leak` is enabled by `-Wall`. It warns about an
+[`-Wunit-leak`](../warnings/unit-leak.f90) is enabled by `-Wall`. It warns about an
 `open(newunit=u, ...)` in a procedure, where `u` is a local INTEGER variable
 that is not SAVE (or initialized), a dummy argument or the function result,
 and the procedure has no CLOSE of `u`. The file stays connected to a unit
@@ -655,7 +661,7 @@ variable or passed to a procedure, and procedures with internal procedures,
 are not checked. Main programs are exempt, since their units are closed when
 the program ends.
 
-`-Wpreconnected-unit` is enabled by `-Wextra`. It warns about READ from unit
+[`-Wpreconnected-unit`](../warnings/preconnected-unit.f90) is enabled by `-Wextra`. It warns about READ from unit
 5 and WRITE to unit 6 or 0, given as an integer literal or a named constant.
 Which units are preconnected, and to what, is processor dependent; `*`, and
 INPUT_UNIT, OUTPUT_UNIT and ERROR_UNIT of ISO_FORTRAN_ENV (Fortran 2003), are
@@ -664,13 +670,13 @@ ISO_FORTRAN_ENV name. A unit the program OPENs is exempt. With `-std=` before
 Fortran 2003 the note suggests only `*`, and unit 0, which then has no
 portable spelling, is not reported.
 
-`-Wfunction-io` is enabled by `-Wstyle`. It warns about a function that
+[`-Wfunction-io`](../warnings/function-io.f90) is enabled by `-Wstyle`. It warns about a function that
 executes input/output on an external unit, once per function. Such a side
 effect keeps the function from being PURE, and referencing it in an
 input/output statement on the same unit is recursive input/output. Writing to
 an internal file is not reported.
 
-`-Wunhandled-io-error` is opt-in, enabled by neither `-Wall` nor `-Wextra`.
+[`-Wunhandled-io-error`](../warnings/unhandled-io-error.f90) is opt-in, enabled by neither `-Wall` nor `-Wextra`.
 In a function or subroutine, it warns about an OPEN without IOSTAT= or ERR=,
 and a READ from a file or an internal file without IOSTAT=, ERR= or END=.
 Without one, a missing file, an end of file or invalid data stops the
@@ -682,13 +688,13 @@ are not reported. Regression checks for these five warnings:
 `python tests/test_io_warnings.py`.
 
 The standard allows MERGE to evaluate both TSOURCE and FSOURCE, whatever
-MASK is, and gfortran does. `-Wmerge-guard`, in `-Wall`, warns about an
+MASK is, and gfortran does. [`-Wmerge-guard`](../warnings/merge-guard.f90), in `-Wall`, warns about an
 argument that may be invalid when the mask does not select it, because the
 mask tests what the argument depends on: `merge(a(i), 0, i > 0)` (a
 subscript), `merge(1/n, 0, n /= 0)` (a divisor), and `merge(x, 0.0,
 present(x))` (PRESENT, ASSOCIATED or ALLOCATED). A name used in a subscript
 of the mask itself, as `i` in `merge(a(i), 0, a(i) > 0)`, does not count.
-`-Wmerge-evaluation`, opt-in, warns about an argument that computes
+[`-Wmerge-evaluation`](../warnings/merge-evaluation.f90), opt-in, warns about an argument that computes
 something, such as `x + 1`, `-x` or `f(x)`, which is computed even when it is
 not selected. Constants, variables, components, elements and sections with
 constant or variable subscripts, constructors of such values, and NULL() are
@@ -699,7 +705,7 @@ unless `-std` selects a standard before Fortran 2023, a conditional
 expression `(mask ? tsource : fsource)`. Regression checks:
 `python tests/test_merge_warnings.py`.
 
-`-Woptional-argument` warns when an OPTIONAL dummy is referenced without a
+[`-Woptional-argument`](../warnings/optional-argument.f90) warns when an OPTIONAL dummy is referenced without a
 proven `PRESENT` guard. For example, `if (present(s2))` does not prove that `s1`
 is present; the warning points to the source line which uses `s1`. The check
 runs on procedure definitions before presence specialization, even when all
