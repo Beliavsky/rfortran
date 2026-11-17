@@ -119,8 +119,10 @@ fn write_controls_resolved(
             match name.trim_start_matches("@write_option:") {
                 "iostat" => { control = "iostat".into(); status = values.remove(0); }
                 "pos" => position = values.remove(0),
+                // The record of a direct-access WRITE, carried in the POS slot.
+                "rec" => position = Expr::Call(crate::unformatted::RECORD_NUMBER.into(), vec![values.remove(0)]),
                 "iomsg" => message = Some(values.remove(0)),
-                _ => return Err("unformatted WRITE currently supports UNIT, IOSTAT, IOMSG and POS"),
+                _ => return Err("unformatted WRITE currently supports UNIT, IOSTAT, IOMSG, ERR, POS and REC"),
             }
         }
         let mut args = vec![unit, Expr::Str(control), status, position];
@@ -132,6 +134,9 @@ fn write_controls_resolved(
             None => write,
         });
     };
+    if options.iter().any(|o| matches!(o, Expr::Call(n, _) if n == "@write_option:rec")) {
+        return Err("formatted direct-access WRITE (REC= with FMT) is not yet supported");
+    }
     let mut args = vec![unit, format];
     args.extend(options);
     args.extend(items);

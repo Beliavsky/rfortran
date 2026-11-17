@@ -4654,8 +4654,9 @@ evaluated once; POS= seeks before the transfer. A nonzero child IOSTAT stops
 later parent items and is propagated with IOMSG. Successful transfers leave the
 parent IOMSG unchanged; without IOSTAT, transfer failure stops execution.
 
-This uses the existing stream backend: sequential unformatted record framing,
-direct access, and COMPLEX byte transfers are not implemented. Generic interface
+The same bindings work for sequential and direct-access unformatted files:
+child transfers continue the parent's record. COMPLEX byte transfers are not
+implemented. Generic interface
 blocks remain outside the type-bound implementation. A default transfer of an
 enclosing type whose components require defined I/O is diagnosed; give the
 enclosing type its own binding and transfer its components inside that procedure.
@@ -4700,7 +4701,7 @@ file as well as to standard output.
 
 Unformatted stream files are opened with `access='stream', form='unformatted'`.
 A READ or WRITE without a format transfers each value as the bytes of its kind,
-with no record markers, as gfortran does: INTEGER kinds 1, 2, 4 and 8, REAL and
+with no record markers in a stream file, as gfortran does: INTEGER kinds 1, 2, 4 and 8, REAL and
 DOUBLE PRECISION, LOGICAL (4 bytes) and CHARACTER (its length in bytes). Items may
 be scalars, expressions such as `size(a)` and `shape(a)`, whole arrays and
 sections (fixed or runtime-sized, including runtime CHARACTER arrays) in array
@@ -4710,7 +4711,30 @@ READ and WRITE accept `pos=` (the byte position, counted from 1),
 IOSTAT (negative at end of file) and IOMSG; without IOSTAT, an end of file or
 error stops the program; ERR= and END= branch as described under
 [Statement labels](#statement-labels). REWIND repositions the file. COMPLEX
-values and unformatted sequential or direct access are not yet supported.
+values are not yet supported.
+
+Unformatted sequential files, the default for `form='unformatted'`, and units
+first used by an unformatted transfer are written as gfortran writes them: each
+record is its length in bytes, as a 4-byte little-endian integer, then the data,
+then the length again. So a file written by gfortran can be read by rfort and
+the other way round (for records shorter than 2 GiB). BACKSPACE steps back over
+a record; the first BACKSPACE after a READ that reached the end of the file
+steps back over the end of file instead. A READ of fewer items than its record
+holds skips the rest of the record, and a READ of more is an error. A WRITE
+ends the file after its record, so writing after REWIND discards what followed.
+RECL=, when given, limits the length of a record. READ accepts IOSTAT, IOMSG,
+END= and ERR=; WRITE accepts IOSTAT, IOMSG and ERR=. ENDFILE on a unit not
+yet connected connects it to `fort.N`, as a data transfer does and as in
+gfortran.
+
+Direct access is opened with `access='direct', recl=n`, which is unformatted
+unless FORM says otherwise; RECL is in bytes, as in gfortran. `write(u, rec=k)`
+writes record k at byte offset (k-1)*RECL, padding a short record with zero
+bytes, and `read(u, rec=k)` reads it; records may be written in any order.
+Transferring more than RECL bytes, reading a record beyond the end of the file,
+or REC= on a unit not opened for direct access, is an error that IOSTAT
+reports. Formatted direct access (REC= with FMT), and INQUIRE of RECL and
+NEXTREC, are not yet supported. Run `python tests/test_unformatted_records.py`.
 
 Sequential formatted files support `OPEN(unit=20,file='data.txt',status='old',action='read')`,
 `READ(20,'(a)') text`, `BACKSPACE(20)`, `REWIND(20)`, and `CLOSE(20)`.

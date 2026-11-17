@@ -122,10 +122,9 @@ end program main
     def test_unsupported_controls(self):
         self.reject("""integer :: iu, n
 open (newunit=iu, file="x.bin", access="stream", form="unformatted")
-read (iu, end=10) n
-10 continue
+read (iu, rec=1, pos=1) n
 end
-""", "unformatted READ currently supports UNIT, IOSTAT, IOMSG and POS")
+""", "READ must not specify both REC and POS")
         self.reject("""integer :: n
 read (*, *, pos=3) n
 end

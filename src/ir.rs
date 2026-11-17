@@ -44,7 +44,7 @@ fn input_destinations(stmts: &[IStmt]) -> std::collections::HashSet<String> {
             IStmt::Call(name, args) if name == "@list_read_internal_begin" || name == "@list_read_begin" || name=="@list_read_next" || name=="@stream_get" || name == "@read_record_status" || name=="@read_record_checked" => {
                 for arg in &args[..2] { if let IExpr::Ident(id) = arg { names.insert(id.clone()); } }
             }
-            IStmt::Call(name, args) if name.eq_ignore_ascii_case("random_number") || name == "@random_seed_get" || name == "@date_snapshot" || name == "@read_record" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@module_bind" || name.starts_with("@heap_") || name == "@character_assign" || name == "@character_length" || name == "@character_address" || (name=="@file_open_dynamic" || name=="@file_open_try") || name=="@list_read_end" || name=="@stream_put" || name=="@stream_seek" => {
+            IStmt::Call(name, args) if name.eq_ignore_ascii_case("random_number") || name == "@random_seed_get" || name == "@date_snapshot" || name == "@read_record" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@module_bind" || name.starts_with("@heap_") || name == "@character_assign" || name == "@character_length" || name == "@character_address" || (name=="@file_open_dynamic" || name=="@file_open_try") || name=="@list_read_end" || name=="@stream_put" || name=="@stream_seek" || name=="@record_begin" || name=="@record_end" => {
                 if let Some(IExpr::Ident(id) | IExpr::Index(id, _)) = args.first() { names.insert(id.clone()); }
             }
             IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } | IStmt::Block { body } => names.extend(input_destinations(body)),

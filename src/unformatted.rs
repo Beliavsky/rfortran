@@ -2,9 +2,11 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Unformatted stream READ and WRITE. Each scalar value is transferred as the
-//! bytes of its declared kind by `@stream_put` and `@stream_get`, element by
-//! element for arrays, with no record markers. A runtime CHARACTER array,
+//! Unformatted READ and WRITE. Each scalar value is transferred as the bytes
+//! of its declared kind by `@stream_put` and `@stream_get`, element by
+//! element for arrays, between `@record_begin` and `@record_end`, which give
+//! sequential and direct-access files their records (see
+//! unformatted_records.rs); a stream file has none. A runtime CHARACTER array,
 //! stored as character codes, transfers one byte per character.
 use crate::ast::{BinOp, Expr, Stmt, TypeSpec};
 use anyhow::{bail, Result};
@@ -63,16 +65,33 @@ fn file_unit(unit: &Expr, symbols: &Symbols, what: &str) -> Result<()> {
     crate::file_io::unit(unit, symbols)
 }
 
-/// The status variable and an optional seek to POS.
-fn begin(unit: &Expr, position: &Expr, serial: &mut usize, body: &mut Vec<Stmt>) -> String {
+/// In the POS slot of an unformatted READ or WRITE, the REC= of a
+/// direct-access transfer.
+pub(crate) const RECORD_NUMBER: &str = "@record_number";
+
+/// Start a transfer: the record of a sequential or direct-access file, or
+/// for a stream file a seek to POS. Returns the status variable and whether
+/// a record was started, to be finished by `@record_end`.
+pub(crate) fn start(unit: &Expr, position: &Expr, writing: bool, code: &str, body: &mut Vec<Stmt>) -> bool {
+    let record = match position {
+        Expr::Call(n, a) if n == RECORD_NUMBER && a.len() == 1 => a[0].clone(),
+        _ if crate::parameters::integer_constant(position).ok() == Some(0) => int(0),
+        _ => {
+            body.push(Stmt::CallSub { name: "@stream_seek".into(), args: vec![var(code), unit.clone(), position.clone()] });
+            return false;
+        }
+    };
+    body.push(Stmt::CallSub { name: "@record_begin".into(), args: vec![var(code), unit.clone(), record, int(i64::from(writing))] });
+    true
+}
+
+fn begin(unit: &Expr, position: &Expr, writing: bool, serial: &mut usize, body: &mut Vec<Stmt>) -> (String, bool) {
     *serial += 1;
     let code = format!("@stream_status_{serial}");
     body.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![code.clone()] });
     body.push(set(&code, int(0)));
-    if crate::parameters::integer_constant(position).ok() != Some(0) {
-        body.push(Stmt::CallSub { name: "@stream_seek".into(), args: vec![var(&code), unit.clone(), position.clone()] });
-    }
-    code
+    let record = start(unit, position, writing, &code, body);
+    (code, record)
 }
 
 /// `[unit, control, status, pos, items...]`
@@ -80,11 +99,12 @@ pub(crate) fn lower_read(args: &[Expr], symbols: &Symbols, serial: &mut usize) -
     let [unit, Expr::Str(control), status, position, items @ ..] = args else { bail!("invalid unformatted READ") };
     file_unit(unit, symbols, "READ")?;
     let mut body = vec![];
-    let code = begin(unit, position, serial, &mut body);
+    let (code, record) = begin(unit, position, false, serial, &mut body);
     let mut transfers = vec![];
     let source = crate::input::Source { value: unit.clone(), next: "@stream_get" };
     crate::input::emit_read_items(items, symbols, serial, &source, &code, &mut transfers)?;
     body.push(Stmt::If { cond: bin(BinOp::Eq, var(&code), int(0)), then_body: transfers, else_body: None });
+    if record { body.push(Stmt::CallSub { name: "@record_end".into(), args: vec![var(&code)] }); }
     finish(control, status, &code, "READ", &mut body)?;
     Ok(Stmt::Block { body })
 }
@@ -94,11 +114,12 @@ pub(crate) fn lower_write(args: &[Expr], symbols: &Symbols, serial: &mut usize) 
     let [unit, Expr::Str(control), status, position, items @ ..] = args else { bail!("invalid unformatted WRITE") };
     file_unit(unit, symbols, "WRITE")?;
     let mut body = vec![];
-    let code = begin(unit, position, serial, &mut body);
+    let (code, record) = begin(unit, position, true, serial, &mut body);
     let mut local = symbols.clone();
     for item in items {
         write_item(item, unit, &code, &mut local, serial, &mut body)?;
     }
+    if record { body.push(Stmt::CallSub { name: "@record_end".into(), args: vec![var(&code)] }); }
     finish(control, status, &code, "WRITE", &mut body)?;
     Ok(Stmt::Block { body })
 }

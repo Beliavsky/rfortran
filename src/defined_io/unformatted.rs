@@ -247,11 +247,8 @@ impl Lower<'_> {
             assign(&ios, int(0)),
             assign(&msg, Expr::Str(String::new())),
         ];
-        if crate::parameters::integer_constant(position).ok() != Some(0) {
-            body.push(call(
-                "@stream_seek",
-                vec![id(&ios), id(&u), position.clone()],
-            ));
+        let record = crate::unformatted::start(&id(&u), position, !input, &ios, &mut body);
+        {
             body.push(input::nonzero(
                 &ios,
                 vec![assign(
@@ -262,6 +259,9 @@ impl Lower<'_> {
         }
         for item in items {
             body.extend(self.item(item.clone(), input, &u, &ios, &msg, objects, declarations)?);
+        }
+        if record {
+            body.push(call("@record_end", vec![id(&ios)]));
         }
         if let Some(Expr::Ident(n)) = message {
             body.push(input::nonzero(&ios, vec![assign(n, id(&msg))]));

@@ -47,7 +47,7 @@ pub(crate) fn lower(
         };
         if !matches!(
             key.as_str(),
-            "unit" | "newunit" | "file" | "status" | "action" | "access" | "form" | "name" | "opened" | "number" | "exist" | "named" | "iostat" | "position" | "iomsg" | "err"
+            "unit" | "newunit" | "file" | "status" | "action" | "access" | "form" | "name" | "opened" | "number" | "exist" | "named" | "iostat" | "position" | "iomsg" | "err" | "recl"
         ) {
             bail!("{operation}: unsupported I/O control `{key}`");
         }
@@ -56,6 +56,7 @@ pub(crate) fn lower(
             bail!("{} currently supports UNIT, IOSTAT, IOMSG and ERR{}", operation.to_uppercase(), if operation == "close" { " and STATUS" } else { "" });
         }
         if operation=="open" && matches!(key.as_str(),"name"|"opened"|"number"|"exist"|"named") {bail!("OPEN: unsupported I/O control `{key}`");}
+        if operation!="open" && key=="recl" {bail!("{operation}: unsupported I/O control `{key}`");}
         if controls.insert(key.clone(), value).is_some() {
             bail!("{operation}: duplicate {key} control");
         }
@@ -140,16 +141,11 @@ fn lower_open(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpe
         let destination=newunit.clone().or_else(||controls.remove("unit")).context("OPEN requires UNIT or NEWUNIT")?;
         unit(&destination,symbols)?;
         if newunit.is_some() && !matches!(destination,Expr::Ident(_)) {bail!("NEWUNIT requires a writable scalar INTEGER variable");}
-        // Files are opened in binary mode, so unformatted transfers need
-        // nothing more, as for other files.
-        for (key,allowed) in [("action",&["readwrite"][..]),("access",&["sequential"][..]),("form",&["formatted","unformatted"][..])] {
-            if let Some(v)=controls.remove(key) {
-                if !matches!(&v,Expr::Str(s) if allowed.iter().any(|a|s.trim_end().eq_ignore_ascii_case(a))) {
-                    bail!("scratch OPEN currently supports {key}={}",allowed.iter().map(|a|format!("'{a}'")).collect::<Vec<_>>().join(" or "));
-                }
-            }
+        if let Some(v)=controls.remove("action") {
+            if !matches!(&v,Expr::Str(s) if s.trim_end().eq_ignore_ascii_case("readwrite")) {bail!("scratch OPEN currently supports action='readwrite'");}
         }
-        return Ok(Open{body:vec![Stmt::CallSub {name:if newunit.is_some(){"@file_newunit"}else{"@file_scratch"}.into(),args:vec![destination]}],result:None,newunit:None});
+        let connection=connection(&mut controls,&destination)?;
+        return Ok(Open{body:std::iter::once(Stmt::CallSub {name:if newunit.is_some(){"@file_newunit"}else{"@file_scratch"}.into(),args:vec![destination]}).chain(connection).collect(),result:None,newunit:None,connection:None});
     }
     {
         let newunit=controls.remove("newunit");
@@ -157,15 +153,7 @@ fn lower_open(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpe
         let destination=newunit.clone().or_else(||controls.remove("unit")).context("OPEN requires UNIT or NEWUNIT")?;
         unit(&destination,symbols)?;
         if newunit.is_some() && !matches!(destination,Expr::Ident(_)) {bail!("NEWUNIT requires an INTEGER variable");}
-        // Files are opened in binary mode, so a stream connection for
-        // unformatted READ and WRITE needs nothing more.
-        for (key,allowed) in [("access",&["sequential","stream"][..]),("form",&["formatted","unformatted"][..])] {
-            if let Some(v)=controls.remove(key) {
-                if !matches!(&v,Expr::Str(s) if allowed.iter().any(|a|s.trim_end().eq_ignore_ascii_case(a))) {
-                    bail!("OPEN currently supports {key}={}",allowed.iter().map(|a|format!("'{a}'")).collect::<Vec<_>>().join(" or "));
-                }
-            }
-        }
+        let connection=connection(&mut controls,&destination)?;
         let status=match controls.remove("status") {Some(Expr::Str(s))=>s.trim_end().to_ascii_lowercase(),None=>"unknown".into(),_=>bail!("OPEN STATUS must currently be constant")};
         let action=match controls.remove("action") {Some(Expr::Str(s))=>s.trim_end().to_ascii_lowercase(),None=>"readwrite".into(),_=>bail!("OPEN ACTION must currently be constant")};
         let mode=match (status.as_str(),action.as_str()) {("old","read")=>0,("replace","write")=>1,("replace","readwrite")=>2,("old","readwrite")=>3,("old","write")=>4,("unknown","readwrite")=>5,("unknown","write")=>6,("unknown","read")=>0,
@@ -178,7 +166,7 @@ fn lower_open(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpe
         // data transfer, which is what OPEN with default properties does.
         if !controls.contains_key("file") && default_name.is_none() && newunit.is_none() && !checked && !append
             && matches!(status.as_str(),"unknown"|"old") && matches!(action.as_str(),"readwrite"|"read") {
-            return Ok(Open{body:vec![],result:None,newunit:None});
+            return Ok(Open{body:connection.into_iter().collect(),result:None,newunit:None,connection:None});
         }
         let path=controls.remove("file").or(default_name).context("OPEN requires FILE")?;
         if !matches!(crate::array_calls::scalar_actual_kind(&path,symbols)?,TypeSpec::Character(_)) {bail!("FILE requires scalar CHARACTER");}
@@ -190,16 +178,44 @@ fn lower_open(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpe
             *serial+=1;let temp=format!("@open_unit_{serial}");
             args[0]=Expr::Ident(temp.clone());
             if newunit.is_none() {args.push(destination.clone());}
-            return Ok(Open{body:vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![temp.clone()]},Stmt::CallSub{name:name.into(),args}],
-                result:checked.then_some(temp),newunit:newunit.map(|_|destination)});
+            let mut body=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![temp.clone()]},Stmt::CallSub{name:name.into(),args}];
+            // Without IOSTAT the OPEN succeeded if it returned.
+            let connection=if checked {connection} else {body.extend(connection);None};
+            return Ok(Open{body,result:checked.then_some(temp),newunit:newunit.map(|_|destination),connection});
         }
-        Ok(Open{body:vec![Stmt::CallSub{name:name.into(),args}],result:None,newunit:None})
+        Ok(Open{body:std::iter::once(Stmt::CallSub{name:name.into(),args}).chain(connection).collect(),result:None,newunit:None,connection:None})
     }
+}
+
+/// `@record_access(unit, access, recl, unformatted)` for an OPEN whose ACCESS,
+/// FORM or RECL the runtime needs: it keeps the records of sequential and
+/// direct-access unformatted files (files are opened in binary mode).
+fn connection(controls:&mut HashMap<String,Expr>,unit:&Expr)->Result<Option<Stmt>> {
+    let mut chosen=["sequential".to_owned(),String::new()];
+    for (i,(key,allowed)) in [("access",&["sequential","stream","direct"][..]),("form",&["formatted","unformatted"][..])].into_iter().enumerate() {
+        if let Some(v)=controls.remove(key) {
+            if !matches!(&v,Expr::Str(s) if allowed.iter().any(|a|s.trim_end().eq_ignore_ascii_case(a))) {
+                bail!("OPEN currently supports {key}={}",allowed.iter().map(|a|format!("'{a}'")).collect::<Vec<_>>().join(" or "));
+            }
+            if let Expr::Str(s)=v {chosen[i]=s.trim_end().to_ascii_lowercase();}
+        }
+    }
+    let recl=controls.remove("recl");
+    let access=match chosen[0].as_str() {"stream"=>1,"direct"=>2,_=>0};
+    // Direct access is unformatted unless FORM says otherwise.
+    let unformatted=chosen[1]=="unformatted" || (access==2 && chosen[1].is_empty());
+    if access==2 && recl.is_none() {bail!("OPEN with ACCESS='DIRECT' requires RECL");}
+    if access==2 && !unformatted {bail!("formatted direct access is not yet supported");}
+    if access==1 && recl.is_some() {bail!("OPEN with ACCESS='STREAM' must not specify RECL");}
+    Ok((access!=0 || unformatted || recl.is_some()).then(||Stmt::CallSub{name:"@record_access".into(),
+        args:vec![unit.clone(),Expr::IntLit(access.to_string()),recl.unwrap_or(Expr::IntLit("0".into())),Expr::IntLit(i64::from(unformatted).to_string())]}))
 }
 
 /// A lowered OPEN: its statements, and when IOSTAT is wanted, the temporary
 /// holding the raw result and the unit variable NEWUNIT assigns.
-struct Open { body: Vec<Stmt>, result: Option<String>, newunit: Option<Expr> }
+struct Open { body: Vec<Stmt>, result: Option<String>, newunit: Option<Expr>,
+    /// For an OPEN with IOSTAT, how a successful OPEN connected the unit.
+    connection: Option<Stmt> }
 impl Open {
     fn statement(mut self) -> Stmt {
         if self.body.len() == 1 { self.body.pop().unwrap() } else { Stmt::Block { body: self.body } }
@@ -216,6 +232,7 @@ impl Open {
         if let Some(Expr::Ident(unit)) = self.newunit.take() {
             success.push(Stmt::Assign { name: unit, value: Expr::Ident(result) });
         }
+        success.extend(self.connection.take());
         self.body.push(Stmt::If {
             cond: failed,
             then_body: vec![Stmt::Assign { name: status.into(), value: Expr::IntLit("1".into()) }],
@@ -289,8 +306,55 @@ fn lower_inquiry(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(Type
 }
 
 #[derive(Default)]
-pub(crate) struct Files(HashMap<i64, std::fs::File>, HashMap<i64,String>, HashMap<i64,i64>);
+pub(crate) struct Files(HashMap<i64, std::fs::File>, HashMap<i64,String>, HashMap<i64,i64>,
+    /// How OPEN connected each unit, and the record an unformatted transfer is in.
+    HashMap<i64,crate::unformatted_records::Unit>, Option<(i64,crate::unformatted_records::Active)>);
+impl crate::unformatted_records::Io for std::fs::File {
+    fn tell(&mut self)->Option<i64> {self.stream_position().ok().and_then(|p|i64::try_from(p).ok())}
+    fn seek(&mut self,position:i64)->bool {u64::try_from(position).is_ok_and(|p|Seek::seek(self,SeekFrom::Start(p)).is_ok())}
+    fn read(&mut self,buffer:&mut [u8])->usize {
+        let mut count=0;
+        while count<buffer.len() {match Read::read(self,&mut buffer[count..]) {Ok(0)|Err(_)=>break,Ok(n)=>count+=n}}
+        count
+    }
+    fn write(&mut self,bytes:&[u8])->bool {self.write_all(bytes).is_ok()}
+    fn truncate(&mut self)->bool {self.stream_position().is_ok_and(|p|self.set_len(p).is_ok())}
+    fn length(&mut self)->Option<i64> {self.metadata().ok().and_then(|m|i64::try_from(m.len()).ok())}
+}
 impl Files {
+    /// Set how OPEN connected `unit`; access -1 forgets it.
+    pub(crate) fn record_access(&mut self,unit:i64,access:i64,recl:i64,unformatted:bool) {
+        if access<0 {self.3.remove(&unit);} else {self.3.insert(unit,crate::unformatted_records::Unit{access:access as u8,unformatted,recl,after_end:false});}
+    }
+    /// Start the record of an unformatted transfer; REC is zero unless direct.
+    pub(crate) fn record_begin(&mut self,unit:i64,rec:i64,writing:bool)->i64 {
+        self.implicit(unit);
+        if self.require_action(unit,!writing).is_err() {return 1;}
+        // A child transfer continues the record of its parent.
+        if let Some((u,active))=&mut self.4 {
+            if *u==unit {active.depth+=1;return 0;}
+        }
+        let Some(file)=self.0.get_mut(&unit) else {return 1};
+        let (code,active)=crate::unformatted_records::begin(self.3.entry(unit).or_default(),file,rec,writing);
+        self.4=active.map(|a|(unit,a));
+        code
+    }
+    /// Finish the record of an unformatted transfer; `status` is its IOSTAT so far.
+    pub(crate) fn record_end(&mut self,status:i64)->i64 {
+        if let Some((_,active))=&mut self.4 {
+            if active.depth>0 {active.depth-=1;return status;}
+        }
+        let Some((unit,active))=self.4.take() else {return status};
+        let Some(file)=self.0.get_mut(&unit) else {return status};
+        let code=crate::unformatted_records::end(&active,file);
+        if status!=0 {status} else {code}
+    }
+    fn record_fits(&mut self,unit:i64,width:usize)->bool {
+        match self.4 {
+            Some((u,active)) if u==unit => self.0.get_mut(&unit).is_some_and(|file|crate::unformatted_records::fits(&active,file,width)),
+            _ => true,
+        }
+    }
     pub(crate) fn internal_begin(&self,source:&[u8],writing:bool,records:i64)->Result<i64> {
         let unit=(-1033..=-10).rev().find(|u|!self.0.contains_key(u) && unsafe{crate::internal_file::mode(*u)==0}).context("no free internal file units")?;
         if records<0 || unsafe{if records==1 {crate::internal_file::begin(unit,source,source.len(),1,writing)}else{crate::internal_file::allocate(unit,source.len(),records as usize,writing)}}!=0 {bail!("could not allocate internal file");}Ok(unit)
@@ -358,15 +422,25 @@ impl Files {
             let connected=self.0.remove(&unit).is_some();
             let name=self.1.remove(&unit);
             self.2.remove(&unit);
+            self.3.remove(&unit);
             if op == "@file_close_delete" && connected {
                 if let Some(name)=name.filter(|n|!n.is_empty()) {std::fs::remove_file(name.trim_end()).context("CLOSE could not delete the file")?;}
             }
             return Ok(());
         }
+        // ENDFILE connects an unconnected unit, as a data transfer does and
+        // as in gfortran; REWIND and BACKSPACE require a connected unit.
+        if op == "@file_endfile" {self.implicit(unit);}
         let file = self
             .0
             .get_mut(&unit)
             .context("file unit is not connected")?;
+        if op == "@file_backspace" {
+            if let Some(code)=crate::unformatted_records::backspace(self.3.entry(unit).or_default(),file) {
+                if code!=0 {bail!("BACKSPACE failed");}
+                return Ok(());
+            }
+        }
         if op == "@file_rewind" {
             file.seek(SeekFrom::Start(0))?;
             return Ok(());
@@ -501,13 +575,13 @@ impl Files {
     /// Unformatted stream output: 0, or 1 on an error.
     pub(crate) fn stream_write(&mut self,unit:i64,bytes:&[u8])->i64 {
         self.implicit(unit);
-        if self.require_action(unit,false).is_err() {return 1;}
+        if self.require_action(unit,false).is_err() || !self.record_fits(unit,bytes.len()) {return 1;}
         match self.0.get_mut(&unit) {Some(file)=>i64::from(file.write_all(bytes).is_err()),None=>1}
     }
     /// Unformatted stream input: 0, -1 at end of file, or 1 on an error.
     pub(crate) fn stream_read(&mut self,unit:i64,buffer:&mut [u8])->i64 {
         self.implicit(unit);
-        if self.require_action(unit,true).is_err() {return 1;}
+        if self.require_action(unit,true).is_err() || !self.record_fits(unit,buffer.len()) {return 1;}
         let Some(file)=self.0.get_mut(&unit) else {return 1};
         match file.read_exact(buffer) {Ok(())=>0,Err(e) if e.kind()==std::io::ErrorKind::UnexpectedEof=>-1,Err(_)=>1}
     }

@@ -47,6 +47,7 @@ mod defined_format;
 mod internal_file;
 mod output_record;
 mod record_input;
+mod unformatted_records;
 mod list_input;
 mod namelist_input;
 mod namelist_native;
@@ -392,6 +393,7 @@ pub unsafe extern "C" fn rfort_stream_put(stream:*mut core::ffi::c_void,tag:i64,
         3=>{bytes[..4].copy_from_slice(&i32::from(*slot!=0).to_le_bytes());&bytes[..4]}
         _=>core::slice::from_raw_parts(slot,width),
     };
+    if !record_fits(stream,data.len()) {return 1;}
     i64::from(fwrite(data.as_ptr(),1,data.len(),stream)!=data.len())
 }
 /// Unformatted stream input of one scalar into compiled storage. Returns 0,
@@ -399,6 +401,7 @@ pub unsafe extern "C" fn rfort_stream_put(stream:*mut core::ffi::c_void,tag:i64,
 #[no_mangle]
 pub unsafe extern "C" fn rfort_stream_get(stream:*mut core::ffi::c_void,tag:i64,width:usize,slot:*mut u8)->i64 {
     let mut bytes=[0u8;8];
+    if !record_fits(stream,width) {return 1;}
     let buffer:&mut [u8]=if tag==4 {core::slice::from_raw_parts_mut(slot,width)} else {&mut bytes[..width]};
     let count=fread(buffer.as_mut_ptr(),1,width,stream);
     if count!=width {return if ferror(stream)!=0 {1} else {-1};}
@@ -411,6 +414,80 @@ pub unsafe extern "C" fn rfort_stream_get(stream:*mut core::ffi::c_void,tag:i64,
         _=>{}
     }
     0
+}
+/// The connection of each unit, by its index in the unit tables.
+static mut RECORD_UNITS:[unformatted_records::Unit;2048]=[unformatted_records::Unit{access:0,unformatted:false,recl:0,after_end:false};2048];
+/// The record an unformatted transfer is in, and its stream.
+static mut RECORD_ACTIVE:Option<(*mut core::ffi::c_void,unformatted_records::Active)>=None;
+struct CFile(*mut core::ffi::c_void);
+impl unformatted_records::Io for CFile {
+    fn tell(&mut self)->Option<i64> {
+        #[cfg(windows)] let p=unsafe{_ftelli64(self.0)};
+        #[cfg(not(windows))] let p=unsafe{ftello(self.0)};
+        (p>=0).then_some(p)
+    }
+    fn seek(&mut self,position:i64)->bool {
+        extern "C" {#[cfg(windows)] fn _fseeki64(stream:*mut core::ffi::c_void,offset:i64,origin:i32)->i32; #[cfg(not(windows))] fn fseeko(stream:*mut core::ffi::c_void,offset:i64,origin:i32)->i32;}
+        #[cfg(windows)] {unsafe{_fseeki64(self.0,position,0)==0}}
+        #[cfg(not(windows))] {unsafe{fseeko(self.0,position,0)==0}}
+    }
+    fn read(&mut self,buffer:&mut [u8])->usize {unsafe{fread(buffer.as_mut_ptr(),1,buffer.len(),self.0)}}
+    fn write(&mut self,bytes:&[u8])->bool {unsafe{fwrite(bytes.as_ptr(),1,bytes.len(),self.0)==bytes.len()}}
+    fn truncate(&mut self)->bool {unsafe{rfort_file_endfile(self.0)==0}}
+    fn length(&mut self)->Option<i64> {
+        let here=self.tell()?;
+        if unsafe{fseek(self.0,0,2)}!=0 {return None;}
+        let length=self.tell();
+        if !self.seek(here) {return None;}
+        length
+    }
+}
+/// Set how OPEN connected `unit`: ACCESS (0 sequential, 1 stream, 2 direct),
+/// RECL, and whether FORM is unformatted. Access -1 forgets the unit, at CLOSE.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_record_access(unit:i64,access:i64,recl:i64,unformatted:i64)->i32 {
+    let Some(index)=file_inquiry::index(unit) else {return 1};
+    let units=&mut *core::ptr::addr_of_mut!(RECORD_UNITS);
+    units[index]=if access<0 {unformatted_records::Unit::default()} else {unformatted_records::Unit{access:access as u8,unformatted:unformatted!=0,recl,after_end:false}};
+    0
+}
+/// Start the record of an unformatted transfer; REC is zero unless direct.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_record_begin(unit:i64,stream:*mut core::ffi::c_void,rec:i64,writing:i64)->i64 {
+    let Some(index)=file_inquiry::index(unit) else {return unformatted_records::ERROR};
+    // A child transfer continues the record of its parent.
+    if let Some((s,active))=&mut *core::ptr::addr_of_mut!(RECORD_ACTIVE) {
+        if *s==stream {active.depth+=1;return 0;}
+    }
+    let units=&mut *core::ptr::addr_of_mut!(RECORD_UNITS);
+    let (code,active)=unformatted_records::begin(&mut units[index],&mut CFile(stream),rec,writing!=0);
+    *core::ptr::addr_of_mut!(RECORD_ACTIVE)=active.map(|a|(stream,a));
+    code
+}
+/// Finish the record of an unformatted transfer; `status` is its IOSTAT so far.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_record_end(status:i64)->i64 {
+    if let Some((_,active))=&mut *core::ptr::addr_of_mut!(RECORD_ACTIVE) {
+        if active.depth>0 {active.depth-=1;return status;}
+    }
+    let Some((stream,active))=(*core::ptr::addr_of_mut!(RECORD_ACTIVE)).take() else {return status};
+    let code=unformatted_records::end(&active,&mut CFile(stream));
+    if status!=0 {status} else {code}
+}
+/// BACKSPACE over an unformatted record: 0, 1 on an error, or 2 when the
+/// unit is formatted.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_record_backspace(unit:i64,stream:*mut core::ffi::c_void)->i64 {
+    let Some(index)=file_inquiry::index(unit) else {return 2};
+    let units=&mut *core::ptr::addr_of_mut!(RECORD_UNITS);
+    match unformatted_records::backspace(&mut units[index],&mut CFile(stream)) {Some(0)=>0,Some(_)=>1,None=>2}
+}
+/// Whether `width` bytes fit in the record being transferred on `stream`.
+unsafe fn record_fits(stream:*mut core::ffi::c_void,width:usize)->bool {
+    match *core::ptr::addr_of!(RECORD_ACTIVE) {
+        Some((s,active)) if s==stream => unformatted_records::fits(&active,&mut CFile(stream),width),
+        _ => true,
+    }
 }
 /// Position a stream file at byte POS, counted from 1.
 #[no_mangle]

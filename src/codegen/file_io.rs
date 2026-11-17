@@ -362,12 +362,17 @@ pub(super) fn operation(
             require(module, b, ptr, dc, okay, "CLOSE could not delete the file")?;
         }
         call(module,b,"rfort_file_free_name",&[path],types::I32)?;b.ins().store(MemFlags::new(),zero,address,0);
+        let forget=b.ins().iconst(types::I64,-1);
+        call(module,b,"rfort_record_access",&[unit,forget,forget,forget],types::I32)?;
         let actions=table(b,module,ptr,".rfort.file_actions")?;let address=b.ins().iadd(actions,offset);b.ins().store(MemFlags::new(),zero,address,0);
         b.ins().jump(done, &[]);
         b.switch_to_block(done);
         b.seal_block(done);
         return Ok(());
     }
+    // ENDFILE connects an unconnected unit, as a data transfer does and as
+    // in gfortran; REWIND and BACKSPACE require a connected unit.
+    let file = if op == "@file_endfile" { implicit(module, b, ptr, unit)? } else { file };
     let connected = b.ins().icmp_imm(IntCC::NotEqual, file, 0);
     require(module, b, ptr, dc, connected, "file unit is not connected")?;
     if op == "@file_rewind" {
@@ -379,6 +384,24 @@ pub(super) fn operation(
         let okay = b.ins().icmp_imm(IntCC::Equal, result, 0);
         return require(module, b, ptr, dc, okay, "ENDFILE failed");
     }
+    // BACKSPACE over an unformatted record, or else a formatted one.
+    let code = call(module, b, "rfort_record_backspace", &[unit, file], types::I64)?;
+    let okay = b.ins().icmp_imm(IntCC::NotEqual, code, 1);
+    require(module, b, ptr, dc, okay, "BACKSPACE failed")?;
+    let formatted = b.create_block();
+    let finished = b.create_block();
+    let unformatted = b.ins().icmp_imm(IntCC::Equal, code, 0);
+    b.ins().brif(unformatted, finished, &[], formatted, &[]);
+    b.switch_to_block(formatted);
+    b.seal_block(formatted);
+    formatted_backspace(module, b, ptr, dc, file)?;
+    b.ins().jump(finished, &[]);
+    b.switch_to_block(finished);
+    b.seal_block(finished);
+    Ok(())
+}
+
+fn formatted_backspace(module: &mut ObjectModule, b: &mut FunctionBuilder, ptr: ir::Type, dc: &mut u32, file: ir::Value) -> Result<()> {
     let position = call(
         module,
         b,

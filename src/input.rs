@@ -92,6 +92,7 @@ pub(crate) fn read_controls(
     let mut named = false;
     let mut message = None;
     let mut stream_position = None;
+    let mut record = None;
     let mut seen = std::collections::HashSet::new();
     for (position, value) in controls.into_iter().enumerate() {
         let (key, value) = match value {
@@ -122,6 +123,8 @@ pub(crate) fn read_controls(
             "fmt" => format = Some(value),
             // The file position of an unformatted stream READ.
             "pos" => stream_position = Some(value),
+            // The record of a direct-access READ, carried in the POS slot.
+            "rec" => record = Some(value),
             // Only defined after an error; an input error that IOSTAT does not
             // report stops the program, so IOMSG is never set.
             "iomsg" => message = Some(value),
@@ -134,13 +137,18 @@ pub(crate) fn read_controls(
         }
     }
     let unit = unit.ok_or("READ requires UNIT")?;
+    if let Some(record) = record {
+        if stream_position.is_some() { return Err("READ must not specify both REC and POS"); }
+        if format.is_some() { return Err("formatted direct-access READ (REC= with FMT) is not yet supported"); }
+        stream_position = Some(Expr::Call(crate::unformatted::RECORD_NUMBER.into(), vec![record]));
+    }
     // ERR=, EOR=, and END= with another control, read into an IOSTAT
     // variable (a temporary without IOSTAT=); the label pass then branches on
-    // it. A lone END= keeps its own structured lowering.
+    // it. A lone END= on a formatted READ keeps its own structured lowering.
     let branch = |key: &str| matches!(key, "err" | "end" | "eor");
     let branches: Vec<(String, Expr)> = options.iter().filter(|(k, _)| branch(k)).cloned().collect();
     let mut branches_marker = None;
-    if !branches.is_empty() && !(options.len() == 1 && options[0].0 == "end") {
+    if !branches.is_empty() && !(format.is_some() && options.len() == 1 && options[0].0 == "end") {
         let others: Vec<(String, Expr)> = options.iter().filter(|(k, _)| !branch(k)).cloned().collect();
         if others.len() > 1 || others.first().is_some_and(|(k, _)| k != "iostat") {
             return Err("READ ERR=, END= and EOR= currently combine only with IOSTAT and IOMSG");

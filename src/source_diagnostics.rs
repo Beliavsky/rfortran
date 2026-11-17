@@ -164,8 +164,8 @@ mod result_type_tests {
         }
     }
 }
-/// Module lowering gives symbols internal identities; diagnostics use the
-/// entity names the programmer wrote instead of exposing those identities.
+// Module lowering gives symbols internal identities; diagnostics use the
+// entity names the programmer wrote instead of exposing those identities.
 thread_local! {
     /// Names that lowering gives to entities of the program, such as the
     /// locals of internal procedures (`@sub_local_2`), with the names the

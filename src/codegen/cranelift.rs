@@ -3030,6 +3030,32 @@ fn gen_stmts(
                     let code=file_io::call(module,b,"rfort_list_read_complex_next",&[h,width,re,im],types::I64)?;
                     let status=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,status,0);continue;
                 }
+                // The records of unformatted files.
+                if name=="@record_begin" || name=="@record_end" || name=="@record_access" {
+                    let skip=usize::from(name!="@record_access");
+                    let mut values=vec![];
+                    for e in &args[skip..] {let v=eval_expr(b,ex,ptr_ty,e,ints,reals,bools,func_meta);values.push(to_i64(b,v));}
+                    if name=="@record_access" {
+                        file_io::call(module,b,"rfort_record_access",&values,types::I32)?;
+                        continue;
+                    }
+                    let IExpr::Ident(status)=&args[0] else {anyhow::bail!("invalid record status");};
+                    let address=storage_addr(b,ptr_ty,ints[status]);
+                    let code=if name=="@record_begin" {
+                        let file=file_io::handle(module,b,ptr_ty,dc,values[0])?;
+                        let code=file_io::call(module,b,"rfort_record_begin",&[values[0],file,values[1],values[2]],types::I64)?;
+                        // A transfer that the unit's ACTION forbids is an error.
+                        let reading=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,values[2],0);
+                        let read_ok=file_io::permits(module,b,ptr_ty,values[0],true)?;
+                        let write_ok=file_io::permits(module,b,ptr_ty,values[0],false)?;
+                        let okay=b.ins().select(reading,read_ok,write_ok);
+                        let error=b.ins().iconst(types::I64,1);b.ins().select(okay,code,error)
+                    } else {
+                        let previous=b.ins().load(types::I64,MemFlags::new(),address,0);
+                        file_io::call(module,b,"rfort_record_end",&[previous],types::I64)?
+                    };
+                    b.ins().store(MemFlags::new(),code,address,0);continue;
+                }
                 // Unformatted stream transfers of one scalar, and POS.
                 if name=="@stream_put" || name=="@stream_get" || name=="@stream_seek" {
                     let IExpr::Ident(status)=&args[0] else {anyhow::bail!("invalid stream status");};

@@ -106,6 +106,7 @@ mod defined_format;
 mod internal_file;
 mod output_record;
 mod record_input;
+mod unformatted_records;
 mod list_input;
 mod character_input;
 mod derived;

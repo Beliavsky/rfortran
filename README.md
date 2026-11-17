@@ -58,7 +58,7 @@ These are bounded implementations, not claims of full language support. Many
 array operations require statically known shapes, and procedure calls use
 specialization rather than a general Fortran descriptor ABI. Important gaps
 include type extension and polymorphism, GOTO and FORMAT statements, COMMON and
-DATA, unformatted and direct-access I/O, most numeric edit descriptors (E, ES,
+DATA, formatted direct-access I/O, most numeric edit descriptors (E, ES,
 G, B, O, Z), numeric formatted input, and unbounded runtime CHARACTER storage.
 [docs/feature-status.md](docs/feature-status.md) lists what is and is not
 supported; [docs/language-support.md](docs/language-support.md) describes each

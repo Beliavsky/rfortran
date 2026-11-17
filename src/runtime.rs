@@ -1972,6 +1972,25 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         }
                         let fr=call_stack.last_mut().unwrap();fr.env_int.insert(handle.clone(),h);fr.env_int.insert(status.clone(),0);idx+=1;continue;
                     }
+                    // The records of unformatted files.
+                    if name=="@record_begin" || name=="@record_end" || name=="@record_access" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let mut values=vec![];
+                        for e in &args[usize::from(name!="@record_access")..] {values.push(eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap());}
+                        if name=="@record_access" {
+                            FILES.with(|files|files.borrow_mut().record_access(values[0],values[1],values[2],values[3]!=0));
+                        } else {
+                            let Expr::Ident(status)=&args[0] else {unreachable!()};
+                            let code=if name=="@record_begin" {
+                                FILES.with(|files|files.borrow_mut().record_begin(values[0],values[1],values[2]!=0))
+                            } else {
+                                let previous=fr.env_int.get(status).copied().unwrap_or(0);
+                                FILES.with(|files|files.borrow_mut().record_end(previous))
+                            };
+                            call_stack.last_mut().unwrap().env_int.insert(status.clone(),code);
+                        }
+                        idx+=1;continue;
+                    }
                     // Unformatted stream transfers of one scalar value, as the
                     // bytes of its kind.
                     if name=="@stream_put" || name=="@stream_get" || name=="@stream_seek" {
