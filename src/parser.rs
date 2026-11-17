@@ -830,6 +830,9 @@ pub fn parse_with_origins(
             crate::field_subscripts::resolve(&mut p);
             crate::typed_implied_do::resolve(&mut p);
             if let Err((msg, at)) = check_implicit_statements(&p.body)
+                // A REPL submission's source omits the session's earlier
+                // declarations, which the REPL checks itself.
+                .and_then(|_| if filename.starts_with("<repl") { Ok(()) } else { crate::implicit_none::check(&p.body, &p.contains) })
                 .and_then(|_| crate::entries::resolve(&mut p).map_err(|msg| (msg, None)))
                 .and_then(|_| resolve_dimension_statements(&mut p.body)
                 .and_then(|_| crate::statement_labels::formats(&mut p.body))

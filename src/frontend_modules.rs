@@ -132,6 +132,7 @@ mod sema;
 mod unused;
 mod optional_warnings;
 mod implicit_warnings;
+mod implicit_none;
 mod reachability;
 mod format_warnings;
 mod open_warnings;

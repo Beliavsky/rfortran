@@ -274,7 +274,78 @@ call system_clock(c)
 j = c
 print *, j
 end program p
-""", "undefined variable `j`")
+""", "`j` has no IMPLICIT type")
+
+    def test_implicit_none_rejects_undeclared_definitions(self):
+        # A variable that is only assigned, or only a DO variable, was
+        # accepted under IMPLICIT NONE and given an implicit type.
+        for body in ("y = 1", "do k = 1, 2\nend do", "if (.true.) then\n  y = 1\nend if"):
+            with self.subTest(body=body):
+                self.reject(f"""program p
+implicit none
+{body}
+end program p
+""", "has no IMPLICIT type")
+        self.reject("""program p
+call s
+end program p
+subroutine s
+implicit none
+y = 1
+end subroutine s
+""", "`y` has no IMPLICIT type")
+        # Inherited from the host.
+        self.reject("""program p
+implicit none
+call s
+contains
+subroutine s
+y = 1
+end subroutine s
+end program p
+""", "`y` has no IMPLICIT type")
+
+    def test_implicit_none_accepts_declared_definitions(self):
+        # Locals, dummies, results, host and module variables, BLOCK and
+        # COMMON names, and a procedure's own IMPLICIT rule.
+        self.check("""module m
+implicit none
+integer :: mv
+contains
+function f(x) result(r)
+real :: x, r
+r = 2*x
+end function f
+end module m
+program p
+use m
+implicit none
+integer :: c, h
+common /blk/ c
+c = 1
+h = 0
+block
+integer :: b
+b = 2
+c = c + b
+end block
+mv = 3
+call s(h)
+call t(c)
+print *, c, h, mv, f(1.5)
+contains
+subroutine s(d)
+integer :: d
+d = mv + 1
+end subroutine s
+subroutine t(out)
+implicit integer (n)
+integer :: out
+n = 7
+out = out + n
+end subroutine t
+end program p
+""", "10 4 3 3.0\n")
 
 
 if __name__ == "__main__":
