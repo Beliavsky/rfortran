@@ -38,7 +38,9 @@ jobs:
         env:
           RFORT_WASM_REQUIRED: '1'
         run: |
+          python -m pip install wasmtime
           python web-interpreter/tests/test_package.py
+          python web-interpreter/tests/test_web_run.py
           node --test web-interpreter/tests/*.test.mjs
       - name: Prepare static site
         run: python web-interpreter/package.py

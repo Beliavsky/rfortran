@@ -34,7 +34,9 @@ def main():
     shutil.copyfile(ROOT/'LICENSE-MIT',output/'LICENSE-MIT.txt')
     revision=subprocess.run(['git','rev-parse','HEAD'],cwd=ROOT,capture_output=True,text=True).stdout.strip()
     info={'commit':commit,'sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'bytes':source.stat().st_size,
-          'source':f'https://github.com/Beliavsky/rfortran/tree/{revision}'}
+          'source':f'https://github.com/Beliavsky/rfortran/tree/{revision}',
+          # Options beyond running a program, for rfort_web_run.py.
+          'features':['check','warnings']}
     (output/'build.json').write_text(json.dumps(info,indent=2)+'\n',encoding='utf-8')
     print(f'Built {output/source.name} ({source.stat().st_size:,} bytes)')
     print('Serve: python -m http.server 8000 --bind 127.0.0.1 --directory web-interpreter')

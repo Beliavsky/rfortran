@@ -58,6 +58,36 @@ https://beliavsky.github.io/rfortran/?flags=Wall,Wstyle&source=...
 Bug reports list the options of the last run or check. Other options are
 refused, both by the page and by the interpreter.
 
+## Run programs from the command line
+
+`rfort_web_run.py` runs a program with the playground's interpreter on your own
+machine, without installing rfortran. It downloads the playground's WebAssembly
+interpreter once (about 11 MB), checks it against the site's `build.json`, and
+caches it with a copy compiled for your machine; it downloads again only when
+the site is updated. Results match the playground's. It needs Python 3.8 or
+later and the `wasmtime` package:
+
+```cmd
+pip install wasmtime
+curl -O https://raw.githubusercontent.com/Beliavsky/rfortran/main/web-interpreter/rfort_web_run.py
+python rfort_web_run.py hello.f90
+python rfort_web_run.py -Wall -Wstyle --check hello.f90
+python rfort_web_run.py mod.f90 main.f90 --stdin input.txt
+```
+
+Several sources are joined in order into one program, so put modules first.
+`--stdin -` passes the script's own standard input. Program output goes to
+standard output, and warnings and errors to standard error; the exit status is
+the program's (`STOP 3` gives 3). `--timeout` stops a run after 30 seconds by
+default. The program runs sandboxed in a temporary folder: it can read and
+write only its own files there, which are deleted afterwards. `--wasm` uses a
+local build instead, such as `web-interpreter/runtime/rfort-browser.wasm`.
+
+The first run compiles the interpreter for your machine, which takes 10 to 20
+seconds; later runs start in about two seconds. `--check` and the warning
+options need an interpreter built with them; the script says so if the site's
+is older.
+
 ## Build and run locally
 
 From the repository root, with Rust, Python and Node.js 22 or later installed:
