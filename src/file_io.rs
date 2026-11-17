@@ -140,9 +140,13 @@ fn lower_open(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpe
         let destination=newunit.clone().or_else(||controls.remove("unit")).context("OPEN requires UNIT or NEWUNIT")?;
         unit(&destination,symbols)?;
         if newunit.is_some() && !matches!(destination,Expr::Ident(_)) {bail!("NEWUNIT requires a writable scalar INTEGER variable");}
-        for (key,expected) in [("action","readwrite"),("access","sequential"),("form","formatted")] {
+        // Files are opened in binary mode, so unformatted transfers need
+        // nothing more, as for other files.
+        for (key,allowed) in [("action",&["readwrite"][..]),("access",&["sequential"][..]),("form",&["formatted","unformatted"][..])] {
             if let Some(v)=controls.remove(key) {
-                if !matches!(v,Expr::Str(s) if s.trim_end().eq_ignore_ascii_case(expected)) {bail!("scratch OPEN currently supports {key}='{expected}'");}
+                if !matches!(&v,Expr::Str(s) if allowed.iter().any(|a|s.trim_end().eq_ignore_ascii_case(a))) {
+                    bail!("scratch OPEN currently supports {key}={}",allowed.iter().map(|a|format!("'{a}'")).collect::<Vec<_>>().join(" or "));
+                }
             }
         }
         return Ok(Open{body:vec![Stmt::CallSub {name:if newunit.is_some(){"@file_newunit"}else{"@file_scratch"}.into(),args:vec![destination]}],result:None,newunit:None});

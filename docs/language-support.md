@@ -3781,6 +3781,15 @@ A generic interface lists its specifics with `MODULE PROCEDURE` or `PROCEDURE`
 statements, each with an optional `::`. A `PROCEDURE` specific may also be an
 internal procedure of the program.
 
+The GENERIC statement of Fortran 2018, `generic [, public|private] :: spec =>
+specifics`, is equivalent to an interface block of those specifics, for a
+generic name, `operator(op)` or `assignment(=)`; several statements may extend
+one generic. `generic :: read(formatted)` and the other defined input/output
+forms are not yet supported outside a type. VOLATILE and ASYNCHRONOUS
+statements are accepted and, like the attributes, have no effect: they only
+restrict optimization, which single-threaded code without asynchronous
+input/output does not need.
+
 ### ELEMENTAL functions
 
 ELEMENTAL functions support explicitly declared numeric, LOGICAL, and CHARACTER
@@ -3905,7 +3914,11 @@ forwarded to another procedure, and keyword actuals work. Procedure pointers
 declared with `procedure(iface), pointer` become an integer tag: `p => f`,
 `nullify(p)`, `associated(p)` and `associated(p, f)` update or test it, and calls
 through `p` dispatch on it to the procedures ever associated with `p` in its
-scope. Procedure pointer components, procedure pointers passed as actual
+scope. `procedure(integer)`, and likewise REAL, DOUBLE PRECISION, COMPLEX and
+LOGICAL, declares an implicit interface with that result type. Calls dispatch
+through the interface of the first target, so the targets of one pointer must
+have the same form and number of arguments; otherwise the program is rejected.
+Procedure pointer components, procedure pointers passed as actual
 arguments or used as dummies, OPTIONAL dummy procedures and passing intrinsic
 procedures are not yet supported. A module containing a procedure with dummy
 procedures must be compiled with its callers, since the copies are made per
@@ -4328,6 +4341,14 @@ Run `python tests/test_numeric_model.py` for interpreter/native O0/O2 comparison
 with gfortran, statement boundaries, initialization behavior and invalid arguments.
 
 ### Defined derived-type output
+
+Interface blocks such as `interface write(formatted)` with `module procedure
+p` are also accepted, for READ and WRITE, FORMATTED and UNFORMATTED: each
+procedure becomes the type's binding for that form, the type being that of
+its first dummy, which must be defined in the same source. Such a procedure
+may declare its DTV `TYPE(t)`, as the standard allows for a SEQUENCE or
+BIND(C) type; rfort accepts `TYPE(t)` for any type here. A procedure that
+leaves IOSTAT undefined reports success, as in gfortran.
 
 Initial Fortran 2003 defined I/O supports type-bound
 `generic :: write(formatted) => binding` for scalar derived values written

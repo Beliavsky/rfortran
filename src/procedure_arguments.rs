@@ -446,12 +446,22 @@ fn strip(body: &mut Vec<Stmt>) {
 /// disassociated, otherwise the 1-based index of the target among the
 /// procedures ever associated with that pointer. Calls dispatch on the tag
 /// through a generated procedure with the first target's interface.
-fn pointers(body: &mut Vec<Stmt>, all: &HashMap<String, Stmt>, serial: &mut usize) -> Result<()> {
+/// Returns the dispatchers of this scope's pointers, which the caller places
+/// beside the procedure: inside it they would be nested internal procedures.
+fn pointers(body: &mut Vec<Stmt>, all: &HashMap<String, Stmt>, serial: &mut usize) -> Result<Vec<Stmt>> {
+    let mut beside = vec![];
     for s in body.iter_mut() {
-        if let Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } = s {
-            pointers(body, all, serial)?;
+        match s {
+            Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => beside.extend(pointers(body, all, serial)?),
+            Stmt::Module { body, .. } => {
+                let own = pointers(body, all, serial)?;
+                body.extend(own);
+            }
+            _ => {}
         }
     }
+    body.extend(beside);
+    let mut dispatchers = vec![];
     let procedure: HashSet<String> = body
         .iter()
         .filter_map(|s| match s {
@@ -490,6 +500,20 @@ fn pointers(body: &mut Vec<Stmt>, all: &HashMap<String, Stmt>, serial: &mut usiz
         for t in &found {
             if !all.contains_key(t) {
                 bail!("procedure pointer `{pointer}` target `{t}` must be a procedure defined in the program");
+            }
+        }
+        // Calls dispatch through the first target's interface, so every
+        // target must have the same form and number of arguments. Without an
+        // explicit interface they could differ; such calls would pass the
+        // wrong arguments.
+        let shape = |t: &str| match &all[t] {
+            Stmt::Function { params, .. } => (true, params.len()),
+            Stmt::Subroutine { params, .. } => (false, params.len()),
+            _ => (false, usize::MAX),
+        };
+        if let Some(first) = found.first() {
+            if let Some(other) = found.iter().find(|t| shape(t) != shape(first)) {
+                bail!("procedure pointer `{pointer}` is associated with `{first}` and `{other}`, which have different interfaces; this is not yet supported");
             }
         }
         *serial += 1;
@@ -565,6 +589,15 @@ fn pointers(body: &mut Vec<Stmt>, all: &HashMap<String, Stmt>, serial: &mut usiz
         rewrite(body, &pointer, &dispatch, &found, &index)?;
         // The pointer itself becomes a tag, initially disassociated.
         body.retain(|s| !matches!(s, Stmt::DummyIntent { name, .. } if *name == pointer));
+        // A type declaration of the pointer gave its result type, which the
+        // targets now give.
+        body.retain_mut(|s| match s {
+            Stmt::VarDecl { names, .. } if names.contains(&pointer) => {
+                names.retain(|n| *n != pointer);
+                !names.is_empty()
+            }
+            _ => true,
+        });
         let position = body.iter().position(|s| !matches!(s, Stmt::SourceLocation(_) | Stmt::Use { .. } | Stmt::Implicit(_))).unwrap_or(0);
         body.insert(position, Stmt::InitializedDecl {
             kind: crate::ast::TypeSpec::Integer(None),
@@ -572,10 +605,10 @@ fn pointers(body: &mut Vec<Stmt>, all: &HashMap<String, Stmt>, serial: &mut usiz
             entities: vec![(pointer.clone(), Some(Expr::IntLit("0".into())))],
         });
         if let Some(first) = found.first() {
-            body.push(dispatcher(&dispatch, &pointer, function, &found, &all[first])?);
+            dispatchers.push(dispatcher(&dispatch, &pointer, function, &found, &all[first])?);
         }
     }
-    Ok(())
+    Ok(dispatchers)
 }
 
 /// A procedure taking the pointer tag followed by the first target's dummy
@@ -658,7 +691,8 @@ pub(crate) fn resolve(mut program: Program) -> Result<Program> {
     }
     every(&program.body, &mut all);
     let mut serial = 0;
-    pointers(&mut program.body, &all, &mut serial)?;
+    let own = pointers(&mut program.body, &all, &mut serial)?;
+    program.body.extend(own);
     if !templates.is_empty() {
         let mut defs = HashMap::new();
         definitions(&program.body, &templates, &mut defs);

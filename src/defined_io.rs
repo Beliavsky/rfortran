@@ -8,6 +8,101 @@ use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
 
+/// Marks an interface block `INTERFACE WRITE(FORMATTED)` and the like; the
+/// direction and form follow, and the arguments name its procedures.
+pub(crate) const INTERFACE: &str = "@defined_io_interface:";
+
+/// Give each procedure of a defined input/output interface block to the type
+/// of its first dummy argument as a binding, as `GENERIC :: WRITE(FORMATTED)
+/// => p` in the type would. The type must be defined in the same source.
+pub(crate) fn interfaces(body: &mut Vec<Stmt>) -> std::result::Result<(), String> {
+    fn markers(body: &mut Vec<Stmt>, out: &mut Vec<(String, String)>) {
+        body.retain(|s| match s {
+            Stmt::CallSub { name, args } if name.starts_with(INTERFACE) => {
+                let key = format!("@defined_io:{}", &name[INTERFACE.len()..]);
+                out.extend(args.iter().filter_map(|a| match a {
+                    Expr::Ident(p) => Some((key.clone(), p.clone())),
+                    _ => None,
+                }));
+                false
+            }
+            _ => true,
+        });
+        for s in body.iter_mut() {
+            for child in crate::procedure_arguments::children(s) {
+                markers(child, out);
+            }
+        }
+    }
+    let mut found = vec![];
+    markers(body, &mut found);
+    if found.is_empty() {
+        return Ok(());
+    }
+    // The type of the first dummy of each named procedure.
+    fn dummy_type(body: &[Stmt], procedure: &str) -> Option<String> {
+        for s in body {
+            match s {
+                Stmt::Subroutine { name, params, body, .. } if name.eq_ignore_ascii_case(procedure) => {
+                    let first = params.first()?;
+                    return body.iter().find_map(|d| match d {
+                        Stmt::DerivedDecl { type_name, names, .. } if names.contains(first) => Some(type_name.clone()),
+                        _ => None,
+                    });
+                }
+                Stmt::Module { body, .. } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => {
+                    if let Some(t) = dummy_type(body, procedure) {
+                        return Some(t);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    fn mark(body: &mut [Stmt], procedure: &str) {
+        for s in body.iter_mut() {
+            match s {
+                Stmt::Subroutine { name, body, .. } if name.eq_ignore_ascii_case(procedure) => {
+                    if !body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, .. } if name == INTERFACE)) {
+                        body.insert(0, Stmt::DummyIntent { name: INTERFACE.into(), intent: "true".into() });
+                    }
+                }
+                Stmt::Module { body, .. } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => mark(body, procedure),
+                _ => {}
+            }
+        }
+    }
+    fn bind(body: &mut [Stmt], ty: &str, key: &str, procedure: &str) -> bool {
+        for s in body.iter_mut() {
+            if let Stmt::DerivedType { name, bindings, .. } = s {
+                if name == ty {
+                    if !bindings.iter().any(|(k, p)| k == key && p == procedure) {
+                        bindings.push((key.to_string(), procedure.to_string()));
+                        bindings.push((format!("@defined_io_access:{}", &key["@defined_io:".len()..]), "@public".into()));
+                    }
+                    return true;
+                }
+            }
+            for child in crate::procedure_arguments::children(s) {
+                if bind(child, ty, key, procedure) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    for (key, procedure) in found {
+        let ty = dummy_type(body, &procedure)
+            .ok_or_else(|| format!("defined input/output procedure `{procedure}` must be a subroutine of this source whose first dummy argument has a derived type"))?;
+        if !bind(body, &ty, &key, &procedure) {
+            return Err(format!("defined input/output interface: type `{ty}` of `{procedure}` must be defined in the same source"));
+        }
+        mark(body, &procedure);
+    }
+    Ok(())
+}
+
 fn id(n: &str) -> Expr {
     Expr::Ident(n.into())
 }
@@ -195,7 +290,10 @@ fn validate_form(ty: &str, target: &str, procedure: &Stmt, input: bool, formatte
             _ => {}
         }
     }
-    if !derived.is_some_and(|(t, d, poly)| t == ty && d.is_empty() && poly) {
+    // A procedure of an interface block may declare TYPE(t); a type-bound
+    // procedure's passed object is CLASS(t).
+    let interface = body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, .. } if name == INTERFACE));
+    if !derived.is_some_and(|(t, d, poly)| t == ty && d.is_empty() && (poly || interface)) {
         bail!("defined formatted output DTV must be a scalar CLASS({ty}) dummy");
     }
     let mut required_intents = vec![if input { "intent(inout)" } else { "intent(in)" }, "intent(in)"];

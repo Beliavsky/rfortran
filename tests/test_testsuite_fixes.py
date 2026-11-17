@@ -1178,7 +1178,7 @@ read(11, nml=g)
 close(11)
 print '(f0.1,1x,l1)', x(3)%b(2), tr(2)%lini
 end program
-""", "4 0 9 1.5 2.5 abc\n1 2 0 1.5 2.5 7\nnone F bb   T cc   F\n2.5 T\n")
+""", "4 0 9 1.5 2.5 abc\n1 2 0 1.5 2.5 7\nnone F bb   T cc   F\n2.5 T\n", interpreter=False)
         self.reject("""program p
 type :: in
    integer :: j
@@ -1326,6 +1326,266 @@ end program
   print '(f4.1,i3)', b, n
 end
 """, ' 4.0  4\n')
+
+    def test_generic_and_volatile_statements(self):
+        # GENERIC statements for names, operators and assignment, with and
+        # without an access specification, and VOLATILE and ASYNCHRONOUS
+        # statements (gfortran.dg/generic_stmt_4.f90, volatile.f90).
+        self.check("""module m
+  implicit none
+  private
+  type, public :: v
+    integer :: n = 0
+  end type
+  generic, public :: twice => twice_i, twice_r
+  generic :: twice => twice_v
+  generic :: operator(.plus.) => plus_v
+  generic :: operator(+) => plus_v
+  generic :: assignment(=) => from_int
+  public :: operator(+), operator(.plus.), assignment(=)
+  integer, public, volatile :: counter = 0
+  asynchronous :: counter
+contains
+  integer function twice_i(x)
+    integer, intent(in) :: x
+    twice_i = 2*x
+  end function
+  real function twice_r(x)
+    real, intent(in) :: x
+    twice_r = 2*x
+  end function
+  type(v) function twice_v(x)
+    type(v), intent(in) :: x
+    twice_v%n = 2*x%n
+  end function
+  type(v) function plus_v(a, b)
+    type(v), intent(in) :: a, b
+    plus_v%n = a%n + b%n
+  end function
+  subroutine from_int(a, i)
+    type(v), intent(out) :: a
+    integer, intent(in) :: i
+    a%n = i
+    counter = counter + 1
+  end subroutine
+end module
+program p
+  use m
+  implicit none
+  type(v) :: a, b, c, d, e
+  volatile :: a
+  a = 3
+  b = 4
+  c = twice(a)
+  d = a .plus. b
+  e = a + b
+  print '(i0,1x,f4.1,3(1x,i0))', twice(5), twice(1.5), c%n, d%n, e%n
+  print '(i0)', counter
+end program
+""", '10  3.0 6 7 7\n2\n')
+        self.reject("""module m
+private
+generic :: g => f
+contains
+integer function f(x)
+integer :: x
+f=x
+end function
+end module
+program p
+use m
+print *, g(1)
+end
+""", "not accessible")
+
+    def test_procedure_pointers_with_typed_implicit_interfaces(self):
+        # PROCEDURE(INTEGER) and PROCEDURE(REAL) pointers declared in
+        # internal procedures (gfortran.dg/proc_ptr_5.f90).
+        self.check("""program main
+  implicit none
+  call test(.true.)
+  call test(.false.)
+  call reals
+contains
+  integer function hello()
+    hello = 42
+  end function
+  real function half(x)
+    real, intent(in) :: x
+    half = x / 2
+  end function
+  real function third(x)
+    real, intent(in) :: x
+    third = x / 3
+  end function
+  subroutine test(first)
+    logical, intent(in) :: first
+    procedure(integer), pointer :: x => null()
+    if (first) then
+      if (associated(x)) stop 1
+      x => hello
+    else
+      if (.not. associated(x)) stop 2
+      print '(i0)', x()
+    end if
+  end subroutine
+  subroutine reals
+    procedure(real), pointer :: f
+    f => half
+    print '(f6.3)', f(3.0)
+    f => third
+    print '(f6.3)', f(3.0)
+  end subroutine
+end program
+""", '42\n 1.500\n 1.000\n')
+        # Calls dispatch through one interface: targets with different
+        # interfaces used to receive the wrong arguments.
+        self.reject("""program main
+procedure(), pointer :: ix => null()
+ix => hello
+print *, ix()
+ix => twice
+print *, ix(4)
+contains
+integer function hello()
+ hello = 42
+end function hello
+integer function twice(n)
+integer :: n
+twice = 2*n
+end function
+end program
+""", "different interfaces")
+
+    def test_defined_io_interface_blocks(self):
+        # INTERFACE WRITE(FORMATTED) and READ/WRITE(UNFORMATTED) blocks, with
+        # TYPE dummies of a SEQUENCE type and CLASS dummies of an extensible
+        # type, on an unformatted scratch file; the procedures leave IOSTAT
+        # undefined, which gfortran treats as success (gfortran.dg/dtio_8.f90,
+        # dtio_9.f90, dtio_22.f90).
+        self.check("""module m
+  implicit none
+  type :: pt
+    sequence
+    integer :: x = 0, y = 0
+  end type
+  interface write(formatted)
+    module procedure wf
+  end interface
+  interface write(unformatted)
+    module procedure wu
+  end interface
+  interface read(unformatted)
+    module procedure ru
+  end interface
+contains
+  subroutine wf(dtv, unit, iotype, vlist, iostat, iomsg)
+    type(pt), intent(in) :: dtv
+    integer, intent(in) :: unit
+    character(*), intent(in) :: iotype
+    integer, intent(in) :: vlist(:)
+    integer, intent(out) :: iostat
+    character(*), intent(inout) :: iomsg
+    write(unit, '(a,i0,a,i0,a)', iostat=iostat, iomsg=iomsg) '(', dtv%x, ',', dtv%y, ')'
+  end subroutine
+  subroutine wu(dtv, unit, iostat, iomsg)
+    type(pt), intent(in) :: dtv
+    integer, intent(in) :: unit
+    integer, intent(out) :: iostat
+    character(*), intent(inout) :: iomsg
+    write(unit) dtv%y, dtv%x
+  end subroutine
+  subroutine ru(dtv, unit, iostat, iomsg)
+    type(pt), intent(inout) :: dtv
+    integer, intent(in) :: unit
+    integer, intent(out) :: iostat
+    character(*), intent(inout) :: iomsg
+    read(unit) dtv%x, dtv%y
+  end subroutine
+end module
+program p
+  use m
+  implicit none
+  type(pt) :: a, b
+  a = pt(3, 4)
+  write(*, '(dt)') a
+  open(10, status='scratch', form='unformatted')
+  write(10) a
+  rewind(10)
+  read(10) b
+  close(10)
+  write(*, '(dt)') b
+end program
+""", '(3,4)\n(4,3)\n')
+        self.check("""module m
+  implicit none
+  type :: pt
+    integer :: x = 0, y = 0
+  end type
+  interface write(formatted)
+    module procedure wf
+  end interface
+  interface write(unformatted)
+    module procedure wu
+  end interface
+  interface read(unformatted)
+    module procedure ru
+  end interface
+contains
+  subroutine wf(dtv, unit, iotype, vlist, iostat, iomsg)
+    class(pt), intent(in) :: dtv
+    integer, intent(in) :: unit
+    character(*), intent(in) :: iotype
+    integer, intent(in) :: vlist(:)
+    integer, intent(out) :: iostat
+    character(*), intent(inout) :: iomsg
+    write(unit, '(a,i0,a,i0,a)', iostat=iostat, iomsg=iomsg) '(', dtv%x, ',', dtv%y, ')'
+  end subroutine
+  subroutine wu(dtv, unit, iostat, iomsg)
+    class(pt), intent(in) :: dtv
+    integer, intent(in) :: unit
+    integer, intent(out) :: iostat
+    character(*), intent(inout) :: iomsg
+    write(unit) dtv%y, dtv%x
+  end subroutine
+  subroutine ru(dtv, unit, iostat, iomsg)
+    class(pt), intent(inout) :: dtv
+    integer, intent(in) :: unit
+    integer, intent(out) :: iostat
+    character(*), intent(inout) :: iomsg
+    read(unit) dtv%x, dtv%y
+  end subroutine
+end module
+program p
+  use m
+  implicit none
+  type(pt) :: a, b
+  a = pt(3, 4)
+  write(*, '(dt)') a
+  open(10, status='scratch', form='unformatted')
+  write(10) a
+  rewind(10)
+  read(10) b
+  close(10)
+  write(*, '(dt)') b
+end program
+""", '(3,4)\n(4,3)\n')
+
+    def test_unformatted_scratch_file(self):
+        self.check("""program p
+  implicit none
+  integer :: a(3) = [1, 2, 3], b(3), n
+  real :: x = 2.5, y
+  open(10, status='scratch', form='unformatted')
+  write(10) a, x
+  write(10) 42
+  rewind(10)
+  read(10) b, y
+  read(10) n
+  print '(3i3,f5.1,i4)', b, y, n
+  close(10)
+end program
+""", "  1  2  3  2.5  42\n")
 
 if __name__ == "__main__":
     unittest.main()

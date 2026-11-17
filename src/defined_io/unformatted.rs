@@ -75,6 +75,11 @@ impl Lower<'_> {
             let mut body = vec![
                 crate::imports::reference(binding.clone()),
                 call(&binding, vec![value, id(unit), id(ios), id(msg)]),
+                // A procedure that leaves IOSTAT undefined reports success, as
+                // in gfortran: IOSTAT keeps the zero it had before the call.
+                call(crate::initialized::UNCHECKED_BEGIN, vec![]),
+                assign(ios, id(ios)),
+                call(crate::initialized::UNCHECKED_END, vec![]),
             ];
             for (index, first, last, step) in loops {
                 let mut inner = vec![

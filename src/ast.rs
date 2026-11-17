@@ -589,7 +589,28 @@ pub fn split_pointer_initializer(name: &str, value: Option<Expr>) -> (Option<Exp
 // Attribute specification statements, e.g. `intent(in) :: x` or `pointer p`.
 // They record the same per-name attributes as the corresponding declaration
 // attribute. EXTERNAL and INTRINSIC only confirm how a name is resolved.
+/// `GENERIC [, access] :: spec => specifics`: the interface, and its access.
+pub fn generic_statement<'a, T, E>(keyword: &str, access: Option<bool>, interface: Stmt) -> Result<Vec<Stmt>, lalrpop_util::ParseError<T, E, &'a str>> {
+    if !keyword.eq_ignore_ascii_case("generic") {
+        return Err(lalrpop_util::ParseError::User { error: "expected a GENERIC statement" });
+    }
+    let mut out = vec![];
+    if let Some(public) = access {
+        let name = match &interface {
+            Stmt::GenericInterface { name, .. } => name.clone(),
+            Stmt::OperatorInterface { operator, .. } => format!("operator({operator})"),
+            _ => unreachable!(),
+        };
+        out.push(Stmt::Accessibility { public, names: vec![name] });
+    }
+    out.insert(0, interface);
+    Ok(out)
+}
 pub fn attribute_statement(attr: &str, argument: Option<String>, names: Vec<String>) -> Result<Vec<Stmt>, &'static str> {
+    if matches!(attr, "volatile" | "asynchronous") && argument.is_none() {
+        // They only restrict optimization (see the declaration attributes).
+        return Ok(vec![]);
+    }
     let attribute = match (attr, argument) {
         ("intent", Some(intent)) => match intent.to_ascii_lowercase().as_str() {
             intent @ ("in" | "out" | "inout") => format!("intent({intent})"),
@@ -784,7 +805,21 @@ pub fn procedure_declaration(encoded: &str) -> Vec<Stmt> {
             let interface = attributes.next().unwrap_or("procedure()").to_string();
             // NOPASS and PASS(arg) matter for procedure pointer components.
             let attributes: Vec<&str> = attributes.filter(|a| matches!(*a, "pointer" | "optional" | "nopass") || a.starts_with("pass")).collect();
+            // PROCEDURE(INTEGER): an implicit interface and the result type.
+            let (interface, result) = match interface.strip_prefix("procedure(@type:").and_then(|t| t.strip_suffix(')')) {
+                Some(t) => ("procedure()".to_string(), Some(match t {
+                    "integer" => TypeSpec::Integer(None),
+                    "real" => TypeSpec::Real,
+                    "logical" => TypeSpec::Logical,
+                    "complex" => TypeSpec::Complex("4".into()),
+                    _ => TypeSpec::DoublePrecision,
+                })),
+                None => (interface, None),
+            };
             for name in entities {
+                if let Some(kind) = &result {
+                    out.push(Stmt::VarDecl { kind: kind.clone(), names: vec![name.into()] });
+                }
                 out.push(Stmt::DummyIntent { name: name.into(), intent: interface.clone() });
                 for a in &attributes {
                     out.push(Stmt::DummyIntent { name: name.into(), intent: (*a).into() });

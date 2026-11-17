@@ -716,8 +716,22 @@ fn procedure_statement(tokens: &[Token], input: &str, index: usize) -> Option<(S
         _ => None,
     };
     let mut cursor = index + 2;
-    let interface = word(cursor).unwrap_or_default();
+    let mut interface = word(cursor).unwrap_or_default();
     if !interface.is_empty() { cursor += 1; }
+    // An intrinsic type, as in PROCEDURE(INTEGER), declares an implicit
+    // interface with that result type.
+    let typed = match kind(cursor) {
+        Some(TokenKind::KwInteger) => Some("integer"),
+        Some(TokenKind::KwReal) => Some("real"),
+        Some(TokenKind::KwLogical) => Some("logical"),
+        Some(TokenKind::KwComplex) => Some("complex"),
+        Some(TokenKind::KwDouble) if matches!(kind(cursor + 1), Some(TokenKind::KwPrecision)) => Some("doubleprecision"),
+        _ => None,
+    };
+    if let Some(t) = typed {
+        interface = format!("@type:{t}");
+        cursor += if t == "doubleprecision" { 2 } else { 1 };
+    }
     if !matches!(kind(cursor), Some(TokenKind::RParen)) { return None; }
     cursor += 1;
     let mut form = vec![format!("procedure({interface})")];
@@ -1445,7 +1459,7 @@ fn lex_with(input: &str, collapse: bool) -> Vec<Token> {
                     || matches!(next,Some(TokenKind::Comma)) && statement_head(&tokens,input,start)
                     // A procedure statement of a generic interface: `procedure f, g`.
                     || matches!(next,Some(TokenKind::Ident(_))) && statement_head(&tokens,input,start) => Some(TokenKind::KwProcedure),
-                "interface" if matches!(previous,Some(TokenKind::KwEnd)) || matches!(next,Some(TokenKind::Ident(_))) => Some(TokenKind::KwInterface),
+                "interface" if matches!(previous,Some(TokenKind::KwEnd)) || matches!(next,Some(TokenKind::Ident(_) | TokenKind::KwRead | TokenKind::KwReadEmpty)) => Some(TokenKind::KwInterface),
                 "operator" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwOperator),
                 // DIMENSION statement: `dimension a(2), b(3)` or `dimension :: a(2)`.
                 "dimension" if matches!(next,Some(TokenKind::Ident(_)|TokenKind::DColon)) && statement_head(&tokens,input,start) => Some(TokenKind::KwDimension),
@@ -1617,7 +1631,7 @@ fn lex_with(input: &str, collapse: bool) -> Vec<Token> {
     for index in 0..tokens.len() {
         let TokenKind::Ident(word) = &tokens[index].kind else { continue };
         let word = word.to_ascii_lowercase();
-        if !matches!(word.as_str(), "intent" | "optional" | "pointer" | "target" | "allocatable" | "external" | "intrinsic" | "save" | "value" | "protected")
+        if !matches!(word.as_str(), "intent" | "optional" | "pointer" | "target" | "allocatable" | "external" | "intrinsic" | "save" | "value" | "protected" | "volatile" | "asynchronous")
             || !statement_head(&tokens, input, index) {
             continue;
         }
@@ -1651,6 +1665,19 @@ fn lex_with(input: &str, collapse: bool) -> Vec<Token> {
         if tokens.get(next).is_some_and(|t| matches!(t.kind, TokenKind::DColon | TokenKind::Ident(_))
             && same_statement(&input[tokens[next-1].span.end..t.span.start])) {
             tokens[index].kind = TokenKind::AttrStatement(word);
+        }
+    }
+    // `INTERFACE READ(FORMATTED)`: READ names the defined input generic.
+    for i in 1..tokens.len() {
+        let interface = match &tokens[i - 1].kind {
+            TokenKind::KwInterface => true,
+            TokenKind::Ident(n) => n.eq_ignore_ascii_case("interface"),
+            _ => false,
+        };
+        if matches!(tokens[i].kind, TokenKind::KwRead | TokenKind::KwReadEmpty) && interface
+            && matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::LParen))
+            && same_statement(&input[tokens[i - 1].span.end..tokens[i].span.start]) {
+            tokens[i].kind = TokenKind::Ident("read".into());
         }
     }
     crate::assumed_rank::tokens(&mut tokens, input);

@@ -18,6 +18,7 @@ goes through CHARACTER temporaries, so programs using them are the most affected
 | `test_allocatable_scalar_components.py` `test_deferred_length_character`, `test_arrays_of_records`, `test_character_array_components_of_record_arrays` | Deferred-length CHARACTER components of records; a dozen statements take about 15 s |
 | `test_deferred_character_components.py` `test_local_allocation_and_overlap` | Deferred-length CHARACTER array with a runtime length; about 12 s |
 | `test_parameterized_types.py` `test_runtime_len_values` | Runtime LEN type parameters with CHARACTER components; about 12 s |
+| `test_testsuite_fixes.py` `test_namelist_derived_members_module_groups_and_end` | Three NAMELIST reads and a write of groups with arrays of derived type and nested components; 7 to 11 s, while the compiled program takes 0.2 s |
 
 Output differences, not speed:
 

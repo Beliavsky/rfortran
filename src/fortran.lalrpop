@@ -532,6 +532,7 @@ GenericProcedureStmt: Vec<String> = {
     KW_PROCEDURE DCOLON? <names:IdentList> => names,
 };
 EndOperator: String = { KW_OPERATOR LPAREN <op:Operator> RPAREN => op };
+GenericAccess: bool = { COMMA KW_PUBLIC => true, COMMA KW_PRIVATE => false };
 
 // attribute list used in declarations, e.g. `integer, intent(in) :: a`.
 AttrList: Vec<String> = {
@@ -625,6 +626,15 @@ Stmt: Stmt = {
     <op:FILE_POSITION> <unit:RhsExpr> => Stmt::CallSub { name:format!("@io_{op}"), args:vec![unit] },
     KW_INTERFACE <name:Ident> <procedures:OperatorProcedures> KW_END KW_INTERFACE <end_name:END_INTERFACE_NAME?> => Stmt::GenericInterface { name, procedures, end_name },
     KW_INTERFACE KW_OPERATOR LPAREN <operator:Operator> RPAREN <procedures:OperatorProcedures> KW_END KW_INTERFACE <end_operator:EndOperator?> => Stmt::OperatorInterface { operator, procedures, end_operator },
+    // A defined input/output interface, INTERFACE WRITE(FORMATTED); see
+    // crate::defined_io::interfaces.
+    KW_INTERFACE <direction:Ident> LPAREN <form:Ident> RPAREN <procedures:OperatorProcedures> KW_END KW_INTERFACE <end:(END_INTERFACE_NAME LPAREN Ident RPAREN)?> =>? {
+        let (direction, form) = (direction.to_ascii_lowercase(), form.to_ascii_lowercase());
+        if !matches!(direction.as_str(), "read" | "write") || !matches!(form.as_str(), "formatted" | "unformatted") {
+            return Err(lalrpop_util::ParseError::User { error: "expected INTERFACE READ/WRITE(FORMATTED/UNFORMATTED)" });
+        }
+        Ok(Stmt::CallSub { name: format!("{}{direction}:{form}", crate::defined_io::INTERFACE), args: procedures.into_iter().map(Expr::Ident).collect() })
+    },
     // Defined assignment is the operator `=` of two-argument subroutines.
     KW_INTERFACE <a:Ident> LPAREN EQ RPAREN <procedures:OperatorProcedures> KW_END KW_INTERFACE <end:(END_INTERFACE_NAME LPAREN EQ RPAREN)?> =>? {
         let named = |n: &str| n.eq_ignore_ascii_case("assignment");
@@ -1370,6 +1380,17 @@ PreFuncDeclData: Vec<Stmt> = {
     <declaration:PROC_DECL> =>? crate::c_interop::interface_declaration(&declaration).map_err(|error|lalrpop_util::ParseError::User{error}),
     // SAVE alone saves every local variable; data_statements lowers both forms.
     KW_SAVE_ALL => vec![Stmt::DummyIntent { name: crate::data_statements::SAVE_ALL.into(), intent: "save".into() }],
+    // The GENERIC statement (Fortran 2018) is an interface block of module
+    // procedures, possibly with an access specification.
+    <g:Ident> <access:GenericAccess?> DCOLON <name:Ident> ARROW <procedures:IdentList> =>? crate::ast::generic_statement(&g, access, Stmt::GenericInterface { name, procedures, end_name: None }),
+    <g:Ident> <access:GenericAccess?> DCOLON KW_OPERATOR LPAREN <operator:Operator> RPAREN ARROW <procedures:IdentList> =>?
+        crate::ast::generic_statement(&g, access, Stmt::OperatorInterface { operator, procedures, end_operator: None }),
+    <g:Ident> <access:GenericAccess?> DCOLON <a:Ident> LPAREN EQ RPAREN ARROW <procedures:IdentList> =>? {
+        if !a.eq_ignore_ascii_case("assignment") {
+            return Err(lalrpop_util::ParseError::User { error: "expected GENERIC :: ASSIGNMENT(=)" });
+        }
+        crate::ast::generic_statement(&g, access, Stmt::OperatorInterface { operator: "=".into(), procedures, end_operator: None })
+    },
     <attr:ATTR_STMT> DCOLON? <names:IdentList> =>? crate::ast::attribute_statement(&attr, None, names)
         .map_err(|error| lalrpop_util::ParseError::User { error }),
     <attr:ATTR_STMT> LPAREN <intent:Ident> RPAREN DCOLON? <names:IdentList> =>? crate::ast::attribute_statement(&attr, Some(intent), names)
