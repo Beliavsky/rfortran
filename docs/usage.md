@@ -59,6 +59,11 @@ rfort -nocheck main.f90 --run
 rfort -fast main.f90 -o main.exe
 ```
 
+Passing a variable as an argument is not a read of its value: a variable that
+was never set may be passed to an INTENT(IN) dummy argument, and the error comes
+only if the procedure reads that argument, naming the argument it reads. A
+procedure that never mentions the argument is not checked.
+
 The options affect compiled programs only: the `run` subcommand keeps its
 checks. Compile-time errors for variables read before any assignment remain.
 Allocation-status checks (for example, assignment to an unallocated array)

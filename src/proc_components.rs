@@ -36,7 +36,13 @@ struct Types {
     parents: HashMap<String, String>,
     /// Where each type is defined: a module, or None for the program.
     owner: HashMap<String, Option<String>>,
+    /// The default target of a component, as f in `procedure(i), pointer :: c => f`.
+    initial: HashMap<(String, String), String>,
 }
+
+/// The default value of a component tag with a default target, until the
+/// targets are numbered.
+const INITIAL_TAG: &str = "@ppc_initial_tag";
 
 impl Types {
     fn component(&self, ty: &str, c: &str) -> Option<(String, Component)> {
@@ -75,6 +81,9 @@ fn collect(body: &mut Vec<Stmt>, module: Option<&str>, types: &mut Types) {
                             procedures.entry(n.clone()).or_insert((String::new(), true)).0 = i.to_owned();
                         }
                         if intent == "pointer" { pointers.insert(n.clone()); }
+                        if let Some(t) = intent.strip_prefix(crate::ast::INITIAL_TARGET) {
+                            types.initial.insert((name.clone(), n.clone()), t.to_owned());
+                        }
                         if intent == "nopass" { procedures.entry(n.clone()).or_insert((String::new(), true)).1 = false; }
                         if let Some(a) = intent.strip_prefix("pass(").and_then(|r| r.strip_suffix(')')) { pass_args.insert(n.clone(), a.to_owned()); }
                     }
@@ -105,7 +114,11 @@ fn collect(body: &mut Vec<Stmt>, module: Option<&str>, types: &mut Types) {
                         match c {
                             Stmt::DummyIntent { name: n, .. } if procedures.contains_key(&n) => {
                                 if placed.insert(n.clone()) {
-                                    out.push(Stmt::InitializedDecl { kind: TypeSpec::Integer(None), attributes: vec![], entities: vec![(n, Some(Expr::IntLit("0".into())))] });
+                                    let value = match types.initial.get(&(name.clone(), n.clone())) {
+                                        Some(t) => Expr::Call(INITIAL_TAG.into(), vec![Expr::Str(t.clone())]),
+                                        None => Expr::IntLit("0".into()),
+                                    };
+                                    out.push(Stmt::InitializedDecl { kind: TypeSpec::Integer(None), attributes: vec![], entities: vec![(n, Some(value))] });
                                 }
                             }
                             other => out.push(other),
@@ -515,6 +528,14 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     // an implicit interface takes from the first target), then the rewriting.
     let mut probe = program.body.clone();
     let mut lower = Lower { types: &types, passes: HashMap::new(), targets: HashMap::new(), numbering: vec![], flows: vec![], locals: HashMap::new(), procedures: &all, collecting: true };
+    // Default targets, named as written: `f` for a module's `@module$m$f`.
+    let mut initial = HashMap::new();
+    for (key, target) in &types.initial {
+        let found: Vec<&String> = all.keys().filter(|n| *n == target || shown(n) == target).collect();
+        let resolved = match found.as_slice() { [only] => (*only).clone(), _ => target.clone() };
+        lower.tag(key, &resolved)?;
+        initial.insert(target.clone(), resolved);
+    }
     lower.scope(&mut probe, &Vars::new(), &[])?;
     // A component associated with another takes its targets.
     for _ in 0..lower.flows.len() + 1 {
@@ -564,12 +585,41 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     lower.scope(&mut program.body, &Vars::new(), &[])?;
     let targets = std::mem::take(&mut lower.targets);
     let numbering = std::mem::take(&mut lower.numbering);
+    // Each default target's tag, now that the targets are numbered.
+    fn defaults(body: &mut [Stmt], initial: &HashMap<String, String>, numbering: &[String]) {
+        for s in body {
+            match s {
+                Stmt::DerivedType { components, .. } => {
+                    for c in components {
+                        let Stmt::InitializedDecl { entities, .. } = c else { continue };
+                        for (_, value) in entities {
+                            if let Some(Expr::Call(n, args)) = value {
+                                if n == INITIAL_TAG {
+                                    let target = match args.first() { Some(Expr::Str(t)) => initial.get(t).cloned().unwrap_or_else(|| t.clone()), _ => String::new() };
+                                    let at = numbering.iter().position(|p| *p == target).map_or(0, |i| i + 1);
+                                    *value = Some(Expr::IntLit(at.to_string()));
+                                }
+                            }
+                        }
+                    }
+                }
+                Stmt::Module { body, .. } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => defaults(body, initial, numbering),
+                _ => {}
+            }
+        }
+    }
+    defaults(&mut program.body, &initial, &numbering);
     // The dispatchers, in the types' modules (or as internal procedures).
     for key in &keys {
         let owner = types.owner.get(&key.0).cloned().flatten();
         let list = targets.get(key).cloned().unwrap_or_default();
         // A dispatcher of PURE targets is PURE, as array-argument functions need.
         let pure = !list.is_empty() && list.iter().all(|t| matches!(all.get(t), Some(Stmt::Function { pure: true, .. } | Stmt::Subroutine { pure: true, .. })));
+        // A component never associated with a procedure, only NULL(), needs
+        // no dispatcher unless something calls through it.
+        if list.is_empty() && !format!("{:?}", program.body).contains(&format!("{:?}", Lower::dispatcher(key))) {
+            continue;
+        }
         let d = dispatcher(&Lower::dispatcher(key), &interfaces[key], &list, &numbering, pure)?;
         match &owner {
             Some(m) => {

@@ -2361,6 +2361,7 @@ fn expand(
                         && matches!(actual,Expr::Call(n,_)|Expr::Index(n,_) if shapes.get(n).is_some_and(|(_,d)|!d.is_empty()))) {
                         *serial += 1;
                         let temp = format!("@array_call_input_{serial}");
+                        crate::source_diagnostics::record_generated_name(&temp, p);
                         // A copy of runtime length, of a deferred-length actual.
                         if crate::substrings::deferred(&kind) {
                             prefix.push(Stmt::DummyIntent { name: temp.clone(), intent: "allocatable".into() });

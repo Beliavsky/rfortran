@@ -46,7 +46,7 @@ end subroutine pick
             ("integer::x(2,2)", "call pick(x,1)", routine, "one-dimensional arrays"),
             ("integer::x(2)", "call pick(x,[1,2,3])", routine, "shapes do not conform"),
             ("", "call pick(1,2)", routine, "requires a variable"),
-            ("integer::x,y", "call pick(x,y)", routine, "uninitialized variable `y`"),
+            ("integer::x,y", "call pick(x,y)", routine, "uninitialized variable `default`"),
             ("integer::x", "call pick(x,1)", routine.replace("if (present(option)) then", "if (.true.) then"), "absent OPTIONAL"),
             ("integer::x", "call pick(x,1)", routine.replace("present(option)", "present(default)"), "OPTIONAL dummy"),
             ("integer::x", "call pick(x,1)", routine.replace("integer,intent(out)::x", "integer,intent(out)::x(2)"), "scalar dummy"),

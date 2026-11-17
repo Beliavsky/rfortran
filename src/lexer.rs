@@ -761,6 +761,13 @@ fn procedure_statement(tokens: &[Token], input: &str, index: usize) -> Option<(S
             TokenKind::Ident(n) => names.push(n.to_ascii_lowercase()),
             TokenKind::Comma => {}
             TokenKind::Arrow => {
+                // An initial target, as `pp => f1`, is kept with the entity;
+                // NULL() leaves it disassociated, as without one.
+                if let (Some(TokenKind::Ident(target)), Some(last)) = (kind(cursor + 1), names.last_mut()) {
+                    if !matches!(kind(cursor + 2), Some(TokenKind::LParen)) {
+                        last.push_str(&format!("=>{}", target.to_ascii_lowercase()));
+                    }
+                }
                 // Skip the initializer up to the next entity.
                 let mut depth = 0;
                 while cursor + 1 < tokens.len() && same_statement(&input[tokens[cursor].span.end..tokens[cursor + 1].span.start]) {

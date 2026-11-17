@@ -64,7 +64,9 @@ pub(crate) fn rename_with_prefix(
         for n in declared {
             if !params.contains(&n) {
                 *serial += 1;
-                names.insert(n, format!("{prefix}_{serial}"));
+                let generated = format!("{prefix}_{serial}");
+                crate::source_diagnostics::record_generated_name(&generated, &n);
+                names.insert(n, generated);
             }
         }
     }

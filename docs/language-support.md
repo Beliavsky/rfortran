@@ -3914,7 +3914,10 @@ forwarded to another procedure, and keyword actuals work. Procedure pointers
 declared with `procedure(iface), pointer` become an integer tag: `p => f`,
 `nullify(p)`, `associated(p)` and `associated(p, f)` update or test it, and calls
 through `p` dispatch on it to the procedures ever associated with `p` in its
-scope. `procedure(integer)`, and likewise REAL, DOUBLE PRECISION, COMPLEX and
+scope. An initial target in the declaration, as `procedure(f), pointer :: p => f`,
+associates the pointer before the scope runs, and `=> null()` leaves it
+disassociated; the same holds for the default target of a procedure pointer
+component. `procedure(integer)`, and likewise REAL, DOUBLE PRECISION, COMPLEX and
 LOGICAL, declares an implicit interface with that result type. Calls dispatch
 through the interface of the first target, so the targets of one pointer must
 have the same form and number of arguments; otherwise the program is rejected.

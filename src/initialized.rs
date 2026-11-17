@@ -54,8 +54,11 @@ fn guard(value: Expr, name: &str, index: Option<Expr>, width: i64) -> Stmt {
     let (name,index)=if let Some((original,element))=crate::character_arrays::original_element(name) {
         (original,Some(int(element)))
     } else {(name,index)};
-    // A module variable is reported by the name the programmer wrote.
+    // A module variable is reported by the name the programmer wrote, as
+    // is a local or argument copy that lowering renamed.
     let name = if name.starts_with("@module$") { name.rsplit('$').next().unwrap_or(name) } else { name };
+    let renamed = crate::source_diagnostics::generated_original(name);
+    let name = renamed.as_deref().unwrap_or(name);
     let mut args = vec![value, Expr::Str(name.into())];
     args.extend(index);
     Stmt::CallSub { name: "@check_initialized".into(), args }
@@ -346,6 +349,15 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
     let mut terminated = false;
     let mut location=None;
     for mut stmt in std::mem::take(body) {
+        // The copy of an INTENT(IN) actual for a specialized call: passing a
+        // variable does not reference its value, so copy its definedness
+        // with it, and check the reads of the copy instead.
+        if let Stmt::Assign { name, value: Expr::Ident(source) } = &stmt {
+            let scalar = |n: &str| env.get(n).is_some_and(|v| v.extent.is_none() && v.heap_length.is_none() && v.character_length.is_none());
+            if name.starts_with("@array_call_input_") && scalar(name) && scalar(source) {
+                stmt = Stmt::CallSub { name: TRANSPORT.into(), args: vec![Expr::Ident(name.clone()), Expr::Ident(source.clone())] };
+            }
+        }
         if let Stmt::CallSub { name, args } = &stmt {
             if name == TRANSPORT_FROM_CODES || name == TRANSPORT_TO_CODES {
                 let [Expr::Ident(to), offset, width, Expr::Ident(from), capacity] = args.as_slice() else {bail!("invalid CHARACTER storage transport");};
@@ -399,7 +411,11 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 output.push(Stmt::If {cond:Expr::Bin(crate::ast::BinOp::Ne,Box::new(sf.clone()),Box::new(int(0))),
                     then_body:vec![copy],else_body:None});
                 output.push(assign(df,sf));
-                let dst=env.get_mut(to).unwrap();dst.state=State::Maybe;dst.elements.clear();
+                // A whole scalar copied from a whole scalar keeps its known state.
+                let whole = ti.is_none() && si.is_none() && dst.extent.is_none() && src.extent.is_none();
+                let dst=env.get_mut(to).unwrap();
+                dst.state = if whole { src.state } else { State::Maybe };
+                dst.elements.clear();
                 continue;
             }
             if name == COPY_INITIALIZATION {
@@ -683,7 +699,13 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     args.push(state.heap_length.clone().unwrap_or_else(||int(0)));
                 }
             }
-            Stmt::CallSub { args, .. } => for arg in args { read(arg, env, &mut before, serial)?; },
+            Stmt::CallSub { name, args } => for (position, arg) in args.iter_mut().enumerate() {
+                // Passing a variable is not a reference to its value: a
+                // variable for an INTENT(IN) dummy that the procedure never
+                // mentions need not be defined.
+                if matches!(arg, Expr::Ident(_)) && unread_dummy(name, position) { continue; }
+                read(arg, env, &mut before, serial)?;
+            },
             Stmt::If { cond, then_body, else_body } => {
                 read(cond, env, &mut before, serial)?;
                 let mut a = env.clone(); let mut b = env.clone();
@@ -986,12 +1008,49 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
     prefix.append(body); *body = prefix;
     Ok(())
 }
+thread_local! {
+    /// For each subroutine, whether each dummy argument is INTENT(IN) and
+    /// never mentioned in the body other than in its own declaration.
+    static UNREAD_DUMMIES: std::cell::RefCell<std::collections::HashMap<String, Vec<bool>>> = Default::default();
+}
+fn unread_dummy(procedure: &str, position: usize) -> bool {
+    UNREAD_DUMMIES.with(|u| u.borrow().get(procedure).and_then(|v| v.get(position).copied()).unwrap_or(false))
+}
+fn find_unread_dummies(body: &[Stmt]) {
+    fn mentioned(text: &str, name: &str) -> bool {
+        text.contains(&format!("{name:?}"))
+    }
+    for s in body {
+        match s {
+            Stmt::Subroutine { name, params, body, .. } => {
+                // The body without declarations of the dummies themselves:
+                // a dummy used in another's bounds, as n in x(n), is read.
+                let uses: String = body.iter().filter_map(|s| match s {
+                    Stmt::SourceLocation(_) | Stmt::VarDecl { .. } | Stmt::DummyIntent { .. } => None,
+                    Stmt::ArrayDecl { dims, .. } => Some(format!("{dims:?}")),
+                    other => Some(format!("{other:?}")),
+                }).collect();
+                let unread = params.iter().map(|p| {
+                    body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name == p && intent == "intent(in)"))
+                        && !mentioned(&uses, p)
+                }).collect();
+                UNREAD_DUMMIES.with(|u| u.borrow_mut().insert(name.clone(), unread));
+                find_unread_dummies(body);
+            }
+            Stmt::Function { body, .. } | Stmt::Module { body, .. } => find_unread_dummies(body),
+            _ => {}
+        }
+    }
+}
+
 pub fn instrument(mut program: Program) -> Result<Program> {
     program = crate::compile_profile::run("initialized.resolve", || crate::subroutines::resolve(program))?;
     program = crate::compile_profile::run("initialized.cleanup", || crate::heap::cleanup(program));
     // An earlier failed instrumentation may have left a region open.
     UNCHECKED.with(|c| c.set(0));
     CONDITIONAL.with(|c| c.set(0));
+    UNREAD_DUMMIES.with(|u| u.borrow_mut().clear());
+    find_unread_dummies(&program.body);
     scope(&mut program.body, &mut Env::new(), &[], None, &mut 0, None)?;
     crate::modules::unify_storage(program)
 }

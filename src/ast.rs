@@ -783,6 +783,9 @@ pub fn associate(pairs: Vec<(String, Expr)>, mut body: Vec<Stmt>) -> Result<Stmt
 /// Interface bodies declare their procedures EXTERNAL and record whether each
 /// is a function; ABSTRACT interfaces record only that; PROCEDURE(iface)
 /// statements record the interface and POINTER/OPTIONAL attributes.
+/// Marks the initial target of a procedure pointer, as f1 in
+/// `procedure(f1), pointer :: pp => f1`.
+pub const INITIAL_TARGET: &str = "@initial_target:";
 pub fn procedure_declaration(encoded: &str) -> Vec<Stmt> {
     let (form, entities) = encoded.split_once('|').unwrap_or((encoded, ""));
     let mut out = vec![];
@@ -816,7 +819,14 @@ pub fn procedure_declaration(encoded: &str) -> Vec<Stmt> {
                 })),
                 None => (interface, None),
             };
-            for name in entities {
+            for entity in entities {
+                let (name, target) = match entity.split_once("=>") {
+                    Some((name, target)) => (name, Some(target)),
+                    None => (entity, None),
+                };
+                if let Some(target) = target {
+                    out.push(Stmt::DummyIntent { name: name.into(), intent: format!("{INITIAL_TARGET}{target}") });
+                }
                 if let Some(kind) = &result {
                     out.push(Stmt::VarDecl { kind: kind.clone(), names: vec![name.into()] });
                 }

@@ -495,7 +495,22 @@ fn pointers(body: &mut Vec<Stmt>, all: &HashMap<String, Stmt>, serial: &mut usiz
                 }
             }
         }
-        let mut found = vec![];
+        // A target in the declaration, as `pp => f1`, is the first.
+        // Its name, in a declaration, has not been renamed like references
+        // to module (`@module$m$f`) and internal (`@internal_N_f`) procedures.
+        let initial = body.iter().find_map(|s| match s {
+            Stmt::DummyIntent { name, intent } if *name == pointer => intent.strip_prefix(crate::ast::INITIAL_TARGET).map(str::to_string),
+            _ => None,
+        }).map(|t| {
+            if all.contains_key(&t) { return t; }
+            let source_name = |k: &str| -> bool {
+                k.strip_prefix("@module$").and_then(|k| k.rsplit('$').next()) == Some(t.as_str())
+                    || k.strip_prefix("@internal_").and_then(|k| k.split_once('_')).is_some_and(|(n, rest)| n.bytes().all(|b| b.is_ascii_digit()) && rest == t)
+            };
+            let matches: Vec<&String> = all.keys().filter(|k| source_name(k)).collect();
+            if let [only] = matches.as_slice() { (*only).clone() } else { t }
+        });
+        let mut found: Vec<String> = initial.iter().cloned().collect();
         targets(body, &pointer, &mut found);
         for t in &found {
             if !all.contains_key(t) {
@@ -599,10 +614,11 @@ fn pointers(body: &mut Vec<Stmt>, all: &HashMap<String, Stmt>, serial: &mut usiz
             _ => true,
         });
         let position = body.iter().position(|s| !matches!(s, Stmt::SourceLocation(_) | Stmt::Use { .. } | Stmt::Implicit(_))).unwrap_or(0);
+        let start = initial.as_deref().and_then(index).unwrap_or(0);
         body.insert(position, Stmt::InitializedDecl {
             kind: crate::ast::TypeSpec::Integer(None),
             attributes: vec![],
-            entities: vec![(pointer.clone(), Some(Expr::IntLit("0".into())))],
+            entities: vec![(pointer.clone(), Some(Expr::IntLit(start.to_string())))],
         });
         if let Some(first) = found.first() {
             dispatchers.push(dispatcher(&dispatch, &pointer, function, &found, &all[first])?);

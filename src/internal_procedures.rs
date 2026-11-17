@@ -807,6 +807,7 @@ fn procedure(
         references(body, &params.iter().cloned().collect(), &host, &mut used);
         *serial += 1;
         let mangled = format!("@internal_{}_{}", serial, name);
+        crate::source_diagnostics::record_generated_name(&mangled, name);
         if procedures
             .insert(
                 name.clone(),
@@ -939,9 +940,15 @@ fn procedure(
             ..
         } = &mut helper
         {
+            // Without a RESULT clause, the result is the variable named like
+            // the function: a scalar, an array or a derived-type object.
             if body
                 .iter()
-                .any(|s| matches!(s,Stmt::VarDecl {names,..} if names.contains(name)))
+                .any(|s| match s {
+                    Stmt::VarDecl { names, .. } | Stmt::DerivedDecl { names, .. } => names.contains(name),
+                    Stmt::ArrayDecl { name: array, .. } => array == name,
+                    _ => false,
+                })
                 && !matches!(body.last(), Some(Stmt::Return(Some(_))))
             {
                 let normalized = crate::ast::function_with_result(

@@ -166,6 +166,20 @@ mod result_type_tests {
 }
 /// Module lowering gives symbols internal identities; diagnostics use the
 /// entity names the programmer wrote instead of exposing those identities.
+thread_local! {
+    /// Names that lowering gives to entities of the program, such as the
+    /// locals of internal procedures (`@sub_local_2`), with the names the
+    /// programmer wrote, for messages.
+    static GENERATED: std::cell::RefCell<std::collections::HashMap<String, String>> = Default::default();
+}
+/// Record that lowering renamed the programmer's `original` to `generated`.
+pub(crate) fn record_generated_name(generated: &str, original: &str) {
+    let original = GENERATED.with(|g| g.borrow().get(original).cloned()).unwrap_or_else(|| original.to_owned());
+    GENERATED.with(|g| g.borrow_mut().insert(generated.to_owned(), original));
+}
+pub(crate) fn generated_original(name: &str) -> Option<String> {
+    GENERATED.with(|g| g.borrow().get(name).cloned())
+}
 pub(crate) fn user_names(message: &str) -> String {
     message.split('`').enumerate().map(|(i, part)| {
         let part = if i % 2 == 1 && part.starts_with("@module$") {
@@ -175,6 +189,8 @@ pub(crate) fn user_names(message: &str) -> String {
             // as the variable.
             part.split("$of$").nth(1).unwrap_or(part)
         } else if i % 2 == 1 { crate::block_scopes::original(part) } else { part };
+        let renamed = if i % 2 == 1 { generated_original(part) } else { None };
+        let part = renamed.as_deref().unwrap_or(part);
         // An internal procedure renamed to keep it apart from another of the
         // same name, by internal_procedures::disambiguate.
         let part = match part.find(crate::internal_procedures::DISAMBIGUATED) {

@@ -87,6 +87,10 @@ fn unit(body: &[Stmt], host: Option<&Scope>, modules: &HashMap<String, Scope>) -
 fn procedure(name: &str, params: &[String], body: &[Stmt], host: Option<&Scope>, modules: &HashMap<String, Scope>) -> Result<(), Error> {
     let mut scope = unit(body, host, modules);
     scope.names.insert(name.to_ascii_lowercase());
+    // A RESULT variable: an undeclared one gets its own diagnostic.
+    if let Some(Stmt::Return(Some(Expr::Ident(result)))) = body.last() {
+        scope.names.insert(result.to_ascii_lowercase());
+    }
     scope.names.extend(params.iter().map(|p| p.to_ascii_lowercase()));
     check_unit(body, &scope, modules)?;
     statements(body, &scope)
