@@ -2060,6 +2060,20 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                             _=>unreachable!()
                         }}idx+=1;continue;
                     }
+                    // Non-advancing input: [status, buffer, capacity, unit, width, count].
+                    if name == "@read_record_partial" {
+                        let [Expr::Ident(status),Expr::Ident(dest),Expr::IntLit(length),unit,Expr::IntLit(width),Expr::Ident(count)] = args.as_slice() else { unreachable!() };
+                        let fr=call_stack.last().unwrap().clone();
+                        let unit=eval_expr(unit,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        let mut buffer=vec![b' ';length.parse().unwrap()];
+                        let width:usize=width.parse::<usize>().unwrap().min(buffer.len());
+                        let (code,read)=FILES.with(|files|files.borrow_mut().record_partial(unit,&mut buffer[..width]));
+                        let frame=call_stack.last_mut().unwrap();
+                        frame.env_int.insert(status.clone(),code);
+                        frame.env_int.insert(count.clone(),read as i64);
+                        frame.env_str.insert(dest.clone(),String::from_utf8(buffer).unwrap());
+                        idx+=1;continue;
+                    }
                     if name == "@read_record_status" || name=="@read_record_checked" {
                         let [Expr::Ident(status),Expr::Ident(dest),Expr::IntLit(length),unit,..] = args.as_slice() else { unreachable!() };
                         let fr=call_stack.last().unwrap().clone();

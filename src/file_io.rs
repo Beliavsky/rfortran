@@ -591,6 +591,12 @@ impl Files {
         if position<1 {return 1;}
         i64::from(file.seek(SeekFrom::Start((position-1) as u64)).is_err())
     }
+    /// Non-advancing input of at most `buffer.len()` characters of the
+    /// current record: the status and the number read.
+    pub(crate) fn record_partial(&mut self,unit:i64,buffer:&mut [u8])->(i64,usize) {
+        if unit!=5 && (Self::valid(unit).is_err() || {self.implicit(unit);self.require_action(unit,true).is_err()}) {return (crate::record_input::ERROR,0);}
+        crate::record_input::partial(buffer,||self.input_byte(unit))
+    }
     pub(crate) fn input_byte(&mut self,unit:i64)->Result<Option<u8>,()> {
         if unsafe{crate::internal_file::mode(unit)!=0} {return unsafe{crate::internal_file::byte(unit)};}
         let mut byte=[0];

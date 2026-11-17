@@ -41,6 +41,9 @@ fn input_destinations(stmts: &[IStmt]) -> std::collections::HashSet<String> {
                 for arg in &args[..count] {if let IExpr::Ident(id)=arg {names.insert(id.clone());}}
             }
             IStmt::Call(name,args) if name=="@list_read_complex_next" => {for arg in &args[..3] {if let IExpr::Ident(id)=arg {names.insert(id.clone());}}}
+            IStmt::Call(name, args) if name == "@read_record_partial" => {
+                for i in [0, 1, 5] { if let Some(IExpr::Ident(id)) = args.get(i) { names.insert(id.clone()); } }
+            }
             IStmt::Call(name, args) if name == "@list_read_internal_begin" || name == "@list_read_begin" || name=="@list_read_next" || name=="@stream_get" || name == "@read_record_status" || name=="@read_record_checked" => {
                 for arg in &args[..2] { if let IExpr::Ident(id) = arg { names.insert(id.clone()); } }
             }
@@ -1657,7 +1660,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
             IStmt::Read(vars) => vec![IStmt::Read(vars)],
             IStmt::Call(name, args) => {
                 if matches!(name.as_str(),"@file_inquire_unit"|"@file_inquire_file"|"@environment_query"|"@argument_query"|"@cwd_query"|"@execute_command"|"@ptr_allocate") {return vec![IStmt::Call(name,args)];}
-                if name=="@format_end_checked" || (name=="@file_open_dynamic" || name=="@file_open_try") || name.starts_with("@list_read_") || name.starts_with("@stream_") || name.eq_ignore_ascii_case("random_number") || name == "@random_seed_get" || name == "@date_snapshot" || name == "@format_begin" || name == "@read_record" || name == "@read_record_status" || name=="@read_record_checked" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@module_bind" || name.starts_with("@heap_") || name == "@character_assign" || name == "@character_length" || name == "@character_address" {
+                if name=="@format_end_checked" || (name=="@file_open_dynamic" || name=="@file_open_try") || name.starts_with("@list_read_") || name.starts_with("@stream_") || name.eq_ignore_ascii_case("random_number") || name == "@random_seed_get" || name == "@date_snapshot" || name == "@format_begin" || name == "@read_record" || name == "@read_record_status" || name=="@read_record_partial" || name=="@read_record_checked" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@module_bind" || name.starts_with("@heap_") || name == "@character_assign" || name == "@character_length" || name == "@character_address" {
                     return vec![IStmt::Call(name, args)];
                 }
                 let optimized_args = args

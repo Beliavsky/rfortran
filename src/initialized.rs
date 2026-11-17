@@ -642,6 +642,14 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 for arg in &args[3..] {read(arg,env,&mut before,serial)?;}
                 for arg in &args[..3] {let Expr::Ident(dest)=arg else {unreachable!()};write(dest,None,env,&mut after,serial);}
             }
+            // Non-advancing input defines its status, buffer and count.
+            Stmt::CallSub { name, args } if name == "@read_record_partial" => {
+                for arg in &args[2..5] { read(arg, env, &mut before, serial)?; }
+                for arg in [&args[0], &args[1], &args[5]] {
+                    let Expr::Ident(dest) = arg else { unreachable!() };
+                    write(dest, None, env, &mut after, serial);
+                }
+            }
             Stmt::CallSub { name, args } if name == "@list_read_internal_begin" || name == "@list_read_begin" || name=="@list_read_next" || name=="@stream_get" || name == "@read_record_status" || name=="@read_record_checked" || name=="@read_character_field" => {
                 for arg in &args[2..] { read(arg, env, &mut before, serial)?; }
                 for arg in &args[..2] {

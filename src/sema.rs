@@ -575,7 +575,7 @@ pub fn analyze_with_origins(
             Stmt::CallSub { name, args } => {
                 let count = match name.as_str() {
                     "@list_read_begin" | "@list_read_internal_begin" | "@list_read_next" | "@stream_get"
-                        | "@read_record_status" | "@read_record_checked" => 2,
+                        | "@read_record_status" | "@read_record_checked" | "@read_record_partial" => 2,
                     "@list_read_complex_next" => 3,
                     "@read_record" | "@internal_read_byte" | "@list_read_end" => 1,
                     _ => 0,

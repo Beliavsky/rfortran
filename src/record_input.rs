@@ -8,6 +8,29 @@ pub(crate) const ERROR: i64 = 1;
 pub(crate) const INVALID: i64 = 2;
 pub(crate) const INVALID_FORMAT: i64 = 3;
 pub(crate) const TOO_LONG: i64 = 4;
+/// IOSTAT for the end of a record in non-advancing input, as gfortran's
+/// IOSTAT_EOR.
+pub(crate) const END_OF_RECORD: i64 = -2;
+
+/// Non-advancing input: read at most `destination.len()` characters of the
+/// current record, padding with blanks, and leave the file after them. When
+/// the record ends first, its end is consumed and the status is
+/// END_OF_RECORD. Returns the status and the number of characters read.
+pub(crate) fn partial(destination:&mut [u8],mut byte:impl FnMut()->Result<Option<u8>,()>)->(i64,usize) {
+    destination.fill(b' ');
+    let mut count=0;
+    while count<destination.len() {
+        match byte() {
+            Ok(Some(b'\n')) => return (END_OF_RECORD,count),
+            Ok(Some(b'\r')) => {}
+            Ok(Some(c)) if c==0 || c>127 => return (INVALID,count),
+            Ok(Some(c)) => {destination[count]=c;count+=1;}
+            Ok(None) => return (if count==0 {END} else {END_OF_RECORD},count),
+            Err(()) => return (ERROR,count),
+        }
+    }
+    (0,count)
+}
 
 /// Numeric record parsing must diagnose truncation instead of parsing a prefix.
 pub(crate) fn checked_record(destination:&mut [u8],mut byte:impl FnMut()->Result<Option<u8>,()>)->i64 {

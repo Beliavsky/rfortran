@@ -93,6 +93,7 @@ pub(crate) fn read_controls(
     let mut message = None;
     let mut stream_position = None;
     let mut record = None;
+    let (mut advance, mut size, mut pad) = (None, None, None);
     let mut seen = std::collections::HashSet::new();
     for (position, value) in controls.into_iter().enumerate() {
         let (key, value) = match value {
@@ -125,6 +126,9 @@ pub(crate) fn read_controls(
             "pos" => stream_position = Some(value),
             // The record of a direct-access READ, carried in the POS slot.
             "rec" => record = Some(value),
+            "advance" => advance = Some(value),
+            "size" => size = Some(value),
+            "pad" => pad = Some(value),
             // Only defined after an error; an input error that IOSTAT does not
             // report stops the program, so IOMSG is never set.
             "iomsg" => message = Some(value),
@@ -141,6 +145,29 @@ pub(crate) fn read_controls(
         if stream_position.is_some() { return Err("READ must not specify both REC and POS"); }
         if format.is_some() { return Err("formatted direct-access READ (REC= with FMT) is not yet supported"); }
         stream_position = Some(Expr::Call(crate::unformatted::RECORD_NUMBER.into(), vec![record]));
+    }
+    // ADVANCE='NO' leaves the file within its record; SIZE= counts the
+    // characters it transfers and EOR= branches at the end of the record.
+    let constant = |value: &Option<Expr>, what: &'static str| -> std::result::Result<Option<bool>, &'static str> {
+        match value {
+            None => Ok(None),
+            Some(Expr::Str(s)) if s.trim_end().eq_ignore_ascii_case("yes") => Ok(Some(true)),
+            Some(Expr::Str(s)) if s.trim_end().eq_ignore_ascii_case("no") => Ok(Some(false)),
+            Some(_) => Err(what),
+        }
+    };
+    let advancing = constant(&advance, "READ ADVANCE= must currently be the constant 'yes' or 'no'")?.unwrap_or(true);
+    let padded = constant(&pad, "READ PAD= must currently be the constant 'yes' or 'no'")?.unwrap_or(true);
+    let mut nonadvancing = None;
+    if !advancing {
+        if format.is_none() || matches!(&format, Some(Expr::Call(n, _)) if n == "@write_star") {
+            return Err("ADVANCE='NO' requires a format other than *");
+        }
+        let mut args = vec![Expr::Logical(padded)];
+        args.extend(size.take());
+        nonadvancing = Some(Stmt::CallSub { name: NONADVANCING.into(), args });
+    } else if size.is_some() || options.iter().any(|(k, _)| k == "eor") {
+        return Err("READ SIZE= and EOR= require ADVANCE='NO'");
     }
     // ERR=, EOR=, and END= with another control, read into an IOSTAT
     // variable (a temporary without IOSTAT=); the label pass then branches on
@@ -165,11 +192,18 @@ pub(crate) fn read_controls(
     }
     let option = options.pop();
     let read = read_statement(unit, format, option, stream_position, message, items)?;
-    Ok(match branches_marker {
-        Some(marker) => Stmt::Block { body: vec![read, marker] },
-        None => read,
-    })
+    if nonadvancing.is_none() && branches_marker.is_none() {
+        return Ok(read);
+    }
+    // The marker immediately precedes the READ, which IOMSG puts in a block.
+    let mut body = match read { Stmt::Block { body } => body, read => vec![read] };
+    if let Some(marker) = nonadvancing { body.insert(0, marker); }
+    body.extend(branches_marker);
+    Ok(Stmt::Block { body })
 }
+
+/// Precedes a non-advancing formatted READ: [PAD given as 'yes', SIZE variable?].
+pub(crate) const NONADVANCING: &str = "@nonadvancing_read";
 
 /// The status variable that a READ or WRITE with ERR=, END= or EOR= and no
 /// IOSTAT= reads into; the label pass gives each statement its own.
@@ -791,6 +825,7 @@ pub(crate) fn lower_field_read(
     args: &[Expr],
     symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>,
     serial: &mut usize,
+    nonadvancing: Option<&[Expr]>,
 ) -> Result<Option<Vec<Stmt>>> {
     use crate::format_spec as spec;
     let [unit, format, Expr::Str(control), status, items @ ..] = args else { return Ok(None) };
@@ -804,7 +839,10 @@ pub(crate) fn lower_field_read(
     };
     // Plain (A) into one CHARACTER variable keeps the record READ.
     let plain = text.chars().filter(|c| !c.is_whitespace()).collect::<String>().eq_ignore_ascii_case("(a)");
-    if !internal && plain && items.len() == 1 && matches!(&items[0], Expr::Ident(n) if matches!(symbols.get(n), Some((TypeSpec::Character(_), d)) if d.is_empty())) {
+    if nonadvancing.is_some() && internal {
+        bail!("ADVANCE='NO' requires an external unit");
+    }
+    if !internal && plain && nonadvancing.is_none() && items.len() == 1 && matches!(&items[0], Expr::Ident(n) if matches!(symbols.get(n), Some((TypeSpec::Character(_), d)) if d.is_empty())) {
         return Ok(None);
     }
     let shapes=symbols.iter().map(|(n,(_,d))|(n.clone(),d.clone())).collect();
@@ -875,10 +913,17 @@ pub(crate) fn lower_field_read(
     let widest = records.iter().flatten().map(|f| f.3).max().unwrap_or(1);
     let iostat = !control.is_empty();
     let capacity = (if items.is_empty() && !internal {0}else{FIELD_RECORD.max(record_length)}).max(widths.iter().copied().max().unwrap_or(0));
+    if nonadvancing.is_some() && records.len() > 1 {
+        bail!("non-advancing READ with a format of more than one record is not yet supported");
+    }
+    let count = format!("@field_count_{serial}");
     // The six-argument record helper carries the field span and record advance.
     // Within defined input it consumes only that span; ordinary input still
     // consumes a whole record. Advance -1 diagnoses unsupported child tabbing.
-    let read_record = |index: usize| if !internal {
+    let read_record = |index: usize| if nonadvancing.is_some() {
+        Stmt::CallSub { name: "@read_record_partial".into(),
+            args: vec![var(&code), var(&buffer), int(capacity as i64), unit.clone(), int(widths[index] as i64), var(&count)] }
+    } else if !internal {
         Stmt::CallSub { name: "@read_record_status".into(),
             args: vec![var(&code), var(&buffer), int(capacity as i64), unit.clone(),
                 int(widths[index] as i64), int(if child_positioning {-1}else{i64::from(index > 0)})] }
@@ -927,8 +972,16 @@ pub(crate) fn lower_field_read(
     };
     // Each later record is read only when the earlier ones succeeded.
     let mut nested: Vec<Stmt> = vec![];
+    let end_of_record = format!("@field_end_of_record_{serial}");
     for (index, record) in records.iter().enumerate().rev() {
         let mut segment = vec![read_record(index)];
+        // At the end of the record, the fields read are padded with blanks
+        // (unless PAD='NO'), and the status is END_OF_RECORD afterwards.
+        if let Some(options) = nonadvancing {
+            let padded = matches!(options.first(), Some(Expr::Logical(true)));
+            let at_end = equal(&code, crate::record_input::END_OF_RECORD);
+            segment.push(branch(at_end, if padded { vec![set(&end_of_record, int(1)), set(&code, int(0))] } else { vec![set(&end_of_record, int(1))] }));
+        }
         // A failed transfer ends the input list. Later conversions must not
         // overwrite its status with success (or define subsequent items).
         let mut fields: Vec<Stmt> = record.iter()
@@ -943,8 +996,32 @@ pub(crate) fn lower_field_read(
         Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![code.clone()] },
         set(&code, int(0)),
     ];
-    body.extend(nested);
-    body.push(branch(equal(&code,0),pending));
+    if let Some(options) = nonadvancing {
+        body.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![count.clone()] });
+        body.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![end_of_record.clone()] });
+        body.push(set(&count, int(0)));
+        body.push(set(&end_of_record, int(0)));
+        body.extend(nested);
+        body.push(branch(equal(&code,0),pending));
+        body.push(branch(bin(BinOp::And, equal(&end_of_record, 1), equal(&code, 0)), vec![set(&code, int(crate::record_input::END_OF_RECORD))]));
+        // SIZE= counts the characters read by data edit descriptors.
+        if let Some(size) = options.get(1) {
+            let mut total = int(0);
+            for (_, _, first, width, ..) in &records[0] {
+                let last = (first + width - 1) as i64;
+                let read = Expr::Call("max".into(), vec![int(0), bin(BinOp::Sub, Expr::Call("min".into(), vec![int(last), var(&count)]), int(*first as i64 - 1))]);
+                total = bin(BinOp::Add, total, read);
+            }
+            body.push(match size {
+                Expr::Ident(n) => set(n, total),
+                Expr::Index(n, idx) | Expr::Call(n, idx) => Stmt::AssignIndex { name: n.clone(), indices: idx.clone(), value: total },
+                _ => bail!("SIZE= requires a scalar INTEGER variable"),
+            });
+        }
+    } else {
+        body.extend(nested);
+        body.push(branch(equal(&code,0),pending));
+    }
     if iostat {
         let Expr::Ident(status) = status else { bail!("IOSTAT must be a writable scalar INTEGER variable") };
         body.push(set(status, var(&code)));

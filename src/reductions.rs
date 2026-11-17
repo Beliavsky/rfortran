@@ -1804,9 +1804,22 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
     implicit_read_destinations(body, &mut symbols); }
     let mut output = Vec::new();
     let mut source_offset=None;
+    // The controls of a non-advancing READ, for the READ that follows.
+    let mut nonadvancing: Option<Vec<Expr>> = None;
     (||->Result<()> {
     for mut stmt in std::mem::take(body) {
         if let Stmt::SourceLocation(offset)=&stmt {source_offset=Some(*offset);}
+        if let Stmt::CallSub { name, args } = &stmt {
+            if name == crate::input::NONADVANCING { nonadvancing = Some(args.clone()); continue; }
+        }
+        let follows = match &stmt {
+            Stmt::SourceLocation(_) => true,
+            Stmt::CallSub { name, .. } => matches!(name.as_str(), "@formatted_read" | "@formatted_read_status"),
+            _ => false,
+        };
+        if nonadvancing.is_some() && !follows {
+            bail!("ADVANCE='NO' is currently supported for formatted READ with a constant format of edit descriptors");
+        }
         let mut prefix = Vec::new();
         if let Stmt::Assign { name, value } = &stmt {
             if let Some((TypeSpec::Character(length), dims)) = symbols.get(name) {
@@ -2084,10 +2097,14 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                     controlled.extend_from_slice(&args[2..]);
                     controlled
                 } else {args.clone()};
-                if let Some(mut fields)=crate::input::lower_field_read(&controlled,&symbols.variables,serial)? {
+                let options=nonadvancing.take();
+                if let Some(mut fields)=crate::input::lower_field_read(&controlled,&symbols.variables,serial,options.as_deref())? {
                     lower_body(&mut fields,&symbols,serial)?;
                     output.extend(fields);
                     continue;
+                }
+                if options.is_some() {
+                    bail!("ADVANCE='NO' is currently supported for formatted READ with a constant format of edit descriptors");
                 }
                 output.push(crate::input::lower_record_read(&controlled,&symbols.variables,serial)?);
                 continue;

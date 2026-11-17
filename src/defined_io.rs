@@ -788,7 +788,9 @@ fn array_item(
         Expr::Call(n, a) | Expr::Index(n, a) => (n, Some(a)),
         _ => bail!("defined formatted array output requires a whole array or triplet section"),
     };
+    // A module's variable, made visible by USE, is known to the expression types.
     if !objects.contains_key(array.split('%').next().unwrap()) && !declarations.contains_key(&array)
+        && types.type_rank(&id(&array), declarations, objects)?.is_none_or(|(_, rank)| rank == 0)
     {
         bail!("defined formatted array output requires a whole array or triplet section");
     }

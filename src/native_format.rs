@@ -532,6 +532,24 @@ pub unsafe extern "C" fn rfort_read_record(
 pub unsafe extern "C" fn rfort_read_record_checked(stream:*mut core::ffi::c_void,destination:*mut u8,length:usize)->i64 {
     read_record(stream,destination,length,true)
 }
+/// Non-advancing input of at most `width` characters of the current record
+/// into `capacity` bytes of storage; `count` receives the number read.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_read_partial(stream:*mut core::ffi::c_void,destination:*mut u8,capacity:usize,width:usize,count:*mut i64)->i64 {
+    let stream = if stream.is_null() {
+        #[cfg(windows)]
+        { __acrt_iob_func(0) }
+        #[cfg(target_os = "macos")]
+        { __stdinp }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        { stdin }
+    } else { stream };
+    let buffer=core::slice::from_raw_parts_mut(destination,capacity);
+    buffer.fill(b' ');
+    let (code,read)=record_input::partial(&mut buffer[..width.min(capacity)],||input_byte(stream));
+    *count=read as i64;
+    code
+}
 unsafe fn read_record(stream:*mut core::ffi::c_void,destination:*mut u8,length:usize,checked:bool)->i64 {
     let stream = if stream.is_null() {
         #[cfg(windows)]

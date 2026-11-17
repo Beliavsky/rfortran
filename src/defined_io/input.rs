@@ -78,6 +78,23 @@ fn controls(text: &str, unit: &str, ios: &str, scratch: &str) -> Result<Vec<Stmt
     }
     Ok(out)
 }
+/// A substring, as `zone(1:3)`, which as an internal file is one record.
+fn substring(unit: &Expr) -> bool {
+    match unit {
+        Expr::Section { .. } => true,
+        Expr::Call(n, args) => n.contains("substring") || args.iter().any(|a| matches!(a, Expr::Section { .. })),
+        _ => false,
+    }
+}
+/// Whether the internal file of a READ may be a CHARACTER array or a
+/// substring, which `internal::wrap` reads record by record.
+fn record_unit(unit: &Expr, arrays: &HashSet<String>) -> bool {
+    match unit {
+        Expr::Ident(n) => arrays.contains(n),
+        Expr::Section { .. } | Expr::Call(..) => substring(unit),
+        _ => false,
+    }
+}
 fn lower_one(
     s: &Stmt,
     message: Option<&Expr>,
@@ -104,7 +121,38 @@ fn lower_one(
     // Reuse the runtime cursor for intrinsic child transfers as well as DT parents.
     // Its nested input session borrows an existing parent session on the same unit.
     let formatted_child = child && format.is_some();
-    if !writers.iter().any(Option::is_some) && !formatted_child {
+    // A CHARACTER array, or a substring, as the internal file of an ordinary
+    // READ: each element is a record of a statement-scoped unit.
+    let unit_type = types.type_rank(&unit, declarations, objects)?;
+    // A substring as the internal file is copied to a temporary record.
+    let deferred = matches!(&unit, Expr::Ident(n) if declarations.get(n).is_some_and(|(k, rank)| *rank == 0 && crate::substrings::deferred(k)));
+    if !child && !writers.iter().any(Option::is_some) && (substring(&unit) || deferred) {
+        // The record has the length of the variable the substring is of; a
+        // deferred-length scalar is copied to storage of the usual capacity.
+        let parent = match &unit {
+            _ if deferred => Some(TypeSpec::Character(Some(crate::substrings::FALLBACK_CAPACITY))),
+            Expr::Section { name, .. } | Expr::Call(name, _) => declarations.get(name).map(|(k, _)| k.clone()),
+            _ => None,
+        };
+        if let (Some(kind @ TypeSpec::Character(Some(_))), Some((crate::operators::ExpressionElement::Intrinsic(_), 0))) = (parent, &unit_type) {
+            *serial += 1;
+            let record = format!("@internal_substring_{serial}");
+            let Stmt::CallSub { name, args } = s else { unreachable!() };
+            let mut args = args.clone();
+            args[0] = id(&record);
+            return Ok(Some(Stmt::Block { body: vec![
+                decl(&record, kind),
+                assign(&record, unit),
+                Stmt::CallSub { name: name.clone(), args },
+            ] }));
+        }
+    }
+    // Formatted READ from a CHARACTER array is not yet supported this way.
+    let records = !child && format.is_none() && match &unit_type {
+        Some((crate::operators::ExpressionElement::Intrinsic(TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed), rank)) => *rank > 0,
+        _ => false,
+    };
+    if !writers.iter().any(Option::is_some) && !formatted_child && !records {
         return Ok(None);
     }
     if items
@@ -130,6 +178,26 @@ fn lower_one(
         ))
     ) {
         bail!("defined formatted input currently requires an external INTEGER unit");
+    }
+    // A lone END= on a READ of a CHARACTER array reads into a status that
+    // the label pass then branches on, as for END= with other controls.
+    if records && !writers.iter().any(Option::is_some) && control == "end" {
+        *serial += 1;
+        let code = format!("@internal_records_end_{serial}");
+        let Stmt::CallSub { name, args } = s else { unreachable!() };
+        let mut args = args.clone();
+        let at = if name == "@internal_read" { 1 } else { 2 };
+        args[at] = Expr::Str("iostat".into());
+        args[at + 1] = id(&code);
+        let read = Stmt::CallSub { name: name.clone(), args };
+        let mut local = declarations.clone();
+        local.insert(code.clone(), (TypeSpec::Integer(None), 0));
+        let Some(lowered) = lower_one(&read, message, objects, &local, bindings, types, serial, polymorphic, child)? else { unreachable!() };
+        return Ok(Some(Stmt::Block { body: vec![
+            decl(&code, TypeSpec::Integer(None)),
+            lowered,
+            Stmt::CallSub { name: crate::input::IO_BRANCHES.into(), args: vec![id(&code), Expr::Logical(true), Expr::Call("@io_spec:end".into(), vec![status])] },
+        ] }));
     }
     if !control.is_empty() && control != "iostat" {
         bail!("defined input currently supports IOSTAT and IOMSG controls only");
@@ -444,21 +512,49 @@ pub(super) fn resolve(program: &mut Program) -> Result<()> {
             crate::procedure_arguments::children(s).into_iter().any(|b|contains(b))
         })
     }
-    if !contains(&mut program.body) {
+    // A READ whose internal file is a CHARACTER array or a substring. The
+    // names of CHARACTER arrays are gathered from every scope, as a module's
+    // arrays are used elsewhere.
+    fn arrays(body: &mut [Stmt], found: &mut HashSet<String>) {
+        for s in body {
+            if let Stmt::ArrayDecl { kind: TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed, name, .. } = s {
+                found.insert(name.clone());
+            }
+            // Deferred-length scalars too, which are read through a copy.
+            if let Stmt::VarDecl { kind, names } = s {
+                if crate::substrings::deferred(kind) { found.extend(names.iter().cloned()); }
+            }
+            for b in crate::procedure_arguments::children(s) { arrays(b, found); }
+        }
+    }
+    fn record_files(body: &mut [Stmt], arrays: &HashSet<String>) -> bool {
+        body.iter_mut().any(|s| {
+            if let Some((unit, ..)) = read(s) {
+                if record_unit(&unit, arrays) { return true; }
+            }
+            crate::procedure_arguments::children(s).into_iter().any(|b| record_files(b, arrays))
+        })
+    }
+    let defined = contains(&mut program.body);
+    let mut names = HashSet::new();
+    arrays(&mut program.body, &mut names);
+    if !defined && !record_files(&mut program.body, &names) {
         return Ok(());
     }
 
     let mut bindings = HashMap::new();
     let mut procedures = HashMap::new();
     let mut owners = HashMap::new();
-    collect(
-        &mut program.body,
-        &mut bindings,
-        &mut procedures,
-        &mut owners,
-        true,
-    )?;
-    if bindings.is_empty() {
+    if defined {
+        collect(
+            &mut program.body,
+            &mut bindings,
+            &mut procedures,
+            &mut owners,
+            true,
+        )?;
+    }
+    if defined && bindings.is_empty() {
         return Ok(());
     }
     for (ty, target) in &bindings {

@@ -4801,6 +4801,27 @@ both forms of READ, such as `read(s(i),'(i8)') k`. Run
 `python tests/test_list_read.py` for interpreter/native O0/O2 checks against
 gfortran, including `tests/io/write_read.f90`, a copy of `xwrite_read.f90`.
 
+A whole CHARACTER array, or an array section such as `a(1:5:2)`, can be the
+internal file of a list-directed READ, each element a record; this includes a
+module's ALLOCATABLE array and END= at the end of the array. A substring, as
+`read(zone(1:3),*) h`, and a deferred-length (`len=:`) scalar are read
+through a copy as one record, by list-directed or formatted READ; the copy of
+a deferred-length scalar holds 4096 characters. Formatted READ from a whole
+CHARACTER array is not yet supported. Run
+`python tests/test_internal_read_records.py`.
+
+Formatted READ accepts `advance='no'` with a constant format of edit
+descriptors for one record, from a file or standard input. The READ leaves
+the file after the characters it read, within the record, so the next READ
+continues there. When the record ends before the format's fields do, the
+fields are padded with blanks (unless `pad='no'`), the end of the record is
+consumed, and IOSTAT is IOSTAT_EOR (-2); EOR= branches instead. `size=`
+receives the number of characters that data edit descriptors read. ADVANCE
+and PAD must be constant; SIZE= and EOR= require ADVANCE='NO'. Non-advancing
+READ from an internal file, with a list-directed or runtime format, or with
+DT edit descriptors, is not yet supported. Run
+`python tests/test_nonadvancing_read.py`.
+
 Default derived-type input expands scalar records into writable components in
 declaration order, including nested records and fixed-size component arrays.
 List-directed READ supports these records on standard input, connected files,
