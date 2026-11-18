@@ -86,6 +86,14 @@ pub(crate) fn read_controls(
     if controls.iter().any(|e| matches!(e,Expr::Call(n,_) if n=="@read_control:nml")) {
         return crate::namelists::controls(controls, items, true);
     }
+    let (original, list) = (controls.clone(), items.clone());
+    crate::namelists::candidate(&original, &list, true, read_controls_other(controls, items))
+}
+
+fn read_controls_other(
+    controls: Vec<Expr>,
+    items: Vec<Expr>,
+) -> std::result::Result<Stmt, &'static str> {
     let mut unit = None;
     let mut format = None;
     let mut options: Vec<(String, Expr)> = vec![];

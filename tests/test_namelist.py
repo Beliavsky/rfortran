@@ -238,6 +238,74 @@ print *, ios, r /= r
 end program p
 """, " 0  1  2  3  4 -1 -1 -1 -1 -1  5\n 0 T\n", reference=False)
 
+    def test_allocatable_pointer_and_assumed_shape_members(self):
+        # Bounds are those the members have when the statement executes.
+        self.check("""program p
+implicit none
+type t
+  integer :: c1
+  integer :: c2(3)
+end type t
+integer, allocatable :: a(:), b
+integer, pointer :: ap(:), bp
+real, allocatable :: m(:,:)
+type(t), allocatable :: g, h(:)
+character(len=600) :: str
+namelist /nml/ a, b, ap, bp, m, g, h
+allocate(a(-1:1), b, ap(2), bp, m(2,2), g, h(0:1))
+a = [1,2,3]; b = 7; ap = [98,99]; bp = 101; m = reshape([1.,2.,3.,4.],[2,2])
+g%c1 = 4; g%c2 = [5,6,7]; h(0)%c1 = 8; h(1)%c1 = 9; h(0)%c2 = 10; h(1)%c2 = 11
+write(str, nml=nml)
+a = 0; b = 0; ap = 0; bp = 0; m = 0
+g%c1 = 0; g%c2 = 0; h(0)%c1 = 0; h(1)%c1 = 0; h(0)%c2 = 0; h(1)%c2 = 0
+read(str, nml=nml)
+print '(7i4)', a, b, ap, bp
+print '(4f4.1)', m
+print '(4i3,3i3,3i3)', g, h(0)%c1, h(1)%c1, h(0)%c2, h(1)%c2
+str = '&nml a(-1) = 5 h(1)%c2 = 1 2 3 /'
+read(str, nml=nml)
+print '(3i3,3i3)', a, h(1)%c2
+call show(a)
+contains
+subroutine show(y)
+integer :: y(:)
+integer :: total
+namelist /s/ y
+write(str, s)
+y = 0
+read(str, s)
+total = sum(y)
+print '(i3)', total
+end subroutine show
+end program p
+""", "   1   2   3   7  98  99 101\n 1.0 2.0 3.0 4.0\n"
+     "  4  5  6  7  8  9 10 10 10 11\n 11 11\n  5  2  3  1  2  3\n 10\n")
+
+    def test_branch_controls(self):
+        # ERR= and END=, and a group named positionally with other controls.
+        self.check("""program p
+implicit none
+integer :: i(3), ios
+namelist /nml/ i
+i = -42
+open(99, status='scratch')
+write(99, '(a)') '&nml i(3) = 5 '
+rewind(99)
+read(99, nml=nml, end=30)
+stop 1
+30 rewind(99)
+write(99, '(a)') '&nml i(3) = q /'
+rewind(99)
+read(99, nml, err=40)
+stop 2
+40 rewind(99)
+write(99, '(a)') '&nml i = 1 2 3 /'
+rewind(99)
+read(99, nml, iostat=ios)
+print *, ios, i
+end program p
+""", " 0 1 2 3\n")
+
     def test_standard_gates(self):
         with tempfile.TemporaryDirectory(prefix="nml-standard-") as tmp:
             source=Path(tmp)/"example.f90"

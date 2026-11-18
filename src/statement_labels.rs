@@ -583,7 +583,13 @@ fn rename_status(stmt: &mut Stmt, name: &str) {
                 if matches!(e, Expr::Ident(n) if n == crate::input::BRANCH_STATUS) { *e = Expr::Ident(name.into()); }
             });
         },
-        Stmt::Block { body } => for s in body { rename_status(s, name); },
+        Stmt::Block { body } | Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => for s in body { rename_status(s, name); },
+        // A NAMELIST transfer, already expanded, assigns its status.
+        Stmt::Assign { name: target, .. } if target == crate::input::BRANCH_STATUS => *target = name.into(),
+        Stmt::If { then_body, else_body, .. } => {
+            for s in then_body { rename_status(s, name); }
+            for s in else_body.iter_mut().flatten() { rename_status(s, name); }
+        }
         _ => {}
     }
 }

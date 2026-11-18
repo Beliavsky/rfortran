@@ -349,12 +349,14 @@ impl Session {
                                         }
                                     }
                                 } else if first.is_none() {
-                                    return Err(7);
+                                    return Err(if self.peek(read)?.is_none() { -1 } else { 7 });
                                 }
                                 self.rank += 1;
                                 match self.get(read)? {
                                     Some(b',') => continue,
                                     Some(b')') => break,
+                                    // The file ends within the designator.
+                                    None => return Err(-1),
                                     _ => return Err(7),
                                 }
                             }
@@ -393,8 +395,10 @@ impl Session {
                         self.field_len += n;
                         self.spaces(read)?;
                     }
-                    if self.get(read)? != Some(b'=') {
-                        return Err(7);
+                    match self.get(read)? {
+                        Some(b'=') => {}
+                        None => return Err(-1),
+                        _ => return Err(7),
                     }
                     self.index = 0;
                     self.new_assignment = true;

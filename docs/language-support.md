@@ -4237,9 +4237,11 @@ and embedded in `rfort`; no separate runtime installation is needed. Use
 
 NAMELIST declarations and external `READ(unit,nml=group)` /
 `WRITE(unit,nml=group)` support intrinsic INTEGER, REAL, LOGICAL, COMPLEX and
-fixed-length CHARACTER scalars and fixed-size arrays. A visible group may also
-occupy the positional format slot, as in `write(unit,group)`. Use explicit
-`NML=group` when supplying status or message controls. Repeated NAMELIST
+fixed-length CHARACTER scalars and arrays, including ALLOCATABLE, POINTER and
+assumed-shape ones, whose bounds are those they have when the statement
+executes. A visible group may also occupy the positional format slot, as in
+`write(unit,group)` or `read(unit,group,iostat=ios)`. `ERR=` and `END=` (END=
+on READ only) branch as for other transfers. Repeated NAMELIST
 statements extend a group. Groups declared in a host scope can be used by its
 internal procedures, and groups and members declared in a module can be used
 through USE association, including ONLY lists and renames; as other compilers
@@ -4256,9 +4258,10 @@ its components in order), a component (`x%c%w = 1.0`), an element of an array
 of derived type (`tr(2)%sname = 'bb'` or `tr(2) = 'bb', T`), or a component
 of every element (`tr%lini = T, F, T`). Output lists each intrinsic
 component, labeling the elements of an array of derived type as `tr(2)%w=`;
-gfortran reads this output and rfort reads gfortran's. An array of derived type within an
-element of another, and ALLOCATABLE or POINTER components, remain
-unsupported. Generated code does not grow with the number of array elements.
+gfortran reads this output and rfort reads gfortran's. Derived members may
+also be ALLOCATABLE or POINTER scalars and ALLOCATABLE arrays. An array of
+derived type within an element of another, and ALLOCATABLE or POINTER
+components, remain unsupported. Generated code does not grow with the number of array elements.
 
 ```fortran
 integer :: n, unit, status
@@ -4308,9 +4311,8 @@ with gfortran and gfortran output with rfort.
 
 This is partial NAMELIST support. Members currently require explicit
 declarations. CHARACTER substrings and sections within an element of an array
-of derived type (`x(1:2)%a`) in input designators, and ALLOCATABLE/POINTER
-members, remain unsupported. Controls other
-than UNIT/NML/IOSTAT/IOMSG (including DELIM, ERR and END) are rejected. The
+of derived type (`x(1:2)%a`) in input designators remain unsupported. Controls
+other than UNIT/NML/IOSTAT/IOMSG/ERR/END are rejected. The
 scanner currently accepts non-NUL ASCII input and limits each scalar token to
 4096 bytes, reporting an error rather than truncating it. CHARACTER output
 currently requires a literal declared length no greater than 4000.

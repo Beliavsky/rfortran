@@ -98,7 +98,39 @@ pub fn declaration(src: &str) -> std::result::Result<Vec<S>, &'static str> {
     }
     Ok(out)
 }
+/// Begins `[marker(name), NAMELIST transfer, other READ or WRITE]` for a
+/// statement such as `read(10, name, iostat=ios)`: a positional name in the
+/// format position, with other controls, is a NAMELIST group only when a
+/// visible NAMELIST statement declares it, which resolve() decides.
+pub(crate) const CANDIDATE: &str = "@namelist_candidate";
+
+/// The READ or WRITE `normal`, or both readings when the second positional
+/// control may name a NAMELIST group (see CANDIDATE).
+pub(crate) fn candidate(
+    controls: &[E],
+    items: &[E],
+    read: bool,
+    normal: std::result::Result<S, &'static str>,
+) -> std::result::Result<S, &'static str> {
+    let keyword = |e: &E| matches!(e, E::Call(n, _) if n.starts_with("@read_control:") || n.starts_with("@write_control:"));
+    let (Some(E::Ident(group)), Some(first)) = (controls.get(1), controls.first()) else { return normal };
+    if !items.is_empty() || controls.len() < 3 || keyword(first) || !controls[2..].iter().all(keyword) {
+        return normal;
+    }
+    let Ok(group_transfer) = controls_inner(controls.to_vec(), vec![], read) else { return normal };
+    let Ok(normal) = normal else { return Ok(group_transfer) };
+    Ok(S::Block { body: vec![call(CANDIDATE, vec![v(group)]), group_transfer, normal] })
+}
+
 pub fn controls(
+    controls: Vec<E>,
+    items: Vec<E>,
+    read: bool,
+) -> std::result::Result<S, &'static str> {
+    controls_inner(controls, items, read)
+}
+
+fn controls_inner(
     controls: Vec<E>,
     items: Vec<E>,
     read: bool,
@@ -131,8 +163,11 @@ pub fn controls(
                 )
             }
         };
-        if !matches!(key.as_str(), "unit" | "nml" | "iostat" | "iomsg") {
-            return Err("NAMELIST currently supports UNIT, NML, IOSTAT and IOMSG");
+        if !matches!(key.as_str(), "unit" | "nml" | "iostat" | "iomsg" | "err" | "end") {
+            return Err("NAMELIST currently supports UNIT, NML, IOSTAT, IOMSG, ERR and END");
+        }
+        if key == "end" && !read {
+            return Err("NAMELIST WRITE must not specify END=");
         }
         if matches!(key.as_str(), "iostat" | "iomsg") && !matches!(e, E::Ident(_)) {
             return Err("NAMELIST IOSTAT and IOMSG require scalar variables");
@@ -148,16 +183,32 @@ pub fn controls(
     let E::Ident(group) = values.remove("nml").ok_or("NAMELIST requires NML")? else {
         return Err("NML requires a NAMELIST group name");
     };
-    let status = values.remove("iostat").unwrap_or(i(0));
+    let user = values.remove("iostat");
     let message = values.remove("iomsg").unwrap_or(i(0));
-    Ok(call(
+    // ERR= and END= branch on the status, as for other READ and WRITE
+    // statements (see input::IO_BRANCHES); without IOSTAT= it is a temporary.
+    let branches: Vec<E> = ["err", "end"].iter()
+        .filter_map(|k| values.remove(*k).map(|label| E::Call(format!("@io_spec:{k}"), vec![label])))
+        .collect();
+    let status = match (&user, branches.is_empty()) {
+        (Some(status), _) => status.clone(),
+        (None, true) => i(0),
+        (None, false) => v(crate::input::BRANCH_STATUS),
+    };
+    let transfer = call(
         if read {
             "@namelist_read"
         } else {
             "@namelist_write"
         },
-        vec![unit, text(&group), status, message],
-    ))
+        vec![unit, text(&group), status.clone(), message],
+    );
+    if branches.is_empty() {
+        return Ok(transfer);
+    }
+    let mut args = vec![status, E::Logical(user.is_some())];
+    args.extend(branches);
+    Ok(S::Block { body: vec![transfer, call(crate::input::IO_BRANCHES, args)] })
 }
 type Symbols = HashMap<String, (T, Vec<E>, Vec<String>)>;
 /// NAMELIST groups by local name: the group's own name, which input and
@@ -396,6 +447,16 @@ fn size(d: &E) -> E {
         vec![i(0), bin(B::Add, bin(B::Sub, hi, lo), i(1))],
     )
 }
+/// The bounds of NAMELIST member `name`: those of an ALLOCATABLE, POINTER
+/// or assumed-shape array are the ones it has when the statement executes.
+fn runtime_bounds(name: &str, dims: &[E], attrs: &[String]) -> Vec<E> {
+    let runtime = attrs.iter().any(|a| matches!(a.as_str(), "allocatable" | "pointer"))
+        || dims.iter().any(|d| matches!(d, E::Ident(n) if n.starts_with('@')) || matches!(d, E::Section { upper: None, .. }));
+    if !runtime { return dims.to_vec(); }
+    (1..=dims.len()).map(|k| E::Call("@declared_bounds".into(), vec![
+        E::Call("lbound".into(), vec![v(name), i(k as i64)]),
+        E::Call("ubound".into(), vec![v(name), i(k as i64)])])).collect()
+}
 fn count(dims: &[E]) -> E {
     dims.iter().fold(i(1), |n, d| bin(B::Mul, n, size(d)))
 }
@@ -559,6 +620,20 @@ pub fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Program> 
                 continue;
             }
             let result = (|| -> Result<()> {
+                // Choose a reading of a statement that may name a group.
+                if let S::Block { body } = s {
+                    let chosen = match body.first() {
+                        Some(S::CallSub { name, args }) if name == CANDIDATE => {
+                            let [E::Ident(group)] = args.as_slice() else { unreachable!() };
+                            Some(if groups.contains_key(group) { 1 } else { 2 })
+                        }
+                        _ => None,
+                    };
+                    if let Some(chosen) = chosen {
+                        let taken = body.swap_remove(chosen);
+                        *s = taken;
+                    }
+                }
                 if let S::CallSub { name, args } = s {
                     if name == "@namelist_decl" {
                         // The group remains an entity for USE ONLY and renames.
@@ -602,8 +677,7 @@ pub fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Program> 
                         let mut entries = vec![];
                         for (n, _) in members {
                             if let Some((ty, dims, attrs)) = objects.get(n) {
-                                ensure!(!attrs.iter().any(|a| matches!(a.as_str(), "allocatable" | "pointer")),
-                                    "NAMELIST member `{n}` currently requires nonallocatable, nonpointer variable storage");
+                                let dims = &runtime_bounds(n, dims, attrs);
                                 ensure!(!read || !attrs.iter().any(|a| a == "intent(in)"), "NAMELIST READ cannot define INTENT(IN) member `{n}`");
                                 let rec = format!("@nml_{}_rec", *serial + 1);
                                 if dims.is_empty() {
@@ -623,13 +697,8 @@ pub fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Program> 
                                     "NAMELIST member `{n}` requires a declaration"
                                 )
                             })?;
-                            entries.push(Entry::leaf(&Leaf::plain(n, kind, dims)));
-                            ensure!(!attrs.iter().any(|a|matches!(a.as_str(),"parameter"|"allocatable"|"pointer")),"NAMELIST member `{n}` currently requires nonallocatable, nonpointer variable storage");
-                            ensure!(
-                                dims.iter()
-                                    .all(|d| !matches!(d,E::Ident(n) if n.starts_with('@'))),
-                                "NAMELIST currently requires fixed-size arrays"
-                            );
+                            ensure!(!attrs.iter().any(|a|a=="parameter"),"NAMELIST member `{n}` must be a variable");
+                            entries.push(Entry::leaf(&Leaf::plain(n, kind, &runtime_bounds(n, dims, attrs))));
                         }
                         if read {
                             for (n, _) in members.iter().filter(|(n, _)| symbols.contains_key(n)) {
@@ -690,8 +759,11 @@ fn transfer(
         matches!(message, E::Ident(_) | E::IntLit(_)),
         "NAMELIST IOMSG requires a CHARACTER variable"
     );
+    // The status of ERR= or END= without IOSTAT= is declared by the label
+    // pass (see input::BRANCH_STATUS).
     if let E::Ident(n) = status {
         ensure!(
+            n == crate::input::BRANCH_STATUS ||
             matches!(symbols.get(n),Some((T::Integer(_)|T::IntegerKind(_),d,_)) if d.is_empty()),
             "NAMELIST IOSTAT requires an INTEGER scalar variable"
         );
