@@ -33,6 +33,7 @@ pub(crate) fn prepare_program(
     format_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
                            &prepared.origins, settings, &args.warnings, args.standard)?;
     open_warnings::check(&prepared.source, src.len(), filename, &prepared.origins, settings, &args.warnings, args.standard)?;
+    section_bounds_warnings::check(&prepared.source, src.len(), filename, &prepared.origins, settings, &args.warnings)?;
     io_warnings::check(&prepared.source, src.len(), filename, &prepared.origins, settings, &args.warnings, args.standard)?;
     leak_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
                          &prepared.origins, settings, &args.warnings)?;

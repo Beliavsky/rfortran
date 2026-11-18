@@ -119,7 +119,7 @@ Diagnostics identify original source locations; shadowing, dead-store, aliasing,
 and lifetime diagnostics also identify the related declaration or assignment.
 
 `-Wextra` enables selected opt-in advice that `-Wall` leaves out (including
-[`-Wmissing-intent`](../warnings/missing-intent.f90) and `-Wfixed-unit`). `-Wconversion`, `-Wimplicit-interface`,
+[`-Wmissing-intent`](../warnings/missing-intent.f90), `-Wfixed-unit` and `-Wsection-bounds`). `-Wconversion`, `-Wimplicit-interface`,
 [`-Wmodule-default-public`](../warnings/module-default-public.f90), `-Wuse-without-only`, `-Wcould-be-parameter` and `-Wliteral-kind` remain individually selectable. As in gfortran,
 `-Wextra` does not imply `-Wall`; use
 `-Wall -Wextra` for both. An option naming a category overrides the group in
@@ -641,6 +641,17 @@ opens the same constant unit, the warning names it. The note suggests
 `open(newunit=u, ...)`, which connects a free unit, unless `-std=` selects a
 revision before Fortran 2008. Disable with `-Wno-fixed-unit`, promote with
 `-Werror=fixed-unit`, or use `!#allow(fixed-unit)` / `!#deny(fixed-unit)`.
+
+[`-Wsection-bounds`](../warnings/section-bounds.f90) is opt-in and enabled by `-Wextra`. It warns about
+an ASSOCIATE selector or a pointer target that is a section spanning a whole
+array, such as `a(:)` or `a(0:4)` for `real :: a(0:4)`, when a lower bound of
+the array is not 1. A section's lower bounds are 1, so `associate (x => a(:))`
+and `p => a(:)` number the elements from 1, while `associate (x => a)` and
+`p => a` keep the bounds 0:4. Sections of part of an array, pointer
+assignments with a bounds specification such as `p(0:) => a(:)`, and arrays
+whose lower bounds are not constants are not reported. Disable with
+`-Wno-section-bounds`, promote with `-Werror=section-bounds`, or use
+`!#allow(section-bounds)` / `!#deny(section-bounds)`.
 
 [`-Wrecursive-io`](../warnings/recursive-io.f90) is **on by default**. It warns about an input/output
 statement in a procedure that a function referenced by another input/output

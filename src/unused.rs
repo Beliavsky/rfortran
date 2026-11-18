@@ -47,6 +47,7 @@ const CATEGORIES: &[&str] = &[
     "unused-label",
     "implicit-open",
     "fixed-unit",
+    "section-bounds",
     "character-truncation",
     "memory-leak",
     "allocation-state",
@@ -147,6 +148,7 @@ const EXTRA: &[&str] = &[
     "keyword-name",
     "fixed-unit",
     "preconnected-unit",
+    "section-bounds",
 ];
 /// The categories that -Wstyle enables: the style rules of Clerman and
 /// Spector's "Modern Fortran: Style and Usage" that rfort checks.

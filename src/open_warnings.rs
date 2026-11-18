@@ -204,7 +204,7 @@ fn fixed_units(src: &str, tokens: &[Token]) -> Vec<(usize, i64, String, Vec<Stri
 }
 
 /// Report warnings at token positions of the own source.
-fn emit(src: &str, own_len: usize, filename: &str, origins: &[crate::source_diagnostics::SourceOrigin],
+pub(crate) fn emit(src: &str, own_len: usize, filename: &str, origins: &[crate::source_diagnostics::SourceOrigin],
     tokens: &[Token], error: bool, warnings: Vec<(usize, String, Vec<String>)>) -> Result<bool> {
     use codespan_reporting::{diagnostic::{Diagnostic, Label}, files::SimpleFile,
         term::{emit_to_io_write, termcolor::{ColorChoice, StandardStream}, Config}};
