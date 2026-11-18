@@ -4283,9 +4283,13 @@ such as `values(2)=4.0` assigns the selected element, and a section such as
 element order (omitted bounds are the declared bounds, as in gfortran). A
 section of an array of derived type, such as `tr(:)='aa',T`, takes the values
 of each element in turn. Designators support ranks through 15, with rank and
-bounds checks. `&END` also ends a group. CHARACTER
-scalar variables and arrays with constant length and bounds can also serve as
-internal files. As in gfortran, internal WRITE to a scalar writes the whole
+bounds checks. `&END` also ends a group, and as in gfortran a group may also
+be written `$name` ... `$END`. Also as in gfortran (an extension), values after
+the first of an array-element designator, as in `a(1,1) = 1 2 3 4`, define the
+following elements in array element order. A NaN may carry a payload, as
+`NaN(0x33)`. CHARACTER scalar variables, elements of CHARACTER arrays, and
+arrays with constant length and bounds can also serve as internal files; each
+element of an array is a record, so a `!` comment ends with it. As in gfortran, internal WRITE to a scalar writes the whole
 group as one record, and to an array writes each item, with its values, in the
 next element while it fits; writing beyond the internal file is an error. Unknown names, bad
 conversions, invalid designators, array overruns and disconnected units report

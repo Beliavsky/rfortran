@@ -212,6 +212,32 @@ end program p
 """, "&FOO\n A=a'a\n A='a''a',\n B='x\"y','z  ',\n K=1,2,\n /\n"
      "a'a x\"y z   1 2\n&FOO\n A=\"a'a\",\n B=\"x\"\"y\",\"z  \",\n K=1,2,\n /\n", reference=False)
 
+    def test_input_extensions(self):
+        # As in gfortran: `$group` ... `$end`, values after an element that
+        # continue in array element order, comments within the records of a
+        # CHARACTER array internal file, and a NaN with a payload; also an
+        # element of a CHARACTER array as the internal file. gfortran gives
+        # this output without -std; the reference run's -std rejects the
+        # extensions.
+        self.check("""program p
+implicit none
+integer :: a(3,3), n, ios
+real :: r
+character(len=40) :: lines(4)
+namelist /g/ a, n, r
+a = -1; n = 0; r = 0
+lines(1) = '$g a(1,1) = 1 2 3 4'
+lines(2) = ' ! a comment, then a blank record'
+lines(3) = ' '
+lines(4) = ' n = 5 $end'
+read(lines, nml=g, iostat=ios)
+print '(i2,9i3,i3)', ios, a, n
+lines(1) = '&g r = NaN(0x33) /'
+read(lines(1), nml=g, iostat=ios)
+print *, ios, r /= r
+end program p
+""", " 0  1  2  3  4 -1 -1 -1 -1 -1  5\n 0 T\n", reference=False)
+
     def test_standard_gates(self):
         with tempfile.TemporaryDirectory(prefix="nml-standard-") as tmp:
             source=Path(tmp)/"example.f90"

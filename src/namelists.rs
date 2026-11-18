@@ -720,8 +720,20 @@ fn transfer(
         ]);
         let mut internal = matches!(unit,E::Ident(n) if matches!(symbols.get(n),Some((T::Character(_)|T::CharacterLength(_),d,_)) if d.is_empty()));
         let mut unit = unit.clone();
-        // A CHARACTER array internal file: its records are joined, separated
-        // by blanks, into one buffer.
+        // An element of a CHARACTER array is a one-record internal file: its
+        // copy is read.
+        if let E::Index(n, subscripts) | E::Call(n, subscripts) = &unit {
+            if let Some((T::Character(Some(width)), dims, _)) = symbols.get(n) {
+                if !dims.is_empty() && subscripts.len() == dims.len() && !subscripts.iter().any(|e| matches!(e, E::Section { .. }) || matches!(e, E::Call(c, _) if c == "@vector_subscript")) {
+                    let copy = temp("element");
+                    out.extend([decl(T::Character(Some(*width)), &copy), set(&copy, unit.clone())]);
+                    unit = v(&copy);
+                    internal = true;
+                }
+            }
+        }
+        // A CHARACTER array internal file: its records are joined, each
+        // ending with a newline, into one buffer.
         if let E::Ident(n) = &unit {
             if let Some((kind, dims, _)) = symbols.get(n).filter(|(_, d, _)| !d.is_empty()) {
                 if let T::Character(_) | T::CharacterLength(_) = kind {
@@ -756,6 +768,13 @@ fn transfer(
                                     name: joined.clone(),
                                     indices: vec![range("", v(&at), bin(B::Add, v(&at), i(*width as i64 - 1)))],
                                     value: element(n, dims, v(&k)),
+                                },
+                                // Each element is a record: a comment ends with it.
+                                S::AssignIndex {
+                                    name: joined.clone(),
+                                    indices: vec![range("", bin(B::Add, v(&at), i(*width as i64)), bin(B::Add, v(&at), i(*width as i64)))],
+                                    value: text("
+"),
                                 },
                             ],
                         },

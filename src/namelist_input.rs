@@ -172,35 +172,56 @@ impl Session {
                 self.quoted(c, read)?;
                 continue;
             }
-            if c != b'&' {
+            // A group starts with `&name`, or `$name` as in other compilers.
+            if c != b'&' && c != b'$' {
                 continue;
             }
-            self.length = 0;
-            while let Some(c) = self.peek(read)? {
-                if c.is_ascii_alphanumeric() || c == b'_' {
-                    self.get(read)?;
-                    self.push(c.to_ascii_lowercase())?;
-                } else {
-                    break;
+            'group: loop {
+                self.marker_name(read)?;
+                if self.token[..self.length] == self.group[..self.group_len] {
+                    self.found = true;
+                    return Ok(());
                 }
-            }
-            if self.token[..self.length] == self.group[..self.group_len] {
-                self.found = true;
-                return Ok(());
-            }
-            // Skip a different group, honoring strings and comments.
-            loop {
-                self.spaces(read)?;
-                let c = self.get(read)?.ok_or(-1)?;
-                if c == b'/' {
-                    break;
-                }
-                if c == b'\'' || c == b'"' {
-                    self.length = 0;
-                    self.quoted(c, read)?;
+                // Skip a different group, honoring strings and comments, to
+                // its `/`, `&END` or `$END`; another group may start there.
+                loop {
+                    self.spaces(read)?;
+                    let c = self.get(read)?.ok_or(-1)?;
+                    if c == b'/' {
+                        break 'group;
+                    }
+                    if c == b'&' || c == b'$' {
+                        self.marker_name(read)?;
+                        if &self.token[..self.length] == b"end" {
+                            break 'group;
+                        }
+                        // The name is that of the next group.
+                        if self.token[..self.length] == self.group[..self.group_len] {
+                            self.found = true;
+                            return Ok(());
+                        }
+                        continue;
+                    }
+                    if c == b'\'' || c == b'"' {
+                        self.length = 0;
+                        self.quoted(c, read)?;
+                    }
                 }
             }
         }
+    }
+    /// The name after `&` or `$`, in lower case, as the token.
+    fn marker_name(&mut self, read: &mut impl FnMut() -> Result<Option<u8>, ()>) -> Result<(), i64> {
+        self.length = 0;
+        while let Some(c) = self.peek(read)? {
+            if c.is_ascii_alphanumeric() || c == b'_' {
+                self.get(read)?;
+                self.push(c.to_ascii_lowercase())?;
+            } else {
+                break;
+            }
+        }
+        Ok(())
     }
     fn event(&mut self, read: &mut impl FnMut() -> Result<Option<u8>, ()>) -> Result<i64, i64> {
         if self.ended {
@@ -227,15 +248,13 @@ impl Session {
                 self.finish_record(read)?;
                 return Ok(-2);
             }
-            // `&END` also ends a group, as in other compilers.
-            if c == b'&' {
-                let mut word = [0u8; 3];
-                for w in &mut word {
-                    *w = self.get(read)?.ok_or(-1)?.to_ascii_lowercase();
-                }
-                if &word != b"end" {
+            // `&END` or `$END` also ends a group, as in other compilers.
+            if c == b'&' || c == b'$' {
+                self.marker_name(read)?;
+                if &self.token[..self.length] != b"end" {
                     return Err(3);
                 }
+                self.length = 0;
                 self.ended = true;
                 self.finish_record(read)?;
                 return Ok(-2);
@@ -267,6 +286,16 @@ impl Session {
                     }
                     self.get(read)?;
                     self.push(c)?;
+                }
+                // A NaN may carry a payload, as NaN(0x33); its value is a NaN.
+                if self.token[..self.length].eq_ignore_ascii_case(b"nan") && self.peek(read)? == Some(b'(') {
+                    loop {
+                        match self.get(read)? {
+                            Some(b')') => break,
+                            Some(c) if c.is_ascii_alphanumeric() || c == b'(' || c == b'_' => {}
+                            _ => return Err(1),
+                        }
+                    }
                 }
                 self.spaces(read)?;
                 let designator = self.peek(read)? == Some(b'=')
@@ -452,11 +481,12 @@ impl Session {
             return self.section_layout(index, code, axis, rank, lower, upper);
         }
         if axis == 0 {
-            // A scalar array-element designator accepts one value. Expanded
-            // element reads are a nonstandard extension in other compilers.
-            // A whole element of an array of derived type accepts the values
-            // of its components (`lower` is the number of values per element).
-            if !self.new_assignment && self.rank!=0 && !(self.scale > 1 && self.index <= self.element_end) {return 4;}
+            // Values after the first of an array-element designator define
+            // the following elements in array element order, as in gfortran
+            // and other compilers (an extension). A whole element of an array
+            // of derived type accepts the values of its components (`lower`
+            // is the number of values per element).
+            if !self.new_assignment && self.rank!=0 && self.scale > 1 && self.index > self.element_end {return 4;}
             if self.new_assignment {self.scale = lower.max(1);}
             self.apply = self.new_assignment && self.rank != 0;
             self.new_assignment = false;
