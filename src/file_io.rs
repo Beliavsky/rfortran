@@ -208,7 +208,7 @@ fn connection(controls:&mut HashMap<String,Expr>,unit:&Expr)->Result<Option<Stmt
     use crate::unformatted_records as r;
     let mut mode=0u8;
     for (key,choices) in [("sign",&[("plus",r::SIGN_PLUS),("suppress",r::SIGN_SUPPRESS),("processor_defined",0)][..]),
-        ("delim",&[("apostrophe",r::DELIM_APOSTROPHE),("quote",r::DELIM_QUOTE),("none",0)][..]),
+        ("delim",&[("apostrophe",r::DELIM_APOSTROPHE),("quote",r::DELIM_QUOTE),("none",r::DELIM_NONE)][..]),
         ("pad",&[("no",r::PAD_NO),("yes",0)][..])] {
         let Some(v)=controls.remove(key) else {continue};
         let Ok(text)=crate::parameters::character_constant(&v) else {bail!("OPEN {} currently requires a constant value",key.to_ascii_uppercase())};

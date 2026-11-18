@@ -966,10 +966,21 @@ fn transfer(
         };
         let unit_temp = temp("unit");
         let (piece, cursor, line, used) = (temp("piece"), temp("cursor"), temp("line"), temp("used"));
+        // CHARACTER values are delimited as the unit's DELIM says, with
+        // quotes by default (see unformatted_records::NAMELIST_DELIM).
+        let (delimiter, quote, separator) = (temp("delimiter"), temp("quote"), temp("separator"));
+        out.extend([decl(T::Integer(Some(8)), &delimiter), decl(T::Character(Some(1)), &quote), decl(T::Character(Some(1)), &separator)]);
         match &internal {
             None => out.extend([
                 decl(T::Integer(Some(8)), &unit_temp),
                 set(&unit_temp, unit.clone()),
+                // Values follow their name on its line, as in gfortran.
+                decl(T::Character(Some(8192)), &piece),
+                decl(T::Character(Some(8192)), &line),
+                decl(T::Integer(Some(8)), &used),
+                set(&line, text("")),
+                set(&used, i(0)),
+                call("@file_inquire_connection", vec![v(&delimiter), v(&unit_temp), i(crate::unformatted_records::NAMELIST_DELIM)]),
             ]),
             Some((name, array)) => {
                 out.extend([decl(T::Character(Some(8192)), &piece), decl(T::Integer(Some(8)), &cursor)]);
@@ -984,8 +995,15 @@ fn transfer(
                 } else {
                     out.extend([set(name, text("")), set(&cursor, i(0))]);
                 }
+                out.push(set(&delimiter, i(2)));
             }
         }
+        out.extend([
+            set(&quote, text("\"")),
+            branch(bin(B::Eq, v(&delimiter), i(1)), vec![set(&quote, text("'"))]),
+            set(&separator, text(",")),
+            branch(bin(B::Eq, v(&delimiter), i(0)), vec![set(&separator, text(" "))]),
+        ]);
         let unit = v(&unit_temp);
         let record = temp("record");
         out.push(decl(T::Character(Some(8192)), &record));
@@ -1008,7 +1026,26 @@ fn transfer(
         // values of an item in the record of its label while they fit.
         let emit_record = |e: E, new: bool| {
             let body = match &internal {
-                None => vec![call("@nml_record", vec![v(&code), unit.clone(), e])],
+                None => {
+                    // A record holds a name and its values while they fit in
+                    // WIDTH columns.
+                    const WIDTH: i64 = 80;
+                    let n = E::Call("len_trim".into(), vec![v(&piece)]);
+                    let end = bin(B::Add, v(&used), n.clone());
+                    let start = if new { bin(B::Gt, v(&used), i(0)) } else { bin(B::And, bin(B::Gt, end.clone(), i(WIDTH)), bin(B::Gt, v(&used), i(0))) };
+                    vec![
+                        set(&piece, e),
+                        branch(start, vec![
+                            call("@nml_record", vec![v(&code), unit.clone(), range(&line, i(1), v(&used))]),
+                            set(&line, text("")),
+                            set(&used, i(0)),
+                        ]),
+                        branch(bin(B::Gt, n.clone(), i(0)), vec![
+                            S::AssignIndex { name: line.clone(), indices: vec![range("", bin(B::Add, v(&used), i(1)), end.clone())], value: range(&piece, i(1), n) },
+                            set(&used, end),
+                        ]),
+                    ]
+                }
                 Some((name, true)) => {
                     let n = E::Call("len_trim".into(), vec![v(&piece)]);
                     let end = bin(B::Add, v(&used), n.clone());
@@ -1051,7 +1088,7 @@ fn transfer(
             branch(bin(B::Eq, v(&code), i(0)), body)
         };
         let emit = |e: E| emit_record(e, true);
-        out.push(emit(text(&format!("&{group}"))));
+        out.push(emit(text(&format!("&{}", group.to_ascii_uppercase()))));
         // Output lists each intrinsic leaf; a derived object's components
         // appear as `x%a=` designators.
         // The components of an array of derived type are listed as `x%a=`
@@ -1076,7 +1113,7 @@ fn transfer(
             // subscripts, as `tr(2)%w=`: `tr%w` is not a valid designator
             // when the component is an array.
             if let (Some((elements, false)), Some((base, index, path))) = (&entry.records, &leaf.record) {
-                let format = format!("(' {}(',{},')%{path}=')", label(base, members), vec!["i0"; elements.len()].join(",',',"));
+                let format = format!("(' {}(',{},')%{}=')", label(base, members).to_ascii_uppercase(), vec!["i0"; elements.len()].join(",',',"), path.to_ascii_uppercase());
                 let mut label = vec![v(&record), text(&format)];
                 label.extend(index.iter().cloned());
                 body.push(branch(bin(B::Eq, v(&position), i(1)), vec![
@@ -1099,17 +1136,23 @@ fn transfer(
                     let sub=|n:&str,start:E,end:E|E::Section{name:n.into(),lower:Some(Box::new(start)),upper:Some(Box::new(end)),stride:None};
                     let put=|value:E|S::AssignIndex{name:escaped.clone(),indices:vec![E::Section{name:String::new(),lower:Some(Box::new(v(&pos))),upper:Some(Box::new(v(&pos))),stride:None}],value};
                     let advance=||set(&pos,bin(B::Add,v(&pos),i(1)));
-                    body.extend([set(&copy,item),set(&escaped,text("'")),set(&pos,i(2)),S::Do{var:ch.clone(),start:i(1),end:i(*width as i64),body:vec![put(sub(&copy,v(&ch),v(&ch))),advance(),branch(bin(B::Eq,sub(&copy,v(&ch),v(&ch)),text("'")),vec![put(text("'")),advance()])]},put(text("'"))]);
-                    format="(a,a)";values.push(sub(&escaped,i(1),v(&pos)));
+                    // DELIM='NONE' writes the characters alone.
+                    let delimited=bin(B::Ne,v(&delimiter),i(0));
+                    body.extend([set(&copy,item),set(&escaped,text("")),set(&pos,i(1)),
+                        branch(delimited.clone(),vec![put(v(&quote)),advance()]),
+                        S::Do{var:ch.clone(),start:i(1),end:i(*width as i64),body:vec![put(sub(&copy,v(&ch),v(&ch))),advance(),
+                            branch(bin(B::And,delimited.clone(),bin(B::Eq,sub(&copy,v(&ch),v(&ch)),v(&quote))),vec![put(v(&quote)),advance()])]},
+                        branch(delimited,vec![put(v(&quote)),advance()])]);
+                    format="(a,a)";values.push(sub(&escaped,i(1),bin(B::Sub,v(&pos),i(1))));
                 },_=>bail!("NAMELIST output currently requires an intrinsic type with a fixed CHARACTER length"),
             }
-            values.push(text(","));
+            values.push(v(&separator));
             let mut write = vec![v(&record), text(format)];
             write.extend(values);
             body.push(call("@write", write));
             body.push(emit_record(E::Call("trim".into(), vec![v(&record)]), false));
             if !matches!(entry.records, Some((_, false))) {
-                out.push(emit(text(&format!(" {n}="))));
+                out.push(emit(text(&format!(" {}=", n.to_ascii_uppercase()))));
             }
             out.push(S::Do {
                 var: ix,
@@ -1118,9 +1161,12 @@ fn transfer(
                 body: vec![branch(bin(B::Eq, v(&code), i(0)), body)],
             });
         }
-        out.push(emit(text("/")));
-        if let Some((name, true)) = &internal {
-            out.push(branch(bin(B::And, bin(B::Eq, v(&code), i(0)), bin(B::Gt, v(&used), i(0))), flush(name)));
+        out.push(emit(text(" /")));
+        match &internal {
+            Some((name, true)) => out.push(branch(bin(B::And, bin(B::Eq, v(&code), i(0)), bin(B::Gt, v(&used), i(0))), flush(name))),
+            None => out.push(branch(bin(B::And, bin(B::Eq, v(&code), i(0)), bin(B::Gt, v(&used), i(0))),
+                vec![call("@nml_record", vec![v(&code), unit.clone(), range(&line, i(1), v(&used))])])),
+            _ => {}
         }
     }
     if let E::Ident(n) = message {

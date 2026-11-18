@@ -177,7 +177,40 @@ end
 """, "T T\n0 7\n0 8\n",reference=False)
 
     def test_standard_output(self):
-        self.check("integer::n\nnamelist /g/ n\nn=7\nwrite(*,nml=g)\nend\n", "&g\n n=\n7,\n/\n",reference=False)
+        self.check("integer::n\nnamelist /g/ n\nn=7\nwrite(*,nml=g)\nend\n", "&G\n N=7,\n /\n",reference=False)
+
+    def test_delim_and_layout(self):
+        # As gfortran: upper-case names with their values on one record,
+        # quotes by default, and DELIM= of the OPEN otherwise.
+        self.check("""program p
+implicit none
+character(len=3) :: a, b(2)
+character(len=20) :: line
+integer :: u, k(2)
+namelist /foo/ a, b, k
+a = "a'a"; b = ['x"y', 'z  ']; k = [1, 2]
+open(newunit=u, status='scratch', delim='none')
+write(u, foo)
+rewind(u)
+read(u, '(a)') line; print '(a)', trim(line)
+read(u, '(a)') line; print '(a)', trim(line)
+close(u)
+open(newunit=u, status='scratch', delim='apostrophe')
+write(u, foo)
+rewind(u)
+read(u, '(a)') line; read(u, '(a)') line; print '(a)', trim(line)
+read(u, '(a)') line; print '(a)', trim(line)
+read(u, '(a)') line; print '(a)', trim(line)
+read(u, '(a)') line; print '(a)', trim(line)
+rewind(u)
+a = ''; b = ''; k = 0
+read(u, foo)
+print '(a,1x,a,1x,a,2i2)', a, b, k
+close(u)
+write(*, foo)
+end program p
+""", "&FOO\n A=a'a\n A='a''a',\n B='x\"y','z  ',\n K=1,2,\n /\n"
+     "a'a x\"y z   1 2\n&FOO\n A=\"a'a\",\n B=\"x\"\"y\",\"z  \",\n K=1,2,\n /\n", reference=False)
 
     def test_standard_gates(self):
         with tempfile.TemporaryDirectory(prefix="nml-standard-") as tmp:

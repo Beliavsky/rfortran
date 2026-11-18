@@ -47,6 +47,9 @@ pub const DELIM_QUOTE: u8 = 8;
 /// PAD='NO': a formatted READ that needs more characters than its record
 /// holds ends with IOSTAT END_OF_RECORD instead of reading blanks.
 pub const PAD_NO: u8 = 16;
+/// DELIM='NONE' given explicitly: NAMELIST output, which otherwise uses
+/// quotes, writes CHARACTER values undelimited.
+pub const DELIM_NONE: u8 = 32;
 
 impl Unit {
     pub fn new(access: u8, unformatted: bool, recl: i64, mode: u8) -> Self {
@@ -67,6 +70,9 @@ pub const SIGN: i64 = 5;
 pub const DELIM: i64 = 6;
 /// 0 YES, 1 NO.
 pub const PAD: i64 = 7;
+/// The delimiter of NAMELIST CHARACTER output: 0 none, 1 apostrophe, 2
+/// quote (the default).
+pub const NAMELIST_DELIM: i64 = 8;
 /// The RECL that gfortran reports for a sequential connection without one.
 pub const DEFAULT_RECL: i64 = 1073741824;
 
@@ -75,6 +81,7 @@ pub const DEFAULT_RECL: i64 = 1073741824;
 pub fn preconnected(which: i64) -> i64 {
     match which {
         ACCESS | FORM | SIGN | DELIM | PAD => 0,
+        NAMELIST_DELIM => 2,
         RECL => DEFAULT_RECL,
         _ => -1,
     }
@@ -98,6 +105,7 @@ pub fn inquire(unit: &Unit, connected: bool, position: Option<i64>, which: i64) 
         SIGN => if unit.mode & SIGN_PLUS != 0 { 1 } else if unit.mode & SIGN_SUPPRESS != 0 { 2 } else { 0 },
         DELIM => if unit.mode & DELIM_APOSTROPHE != 0 { 1 } else if unit.mode & DELIM_QUOTE != 0 { 2 } else { 0 },
         PAD => i64::from(unit.mode & PAD_NO != 0),
+        NAMELIST_DELIM => if unit.mode & DELIM_NONE != 0 { 0 } else if unit.mode & DELIM_APOSTROPHE != 0 { 1 } else { 2 },
         _ => -1,
     }
 }

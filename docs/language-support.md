@@ -4293,10 +4293,14 @@ positive IOSTAT values; end of file reports a negative value. IOMSG is defined
 on an error and left unchanged on success. An error without IOSTAT stops
 execution. These behaviors are shared by native execution and the interpreter.
 
-Within the input limits below, output uses quoted CHARACTER values and enough
-REAL digits for round trips;
-its whitespace and record layout need not match another compiler's output.
-Tests read rfort output with gfortran and gfortran output with rfort.
+Output is laid out as gfortran's: `&GROUP`, then each name in upper case with
+its values on the same record (continued on the next once a record passes 80
+columns), then ` /`. CHARACTER values are delimited as the unit's OPEN DELIM=
+says: quotes by default and for DELIM='QUOTE', apostrophes for
+DELIM='APOSTROPHE', and for DELIM='NONE' the characters alone, separated by
+blanks. REAL values have enough digits for round trips; number spacing and
+repeat counts (gfortran writes `40*1`) need not match. Tests read rfort output
+with gfortran and gfortran output with rfort.
 
 This is partial NAMELIST support. Members currently require explicit
 declarations. CHARACTER substrings and sections within an element of an array
@@ -4896,7 +4900,7 @@ or 'PROCESSOR_DEFINED'), `DELIM=` ('APOSTROPHE', 'QUOTE' or 'NONE') and
 `PAD=` ('YES' or 'NO'). SIGN='PLUS' starts each formatted or list-directed
 WRITE to the unit as the SP edit descriptor does. DELIM= encloses CHARACTER
 values of list-directed output in the delimiter, doubling it inside them;
-NAMELIST output does not yet follow it. With PAD='NO', a formatted READ whose
+and NAMELIST output (see NAMELIST) follows it too. With PAD='NO', a formatted READ whose
 format needs more characters than its record holds ends with IOSTAT=-2 (the
 end of the record) instead of reading blanks, and a non-advancing READ without
 PAD= takes the unit's PAD; items read before that point keep their values. The
