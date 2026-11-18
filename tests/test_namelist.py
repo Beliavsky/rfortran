@@ -150,7 +150,9 @@ end program
                                   ("read(*,nml=g) n", "cannot have an input/output item list"),
                                   ("read(*,nml=absent)", "unknown NAMELIST group")):
             self.reject("integer::n\nnamelist /g/ n\n"+statement+"\nend\n",message)
-        self.reject("integer,allocatable::n(:)\nnamelist /g/ n\nread(*,nml=g)\nend\n", "nonallocatable, nonpointer")
+        self.reject("integer,parameter::n=1\nnamelist /g/ n\nread(*,nml=g)\nend\n", "NAMELIST member `n` must be a variable")
+        self.reject("type t\ninteger,allocatable::c(:)\nend type\ntype(t)::x\nnamelist /g/ x\nread(*,nml=g)\nend\n",
+                    "NAMELIST component `x%c` currently requires a fixed-size array")
 
     def test_rank_fifteen(self):
         dims=','.join(['2']+['1']*14)
@@ -279,7 +281,9 @@ print '(i3)', total
 end subroutine show
 end program p
 """, "   1   2   3   7  98  99 101\n 1.0 2.0 3.0 4.0\n"
-     "  4  5  6  7  8  9 10 10 10 11\n 11 11\n  5  2  3  1  2  3\n 10\n")
+     "  4  5  6  7  8  9 10 10 10 11\n 11 11\n  5  2  3  1  2  3\n 10\n",
+     # 4 to 6 s in the interpreter (see docs/interpreter-todo.md).
+     interpreter=False)
 
     def test_branch_controls(self):
         # ERR= and END=, and a group named positionally with other controls.

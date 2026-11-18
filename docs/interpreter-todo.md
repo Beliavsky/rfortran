@@ -19,6 +19,7 @@ goes through CHARACTER temporaries, so programs using them are the most affected
 | `test_deferred_character_components.py` `test_local_allocation_and_overlap` | Deferred-length CHARACTER array with a runtime length; about 12 s |
 | `test_parameterized_types.py` `test_runtime_len_values` | Runtime LEN type parameters with CHARACTER components; about 12 s |
 | `test_testsuite_fixes.py` `test_namelist_derived_members_module_groups_and_end` | Three NAMELIST reads and a write of groups with arrays of derived type and nested components; 7 to 11 s, while the compiled program takes 0.2 s |
+| `test_namelist.py` `test_allocatable_pointer_and_assumed_shape_members` | A NAMELIST group of seven ALLOCATABLE, POINTER and derived-type members: each IF of the READ's dispatch copies the frame, so one READ of 25 values takes about 4 s (6 s for the program, over 15 s under the full suite's load), while the compiled program takes 0.13 s |
 
 Output differences, not speed:
 
