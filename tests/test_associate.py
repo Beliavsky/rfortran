@@ -129,6 +129,106 @@ end program
  0.0 18.0
 """)
 
+    def test_vector_subscript_selectors(self):
+        # x(j) with x => a(v) is a(v(j)); a vector may be a section, an
+        # elemental expression or an array constructor of literals.
+        self.check("""program avec
+implicit none
+real :: a(0:9), b(3,4), t
+integer :: v(3), w(0:1), i, k
+a = [(real(i), i = 0, 9)]
+b = reshape([(real(i), i = 1, 12)], [3, 4])
+v = [7, 2, 5]
+w = [3, 1]
+associate (x => a(v))
+  print *, size(x), x(1), x(3), x(2:3)
+  k = 2
+  t = x(k) + x(k+1)
+  print *, t, sum(x), x
+end associate
+associate (y => a(w))
+  print *, y(1), y(2)
+end associate
+associate (z => a(v(2:3)))
+  print *, z(1), z(2)
+end associate
+associate (r => b(w(0:1), 2:4), c => b(v(2), 2:4))
+  print *, r(1,1), r(2,3), r(:,2), c(3)
+end associate
+associate (s => b([1,3], 2))
+  print *, s(2)
+end associate
+k = 1
+associate (q => a(v(k:k+1)))
+  print *, q(2)
+end associate
+end program
+""", """ 3 7.0 5.0 2.0 5.0
+ 7.0 14.0 7.0 2.0 5.0
+ 3.0 1.0
+ 2.0 5.0
+ 6.0 10.0 9.0 7.0 11.0
+ 6.0
+ 2.0
+""")
+
+    def test_vector_subscripts_of_module_and_host_arrays(self):
+        self.check("""module m
+implicit none
+real :: g(0:5) = [10., 11., 12., 13., 14., 15.]
+integer :: gv(2) = [5, 1]
+end module m
+program aedge
+use m
+implicit none
+real :: b(3,4)
+integer :: i, k, j
+b = 0
+i = 2
+associate (r => b(i, :))
+  r(2) = 5
+  r(3:4) = [6., 7.]
+end associate
+print *, b(2,:)
+associate (x => g(gv))
+  print *, x(1), x(2)
+end associate
+call inner
+k = 1
+associate (s => b(k:k+1, 2))
+  k = 3
+  print *, s(2), size(s)
+end associate
+contains
+subroutine inner
+associate (y => g(gv(2:2)))
+  print *, y(1)
+end associate
+do j = 1, 2
+  associate (z => b(j, (gv + 1) / 2))
+    print *, j, z(1), z(2)
+  end associate
+end do
+end subroutine
+end program
+""", """ 0.0 5.0 6.0 7.0
+ 15.0 11.0
+ 11.0
+ 1 0.0 0.0
+ 2 6.0 0.0
+ 5.0 2
+""")
+
+    def test_vector_subscript_selector_is_not_definable(self):
+        self.reject("""real :: a(5)
+integer :: v(2) = [1, 3]
+a = 1
+associate (x => a(v))
+x(1) = 2
+end associate
+end
+""", "selector has a vector subscript cannot be defined")
+
     def test_expression_selector_modified_in_block_is_rejected(self):
         self.reject("""program main
 implicit none

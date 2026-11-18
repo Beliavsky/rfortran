@@ -664,6 +664,7 @@ pub fn associate(pairs: Vec<(String, Expr)>, mut body: Vec<Stmt>) -> Result<Stmt
     // evaluated then, into a temporary.
     static SERIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let mut captures = vec![];
+    let mut vectors = vec![];
     let mut pairs = pairs;
     for (_, selector) in pairs.iter_mut() {
         let mut capture = |e: &mut Expr| {
@@ -680,6 +681,18 @@ pub fn associate(pairs: Vec<(String, Expr)>, mut body: Vec<Stmt>) -> Result<Stmt
                     match a {
                         Expr::Section { lower, upper, stride, .. } => {
                             for e in [lower, upper, stride].into_iter().flatten() { capture(e); }
+                        }
+                        Expr::Call(tag, s) if tag == "@section_subscript" && matches!(s.as_slice(), [Expr::Section { .. }]) => {
+                            let Expr::Section { lower, upper, stride, .. } = &mut s[0] else { unreachable!() };
+                            for e in [lower, upper, stride].into_iter().flatten() { capture(e); }
+                        }
+                        // A vector subscript written as an array constructor of
+                        // literals is copied, so that the associate name can
+                        // be subscripted through it.
+                        Expr::Call(tag, items) if tag == "@array_constructor" && !items.is_empty()
+                            && items.iter().all(|e| parsed_vector(e).is_some()) => {
+                            let temp = format!("@associate_vector_{}", SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+                            vectors.push((temp.clone(), items.len(), std::mem::replace(a, Expr::Ident(temp))));
                         }
                         a => capture(a),
                     }
@@ -716,80 +729,18 @@ pub fn associate(pairs: Vec<(String, Expr)>, mut body: Vec<Stmt>) -> Result<Stmt
         }
         substitute(&mut body, name, selector)?;
     }
-    if !captures.is_empty() {
-        let mut start = vec![Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: captures.iter().map(|(t, _)| t.clone()).collect() }];
+    if !captures.is_empty() || !vectors.is_empty() {
+        let mut start = vec![];
+        if !captures.is_empty() {
+            start.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: captures.iter().map(|(t, _)| t.clone()).collect() });
+        }
+        for (name, size, _) in &vectors {
+            start.push(Stmt::ArrayDecl { kind: TypeSpec::Integer(None), name: name.clone(), dims: vec![Expr::IntLit(size.to_string())] });
+        }
         start.extend(captures.into_iter().map(|(name, value)| Stmt::Assign { name, value }));
+        start.extend(vectors.into_iter().map(|(name, _, value)| Stmt::Assign { name, value }));
         start.append(&mut body);
         body = start;
-    }
-    /// The subscripts of a section: (lower, upper, stride), from the bare
-    /// `Section` of a rank-one section or `@section_subscript`; None for a
-    /// scalar subscript.
-    fn section(e: &Expr) -> Option<(&Option<Box<Expr>>, &Option<Box<Expr>>, &Option<Box<Expr>>)> {
-        match e {
-            Expr::Section { lower, upper, stride, .. } => Some((lower, upper, stride)),
-            Expr::Call(tag, s) if tag == "@section_subscript" && s.len() == 1 => section(&s[0]),
-            _ => None,
-        }
-    }
-    /// The array and its subscripts that `subscripts` of an associate name
-    /// designate when its selector is an element or section of an array,
-    /// such as `a(l:u:s)`: the associate name's subscripts start at 1, so
-    /// subscript j of a dimension is `l + (j - 1) * s` of the array. None
-    /// when the selector is not a section, or has a vector subscript.
-    fn through(selector: &Expr, subscripts: &[Expr]) -> Option<(String, Vec<Expr>)> {
-        let (array, outer): (&str, Vec<&Expr>) = match selector {
-            Expr::Section { name, .. } => (name, vec![selector]),
-            Expr::Call(name, args) | Expr::Index(name, args) => (name, args.iter().collect()),
-            _ => return None,
-        };
-        if !outer.iter().any(|e| section(e).is_some()) { return None; }
-        let bin = |op: BinOp, a: Expr, b: Expr| Expr::Bin(op, Box::new(a), Box::new(b));
-        let one = || Expr::IntLit("1".into());
-        let mut inner = subscripts.iter();
-        let mut out = vec![];
-        for (dimension, e) in outer.iter().enumerate() {
-            let Some((lower, upper, stride)) = section(e) else {
-                // A vector subscript designates no section this can map.
-                if matches!(e, Expr::Call(tag, _) if tag.starts_with("@vector")) { return None; }
-                out.push((*e).clone());
-                continue;
-            };
-            let lower = lower.as_deref().cloned().unwrap_or_else(|| Expr::Call("lbound".into(),
-                vec![Expr::Ident(array.into()), Expr::IntLit((dimension + 1).to_string())]));
-            let stride = stride.as_deref().cloned();
-            // Position j of the associate name in the array.
-            let at = |j: Expr| {
-                let offset = bin(BinOp::Sub, j, one());
-                bin(BinOp::Add, lower.clone(), match &stride { Some(s) => bin(BinOp::Mul, offset, s.clone()), None => offset })
-            };
-            let j = inner.next()?;
-            out.push(match section(j) {
-                None => at(j.clone()),
-                Some((first, last, step)) => Expr::Section {
-                    name: if outer.len() == 1 { array.into() } else { String::new() },
-                    lower: Some(Box::new(first.as_deref().cloned().map_or(lower.clone(), &at))),
-                    upper: last.as_deref().cloned().map(&at).or_else(|| upper.as_deref().cloned()).map(Box::new),
-                    stride: match (&stride, step.as_deref()) {
-                        (None, None) => None,
-                        (Some(s), None) => Some(Box::new(s.clone())),
-                        (None, Some(t)) => Some(Box::new(t.clone())),
-                        (Some(s), Some(t)) => Some(Box::new(bin(BinOp::Mul, s.clone(), t.clone()))),
-                    },
-                },
-            });
-        }
-        if inner.next().is_some() { return None; }
-        // Sections of a rank-one selector are bare; others are wrapped.
-        if out.len() > 1 {
-            for e in out.iter_mut() {
-                if let Expr::Section { name, .. } = e {
-                    *name = array.into();
-                    *e = Expr::Call("@section_subscript".into(), vec![e.clone()]);
-                }
-            }
-        }
-        Some((array.into(), out))
     }
     fn substitute(body: &mut [Stmt], name: &str, selector: &Expr) -> Result<(), &'static str> {
         let prefix = format!("{name}%");
@@ -813,17 +764,28 @@ pub fn associate(pairs: Vec<(String, Expr)>, mut body: Vec<Stmt>) -> Result<Stmt
                 Stmt::AssignIndex { name: n, indices, .. } if n == name => match whole {
                     Some(a) => *n = a.into(),
                     None => {
-                        let Some((a, mapped)) = through(selector, indices) else {
-                            return Err("subscripts of an ASSOCIATE name require a whole-array selector or a section without vector subscripts");
-                        };
-                        *n = a;
-                        *indices = mapped;
+                        for index in indices.iter_mut() { inner_sections(index, name); }
+                        if let [Expr::Section { name: inner, .. }] = indices.as_mut_slice() { inner.clear(); }
+                        match associate_through(selector, indices, &parsed_vector) {
+                            Ok(Some(m)) => { *n = m.array; *indices = m.indices; }
+                            Ok(None) => return Err("subscripts of an ASSOCIATE name require a variable selector"),
+                            // Resolved when the declarations are known.
+                            Err(()) => {
+                                let mut marker = vec![selector.clone()];
+                                marker.append(indices);
+                                *indices = vec![Expr::Call(ASSOCIATE_SUBSCRIPT.into(), marker)];
+                                *n = ASSOCIATE_SUBSCRIPT.into();
+                            }
+                        }
                     }
                 },
                 Stmt::Do { var, .. } if var == name => return Err("an ASSOCIATE name cannot be a DO variable"),
                 _ => {}
             }
             let mut error = Ok(());
+            if whole.is_none() {
+                for e in expressions(s) { inner_sections(e, name); }
+            }
             for e in expressions(s) {
                 visit_expr(e, &mut |e| match e {
                     Expr::Ident(n) if n == name => *e = selector.clone(),
@@ -833,23 +795,23 @@ pub fn associate(pairs: Vec<(String, Expr)>, mut body: Vec<Stmt>) -> Result<Stmt
                         *e = Expr::Call(part.into(), vec![selector.clone()]);
                     }
                     // A subscript or section of the associate name of a section.
-                    Expr::Call(n, args) | Expr::Index(n, args) if n == name && whole.is_none() => match through(selector, args) {
-                        Some((a, mapped)) => *e = match (mapped.as_slice(), &*e) {
-                            ([Expr::Section { .. }], _) => mapped[0].clone(),
-                            (_, Expr::Index(..)) => Expr::Index(a, mapped),
-                            _ => Expr::Call(a, mapped),
-                        },
-                        None => error = Err("subscripts or components of an ASSOCIATE name require a variable selector"),
-                    },
-                    // A rank-one section of the associate name. A section
-                    // subscript of a reference such as `s(1,:)` is visited
-                    // first, alone; the reference maps it.
+                    // A subscript or section of the associate name of an
+                    // element or section selector.
+                    Expr::Call(n, args) | Expr::Index(n, args) if n == name && whole.is_none() => {
+                        let args = args.clone();
+                        match associate_through(selector, &args, &parsed_vector) {
+                            Ok(Some(m)) => *e = m.expression(),
+                            Ok(None) => error = Err("subscripts or components of an ASSOCIATE name require a variable selector"),
+                            Err(()) => *e = Expr::Call(ASSOCIATE_SUBSCRIPT.into(), [vec![selector.clone()], args].concat()),
+                        }
+                    }
+                    // A rank-one section of the associate name.
                     Expr::Section { name: n, .. } if n == name && whole.is_none() => {
-                        if let Some((a, mapped)) = through(selector, std::slice::from_ref(e)) {
-                            *e = match mapped.as_slice() {
-                                [Expr::Section { .. }] => mapped[0].clone(),
-                                _ => Expr::Call(a, mapped),
-                            };
+                        let args = vec![e.clone()];
+                        match associate_through(selector, &args, &parsed_vector) {
+                            Ok(Some(m)) => *e = m.expression(),
+                            Ok(None) => error = Err("subscripts or components of an ASSOCIATE name require a variable selector"),
+                            Err(()) => *e = Expr::Call(ASSOCIATE_SUBSCRIPT.into(), [vec![selector.clone()], args].concat()),
                         }
                     }
                     Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) | Expr::Section { name: n, .. }
@@ -872,6 +834,213 @@ pub fn associate(pairs: Vec<(String, Expr)>, mut body: Vec<Stmt>) -> Result<Stmt
         Ok(())
     }
     Ok(Stmt::Block { body })
+}
+
+/// A reference through an ASSOCIATE name, such as `x(2)` with `x => a(v)`,
+/// whose selector has a subscript that may be a vector: the selector, then
+/// the name's subscripts. Resolved by `resolve_associate_subscripts` once
+/// the declarations show which subscripts are arrays. As the variable of an
+/// assignment, it is the name of an AssignIndex whose one index is the
+/// reference.
+pub(crate) const ASSOCIATE_SUBSCRIPT: &str = "@associate_subscript";
+
+/// The bounds of a section subscript: the bare `Section` of a rank-one
+/// reference, or `@section_subscript`.
+fn section(e: &Expr) -> Option<(&Option<Box<Expr>>, &Option<Box<Expr>>, &Option<Box<Expr>>)> {
+    match e {
+        Expr::Section { lower, upper, stride, .. } => Some((lower, upper, stride)),
+        Expr::Call(tag, s) if tag == "@section_subscript" && s.len() == 1 => section(&s[0]),
+        _ => None,
+    }
+}
+
+/// Section subscripts of a reference to `name` with several subscripts,
+/// `s(1, :)`, are renamed so that they are not taken for rank-one sections
+/// of `name` themselves.
+fn inner_sections(e: &mut Expr, name: &str) {
+    crate::procedure_arguments::visit_expr(e, &mut |e| {
+        if let Expr::Call(n, args) | Expr::Index(n, args) = e {
+            if n == name {
+                for a in args.iter_mut() {
+                    if let Expr::Call(tag, s) = a {
+                        if tag == "@section_subscript" {
+                            if let [Expr::Section { name: inner, .. }] = s.as_mut_slice() { inner.clear(); }
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// At parse time, a subscript is known to be scalar only when it is a
+/// literal expression.
+fn parsed_vector(e: &Expr) -> Option<bool> {
+    fn literal(e: &Expr) -> bool {
+        match e {
+            Expr::IntLit(_) => true,
+            Expr::Un(_, a) => literal(a),
+            Expr::Bin(_, a, b) => literal(a) && literal(b),
+            _ => false,
+        }
+    }
+    literal(e).then_some(false)
+}
+
+/// The designator that subscripts of an associate name give.
+pub(crate) struct Through {
+    pub(crate) array: String,
+    pub(crate) indices: Vec<Expr>,
+    /// The result is a rank-one section of the array, written bare.
+    bare: bool,
+}
+
+impl Through {
+    pub(crate) fn expression(self) -> Expr {
+        if self.bare { self.indices.into_iter().next().unwrap() } else { Expr::Call(self.array, self.indices) }
+    }
+}
+
+/// The array and subscripts that `subscripts` of an associate name designate
+/// when its selector is an element or section of an array, such as
+/// `a(l:u:s)` or `a(v)`. The associate name's subscripts start at 1:
+/// subscript j of a section dimension is `l + (j - 1) * s` of the array, and
+/// of a vector subscript `v` it is `a(v(j))`. `vector` tells whether a
+/// subscript of the selector is an array; Err when it cannot tell, and
+/// Ok(None) when the subscripts cannot be mapped.
+pub(crate) fn associate_through(selector: &Expr, subscripts: &[Expr], vector: &dyn Fn(&Expr) -> Option<bool>) -> Result<Option<Through>, ()> {
+    let (array, outer, rank_one): (&str, Vec<&Expr>, bool) = match selector {
+        Expr::Section { name, .. } => (name, vec![selector], true),
+        Expr::Call(name, args) | Expr::Index(name, args) => (name, args.iter().collect(), false),
+        _ => return Ok(None),
+    };
+    // A bare section among the subscripts is a vector subscript, such as
+    // `v(1:2)` in `a(v(1:2), 2)`; sections of the array are wrapped.
+    type Bounds<'a> = (&'a Option<Box<Expr>>, &'a Option<Box<Expr>>, &'a Option<Box<Expr>>);
+    fn own(e: &Expr, rank_one: bool) -> Option<Bounds<'_>> {
+        if rank_one { return section(e); }
+        match e { Expr::Call(tag, _) if tag == "@section_subscript" => section(e), _ => None }
+    }
+    let mut kinds = vec![];
+    for e in &outer {
+        kinds.push(if own(e, rank_one).is_some() { 1 } else if vector(e).ok_or(())? { 2 } else { 0 });
+    }
+    if kinds.iter().all(|k| *k == 0) { return Ok(None); }
+    let bin = |op: BinOp, a: Expr, b: Expr| Expr::Bin(op, Box::new(a), Box::new(b));
+    let one = || Expr::IntLit("1".into());
+    let mut inner = subscripts.iter();
+    let mut out = vec![];
+    for (dimension, (e, kind)) in outer.iter().zip(&kinds).enumerate() {
+        match kind {
+            0 => { out.push(((*e).clone(), false)); continue; }
+            2 => {
+                // Element j of the vector, or a section of it.
+                let Some(j) = inner.next() else { return Ok(None) };
+                let Some(element) = vector_element(e, j, vector)? else { return Ok(None) };
+                out.push((element, false));
+                continue;
+            }
+            _ => {}
+        }
+        let (lower, upper, stride) = own(e, rank_one).unwrap();
+        let lower = lower.as_deref().cloned().unwrap_or_else(|| Expr::Call("lbound".into(),
+            vec![Expr::Ident(array.into()), Expr::IntLit((dimension + 1).to_string())]));
+        let stride = stride.as_deref().cloned();
+        // Position j of the associate name in the array.
+        let at = |j: Expr| {
+            let offset = bin(BinOp::Sub, j, one());
+            bin(BinOp::Add, lower.clone(), match &stride { Some(s) => bin(BinOp::Mul, offset, s.clone()), None => offset })
+        };
+        let Some(j) = inner.next() else { return Ok(None) };
+        out.push(match section(j) {
+            None => (at(j.clone()), false),
+            Some((first, last, step)) => (Expr::Section {
+                name: array.into(),
+                lower: Some(Box::new(first.as_deref().cloned().map_or(lower.clone(), &at))),
+                upper: last.as_deref().cloned().map(&at).or_else(|| upper.as_deref().cloned()).map(Box::new),
+                stride: match (&stride, step.as_deref()) {
+                    (None, None) => None,
+                    (Some(s), None) => Some(Box::new(s.clone())),
+                    (None, Some(t)) => Some(Box::new(t.clone())),
+                    (Some(s), Some(t)) => Some(Box::new(bin(BinOp::Mul, s.clone(), t.clone()))),
+                },
+            }, true),
+        });
+    }
+    if inner.next().is_some() { return Ok(None); }
+    // A section of a rank-one selector is bare; others are wrapped.
+    let bare = rank_one && out[0].1;
+    let indices = out.into_iter().map(|(e, own)| if own && !rank_one { Expr::Call("@section_subscript".into(), vec![e]) } else { e }).collect();
+    Ok(Some(Through { array: array.into(), indices, bare }))
+}
+
+/// Element `j` (or the section `j`) of a vector subscript: of an array, a
+/// section, or an elemental expression of them such as `v + 1`.
+fn vector_element(e: &Expr, j: &Expr, vector: &dyn Fn(&Expr) -> Option<bool>) -> Result<Option<Expr>, ()> {
+    let part = |x: &Expr| -> Result<Option<Expr>, ()> {
+        if vector(x).ok_or(())? { vector_element(x, j, vector) } else { Ok(Some(x.clone())) }
+    };
+    Ok(match e {
+        Expr::Bin(op, a, b) => match (part(a)?, part(b)?) {
+            (Some(a), Some(b)) => Some(Expr::Bin(op.clone(), Box::new(a), Box::new(b))),
+            _ => None,
+        },
+        Expr::Un(op, a) => part(a)?.map(|a| Expr::Un(op.clone(), Box::new(a))),
+        Expr::Ident(v) => associate_through(&Expr::Section { name: v.clone(), lower: None, upper: None, stride: None },
+            std::slice::from_ref(j), vector)?.map(Through::expression),
+        Expr::Section { .. } | Expr::Index(..) => associate_through(e, std::slice::from_ref(j), vector)?.map(Through::expression),
+        Expr::Call(tag, _) if !tag.starts_with('@') || tag == "@section_subscript" => associate_through(e, std::slice::from_ref(j), vector)?.map(Through::expression),
+        _ => None,
+    })
+}
+
+/// Resolves the ASSOCIATE_SUBSCRIPT references of a statement, not of the
+/// statements it contains. `rank` gives the rank of a visible name.
+pub(crate) fn resolve_associate_subscripts(s: &mut Stmt, rank: &dyn Fn(&str) -> usize) -> Result<(), &'static str> {
+    fn vector(e: &Expr, rank: &dyn Fn(&str) -> usize) -> bool {
+        match e {
+            Expr::Ident(n) => rank(n) > 0,
+            Expr::Section { .. } => true,
+            Expr::Call(tag, _) if tag == "@array_constructor" => true,
+            Expr::Call(n, args) | Expr::Index(n, args) if rank(n) > 0 =>
+                args.iter().any(|a| section(a).is_some() || vector(a, rank)),
+            Expr::Bin(_, a, b) => vector(a, rank) || vector(b, rank),
+            Expr::Un(_, a) => vector(a, rank),
+            _ => false,
+        }
+    }
+    let classify = |e: &Expr| Some(vector(e, rank));
+    if let Stmt::AssignIndex { name, indices, .. } = s {
+        if name == ASSOCIATE_SUBSCRIPT {
+            let Some(Expr::Call(_, marker)) = indices.first() else { unreachable!() };
+            let (selector, subscripts) = marker.split_first().unwrap();
+            if let Expr::Call(_, args) | Expr::Index(_, args) = selector {
+                if args.iter().any(|a| !matches!(a, Expr::Call(tag, _) if tag == "@section_subscript") && vector(a, rank)) {
+                    return Err("an ASSOCIATE name whose selector has a vector subscript cannot be defined");
+                }
+            }
+            let Ok(Some(m)) = associate_through(selector, subscripts, &classify) else {
+                return Err("subscripts of an ASSOCIATE name require a variable selector");
+            };
+            *name = m.array;
+            *indices = m.indices;
+        }
+    }
+    let mut error = Ok(());
+    for e in crate::procedure_arguments::expressions(s) {
+        crate::procedure_arguments::visit_expr(e, &mut |e| {
+            if let Expr::Call(tag, marker) = e {
+                if tag == ASSOCIATE_SUBSCRIPT {
+                    let (selector, subscripts) = marker.split_first().unwrap();
+                    match associate_through(selector, subscripts, &classify) {
+                        Ok(Some(m)) => *e = m.expression(),
+                        _ => error = Err("subscripts of an ASSOCIATE name require a variable selector"),
+                    }
+                }
+            }
+        });
+    }
+    error
 }
 
 /// Declarations from a lexer ProcedureDeclaration token (`form|entities`).

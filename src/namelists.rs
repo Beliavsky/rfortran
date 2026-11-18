@@ -719,6 +719,10 @@ pub fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Program> 
                         return Ok(());
                     }
                 }
+                // References through ASSOCIATE names whose selector has a
+                // vector subscript need the ranks of the subscripts.
+                let rank = |n: &str| symbols.get(n).map(|x| x.1.len()).or_else(|| objects.get(n).map(|x| x.1.len())).unwrap_or(0);
+                crate::ast::resolve_associate_subscripts(s, &rank).map_err(|e| anyhow::anyhow!(e))?;
                 for child in crate::procedure_arguments::children(s) {
                     body(child, &symbols, &objects, types, &groups, serial)?;
                 }
