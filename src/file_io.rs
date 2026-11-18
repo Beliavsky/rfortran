@@ -48,15 +48,18 @@ pub(crate) fn lower(
         if !matches!(
             key.as_str(),
             "unit" | "newunit" | "file" | "status" | "action" | "access" | "form" | "name" | "opened" | "number" | "exist" | "named" | "iostat" | "position" | "iomsg" | "err" | "recl"
+                | "nextrec" | "pos" | "blank" | "sign" | "delim" | "pad"
         ) {
             bail!("{operation}: unsupported I/O control `{key}`");
         }
-        if operation=="inquire" && !matches!(key.as_str(),"unit"|"file"|"name"|"opened"|"number"|"exist"|"named"|"action"|"iostat"|"iomsg") {bail!("INQUIRE: unsupported I/O control `{key}`");}
+        if operation=="inquire" && !matches!(key.as_str(),"unit"|"file"|"name"|"opened"|"number"|"exist"|"named"|"action"|"iostat"|"iomsg"|"access"|"form"|"recl"|"nextrec"|"pos"|"blank"|"sign"|"delim"|"pad") {bail!("INQUIRE: unsupported I/O control `{key}`");}
+        if operation!="open" && operation!="inquire" && matches!(key.as_str(),"sign"|"delim"|"pad") {bail!("{operation}: unsupported I/O control `{key}`");}
+        if operation!="inquire" && matches!(key.as_str(),"nextrec"|"pos"|"blank") {bail!("{operation}: unsupported I/O control `{key}`");}
         if operation != "open" && operation!="inquire" && !matches!(key.as_str(), "unit" | "iostat" | "iomsg" | "err") && !(operation=="close" && key=="status") {
             bail!("{} currently supports UNIT, IOSTAT, IOMSG and ERR{}", operation.to_uppercase(), if operation == "close" { " and STATUS" } else { "" });
         }
         if operation=="open" && matches!(key.as_str(),"name"|"opened"|"number"|"exist"|"named") {bail!("OPEN: unsupported I/O control `{key}`");}
-        if operation!="open" && key=="recl" {bail!("{operation}: unsupported I/O control `{key}`");}
+        if operation!="open" && operation!="inquire" && key=="recl" {bail!("{operation}: unsupported I/O control `{key}`");}
         if controls.insert(key.clone(), value).is_some() {
             bail!("{operation}: duplicate {key} control");
         }
@@ -187,8 +190,8 @@ fn lower_open(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpe
     }
 }
 
-/// `@record_access(unit, access, recl, unformatted)` for an OPEN whose ACCESS,
-/// FORM or RECL the runtime needs: it keeps the records of sequential and
+/// `@record_access(unit, access, recl, unformatted, mode)` for an OPEN whose
+/// ACCESS, FORM, RECL, SIGN, DELIM or PAD the runtime needs: it keeps the records of sequential and
 /// direct-access unformatted files (files are opened in binary mode).
 fn connection(controls:&mut HashMap<String,Expr>,unit:&Expr)->Result<Option<Stmt>> {
     let mut chosen=["sequential".to_owned(),String::new()];
@@ -201,14 +204,28 @@ fn connection(controls:&mut HashMap<String,Expr>,unit:&Expr)->Result<Option<Stmt
         }
     }
     let recl=controls.remove("recl");
+    // SIGN=, DELIM= and PAD= of a formatted connection, as Unit::mode bits.
+    use crate::unformatted_records as r;
+    let mut mode=0u8;
+    for (key,choices) in [("sign",&[("plus",r::SIGN_PLUS),("suppress",r::SIGN_SUPPRESS),("processor_defined",0)][..]),
+        ("delim",&[("apostrophe",r::DELIM_APOSTROPHE),("quote",r::DELIM_QUOTE),("none",0)][..]),
+        ("pad",&[("no",r::PAD_NO),("yes",0)][..])] {
+        let Some(v)=controls.remove(key) else {continue};
+        let Ok(text)=crate::parameters::character_constant(&v) else {bail!("OPEN {} currently requires a constant value",key.to_ascii_uppercase())};
+        let Some((_,bit))=choices.iter().find(|(c,_)|text.trim().eq_ignore_ascii_case(c)) else {
+            bail!("OPEN {}= must be {}",key.to_ascii_uppercase(),choices.iter().map(|(c,_)|format!("'{}'",c.to_ascii_uppercase())).collect::<Vec<_>>().join(", "));
+        };
+        mode|=bit;
+    }
     let access=match chosen[0].as_str() {"stream"=>1,"direct"=>2,_=>0};
     // Direct access is unformatted unless FORM says otherwise.
     let unformatted=chosen[1]=="unformatted" || (access==2 && chosen[1].is_empty());
     if access==2 && recl.is_none() {bail!("OPEN with ACCESS='DIRECT' requires RECL");}
     if access==2 && !unformatted {bail!("formatted direct access is not yet supported");}
     if access==1 && recl.is_some() {bail!("OPEN with ACCESS='STREAM' must not specify RECL");}
-    Ok((access!=0 || unformatted || recl.is_some()).then(||Stmt::CallSub{name:"@record_access".into(),
-        args:vec![unit.clone(),Expr::IntLit(access.to_string()),recl.unwrap_or(Expr::IntLit("0".into())),Expr::IntLit(i64::from(unformatted).to_string())]}))
+    if mode!=0 && (unformatted || access==2) {bail!("OPEN SIGN=, DELIM= and PAD= require a formatted connection");}
+    Ok((access!=0 || unformatted || recl.is_some() || mode!=0).then(||Stmt::CallSub{name:"@record_access".into(),
+        args:vec![unit.clone(),Expr::IntLit(access.to_string()),recl.unwrap_or(Expr::IntLit("0".into())),Expr::IntLit(i64::from(unformatted).to_string()),Expr::IntLit(mode.to_string())]}))
 }
 
 /// A lowered OPEN: its statements, and when IOSTAT is wanted, the temporary
@@ -264,7 +281,7 @@ fn lower_inquiry(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(Type
     }
     for (key,value) in &controls {
         let Expr::Ident(n)=value else {bail!("INQUIRE {} requires a writable scalar variable",key.to_ascii_uppercase());};
-        let expected=match key.as_str(){"name"|"action"|"iomsg"=>"CHARACTER","opened"|"exist"|"named"=>"LOGICAL",_=>"INTEGER"};
+        let expected=match key.as_str(){"name"|"action"|"iomsg"|"access"|"form"|"blank"|"sign"|"delim"|"pad"=>"CHARACTER","opened"|"exist"|"named"=>"LOGICAL",_=>"INTEGER"};
         let valid=symbols.get(n).is_some_and(|(kind,dims)|dims.is_empty() && match expected {
             "CHARACTER"=>matches!(kind,TypeSpec::Character(_)),"LOGICAL"=>*kind==TypeSpec::Logical,
             _=>matches!(kind,TypeSpec::Integer(None|Some(1|2|4|8))),
@@ -272,6 +289,35 @@ fn lower_inquiry(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(Type
         if !valid {bail!("INQUIRE {} requires a writable scalar {} variable",key.to_ascii_uppercase(),expected);}
     }
     *serial+=1;
+    // ACCESS, FORM, BLANK, RECL, NEXTREC and POS describe a unit's connection.
+    let mut connection=vec![];
+    for (key,which) in [("access",crate::unformatted_records::ACCESS),("form",crate::unformatted_records::FORM),("blank",crate::unformatted_records::FORM),
+        ("recl",crate::unformatted_records::RECL),("nextrec",crate::unformatted_records::NEXTREC),("pos",crate::unformatted_records::POS),
+        ("sign",crate::unformatted_records::SIGN),("delim",crate::unformatted_records::DELIM),("pad",crate::unformatted_records::PAD)] {
+        let Some(Expr::Ident(target))=controls.remove(key) else {continue};
+        if by_file {bail!("INQUIRE by FILE does not yet support {}",key.to_ascii_uppercase());}
+        let value=format!("@inquire_{key}_{serial}");
+        connection.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![value.clone()]});
+        connection.push(Stmt::CallSub{name:"@file_inquire_connection".into(),args:vec![Expr::Ident(value.clone()),selector.clone(),Expr::IntLit(which.to_string())]});
+        let is=|n:i64|Expr::Bin(crate::ast::BinOp::Eq,Box::new(Expr::Ident(value.clone())),Box::new(Expr::IntLit(n.to_string())));
+        let text=|t:&str|Stmt::Assign{name:target.clone(),value:Expr::Str(t.into())};
+        let choose=|cases:&[(i64,&str)],otherwise:&str|{
+            let mut tail=vec![text(otherwise)];
+            for (n,t) in cases.iter().rev() {tail=vec![Stmt::If{cond:is(*n),then_body:vec![text(t)],else_body:Some(tail)}];}
+            tail
+        };
+        connection.extend(match key {
+            "access"=>choose(&[(0,"SEQUENTIAL"),(1,"STREAM"),(2,"DIRECT")],"UNDEFINED"),
+            "form"=>choose(&[(0,"FORMATTED"),(1,"UNFORMATTED")],"UNDEFINED"),
+            "blank"=>choose(&[(0,"NULL")],"UNDEFINED"),
+            "sign"=>choose(&[(0,"PROCESSOR_DEFINED"),(1,"PLUS"),(2,"SUPPRESS")],"UNDEFINED"),
+            "delim"=>choose(&[(0,"NONE"),(1,"APOSTROPHE"),(2,"QUOTE")],"UNDEFINED"),
+            "pad"=>choose(&[(0,"YES"),(1,"NO")],"UNDEFINED"),
+            // An undefined value leaves the variable undefined.
+            _=>vec![Stmt::If{cond:Expr::Bin(crate::ast::BinOp::Ge,Box::new(Expr::Ident(value.clone())),Box::new(Expr::IntLit("0".into()))),
+                then_body:vec![Stmt::Assign{name:target.clone(),value:Expr::Ident(value.clone())}],else_body:None}],
+        });
+    }
     let keys=["iostat","number","opened","exist","named","name","action"];
     let names:Vec<String>=keys.iter().map(|key|format!("@inquire_{key}_{serial}")).collect();
     let id=|i:usize|Expr::Ident(names[i].clone());let int=|n:i64|Expr::IntLit(n.to_string());
@@ -301,6 +347,7 @@ fn lower_inquiry(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(Type
             success.push(Stmt::Assign{name,value});
         }
     }
+    success.extend(connection);
     body.push(Stmt::If{cond:Expr::Bin(crate::ast::BinOp::Ne,Box::new(id(0)),Box::new(int(0))),then_body:failure,else_body:Some(success)});
     Ok(Stmt::Block{body})
 }
@@ -323,8 +370,20 @@ impl crate::unformatted_records::Io for std::fs::File {
 }
 impl Files {
     /// Set how OPEN connected `unit`; access -1 forgets it.
-    pub(crate) fn record_access(&mut self,unit:i64,access:i64,recl:i64,unformatted:bool) {
-        if access<0 {self.3.remove(&unit);} else {self.3.insert(unit,crate::unformatted_records::Unit{access:access as u8,unformatted,recl,after_end:false});}
+    pub(crate) fn record_access(&mut self,unit:i64,access:i64,recl:i64,unformatted:bool,mode:i64) {
+        if access<0 {self.3.remove(&unit);} else {self.3.insert(unit,crate::unformatted_records::Unit::new(access as u8,unformatted,recl,mode as u8));}
+    }
+    /// The SIGN=, DELIM= and PAD= bits of `unit` (see unformatted_records::Unit).
+    pub(crate) fn mode(&self,unit:i64)->u8 {self.3.get(&unit).map_or(0,|u|u.mode)}
+    /// INQUIRE of a unit's connection (see unformatted_records::inquire).
+    pub(crate) fn inquire_connection(&mut self,unit:i64,which:i64)->i64 {
+        use crate::unformatted_records as r;
+        if !self.0.contains_key(&unit) && matches!(unit,0|5|6) {
+            return r::preconnected(which);
+        }
+        let position=self.0.get_mut(&unit).and_then(|f|r::Io::tell(f));
+        let connected=self.0.contains_key(&unit);
+        r::inquire(&self.3.get(&unit).copied().unwrap_or_default(),connected,position,which)
     }
     /// Start the record of an unformatted transfer; REC is zero unless direct.
     pub(crate) fn record_begin(&mut self,unit:i64,rec:i64,writing:bool)->i64 {
@@ -606,9 +665,14 @@ impl Files {
         match result {Ok(0)=>Ok(None),Ok(_)=>Ok(Some(byte[0])),Err(_)=>Err(())}
     }
 
-    pub(crate) fn record_status_mode(&mut self, unit:i64,buffer:&mut [u8],checked:bool)->i64 {
+    /// `width`, for a format of fields, is the number of characters they read,
+    /// which a unit opened with PAD='NO' must have in the record.
+    pub(crate) fn record_status_mode(&mut self, unit:i64,buffer:&mut [u8],checked:bool,width:Option<usize>)->i64 {
+        let pad_no=self.mode(unit)&crate::unformatted_records::PAD_NO!=0;
         let scan=|buffer:&mut [u8], byte:&mut dyn FnMut()->Result<Option<u8>,()>| {
-            if checked {crate::record_input::checked_record(buffer,byte)} else {crate::record_input::record(buffer,byte)}
+            if checked {crate::record_input::checked_record(buffer,byte)}
+            else if let Some(width)=width {crate::record_input::padded_record(buffer,width,pad_no,byte)}
+            else {crate::record_input::record(buffer,byte)}
         };
         if unit == 5 {
             let stdin = std::io::stdin();

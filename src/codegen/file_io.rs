@@ -176,6 +176,20 @@ pub(super) fn name(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,
     Ok(b.ins().load(ptr,MemFlags::new(),address,0))
 }
 
+/// The stream connected to `unit`, or null; an invalid unit is null too.
+pub(super) fn connected(module: &mut ObjectModule, b: &mut FunctionBuilder, ptr: ir::Type, dc: &mut u32, unit: ir::Value) -> Result<ir::Value> {
+    let _ = dc;
+    let (index, valid) = unit_index(b, unit);
+    let slots = table(b, module, ptr, ".rfort.file_units")?;
+    let zero = b.ins().iconst(types::I64, 0);
+    let index = b.ins().select(valid, index, zero);
+    let offset = b.ins().imul_imm(index, 8);
+    let address = b.ins().iadd(slots, offset);
+    let stream = b.ins().load(ptr, MemFlags::new(), address, 0);
+    let null = b.ins().iconst(ptr, 0);
+    Ok(b.ins().select(valid, stream, null))
+}
+
 /// The stream of a connected unit, connecting an unconnected one to fort.N.
 fn implicit(module: &mut ObjectModule, b: &mut FunctionBuilder, ptr: ir::Type, unit: ir::Value) -> Result<ir::Value> {
     let slots = table(b, module, ptr, ".rfort.file_units")?;
@@ -363,7 +377,7 @@ pub(super) fn operation(
         }
         call(module,b,"rfort_file_free_name",&[path],types::I32)?;b.ins().store(MemFlags::new(),zero,address,0);
         let forget=b.ins().iconst(types::I64,-1);
-        call(module,b,"rfort_record_access",&[unit,forget,forget,forget],types::I32)?;
+        call(module,b,"rfort_record_access",&[unit,forget,forget,forget,forget],types::I32)?;
         let actions=table(b,module,ptr,".rfort.file_actions")?;let address=b.ins().iadd(actions,offset);b.ins().store(MemFlags::new(),zero,address,0);
         b.ins().jump(done, &[]);
         b.switch_to_block(done);

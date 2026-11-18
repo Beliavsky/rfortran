@@ -1972,13 +1972,22 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         }
                         let fr=call_stack.last_mut().unwrap();fr.env_int.insert(handle.clone(),h);fr.env_int.insert(status.clone(),0);idx+=1;continue;
                     }
+                    // INQUIRE of a unit's connection: [value, unit, which].
+                    if name=="@file_inquire_connection" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let [Expr::Ident(dest),unit,Expr::IntLit(which)]=args.as_slice() else {unreachable!()};
+                        let unit=eval_expr(unit,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        let value=FILES.with(|files|files.borrow_mut().inquire_connection(unit,which.parse().unwrap()));
+                        call_stack.last_mut().unwrap().env_int.insert(dest.clone(),value);
+                        idx+=1;continue;
+                    }
                     // The records of unformatted files.
                     if name=="@record_begin" || name=="@record_end" || name=="@record_access" {
                         let fr=call_stack.last().unwrap().clone();
                         let mut values=vec![];
                         for e in &args[usize::from(name!="@record_access")..] {values.push(eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap());}
                         if name=="@record_access" {
-                            FILES.with(|files|files.borrow_mut().record_access(values[0],values[1],values[2],values[3]!=0));
+                            FILES.with(|files|files.borrow_mut().record_access(values[0],values[1],values[2],values[3]!=0,values.get(4).copied().unwrap_or(0)));
                         } else {
                             let Expr::Ident(status)=&args[0] else {unreachable!()};
                             let code=if name=="@record_begin" {
@@ -2090,7 +2099,10 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                             INPUT_LISTS.with(|lists|{let mut lists=lists.borrow_mut();let (_,session,_)=lists.get_mut(&h).unwrap();
                                 if matches!(args.get(5),Some(Expr::IntLit(n)) if n=="-1") {crate::record_input::INVALID_FORMAT}
                                 else {FILES.with(|files|session.fields(&mut buffer[..width],advance,||files.borrow_mut().input_byte(unit)))}})
-                        } else if valid {FILES.with(|files| files.borrow_mut().record_status_mode(unit,&mut buffer,name=="@read_record_checked"))} else {crate::record_input::INVALID_FORMAT};
+                        } else if valid {
+                            let width=if args.len()==6 {let Expr::IntLit(n)=&args[4] else {unreachable!()};Some(n.parse::<usize>().unwrap())} else {None};
+                            FILES.with(|files| files.borrow_mut().record_status_mode(unit,&mut buffer,name=="@read_record_checked",width))
+                        } else {crate::record_input::INVALID_FORMAT};
                         let frame=call_stack.last_mut().unwrap();
                         frame.env_int.insert(status.clone(),code);
                         if code == 0 { frame.env_str.insert(dest.clone(),String::from_utf8(buffer).unwrap()); }
@@ -2227,9 +2239,11 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let (format,advance,items)=OUTPUT_LISTS.with(|lists|lists.borrow_mut().remove(&handle).unwrap());
                         let child=DEFINED_OUTPUT_UNITS.with(|units|units.borrow().contains(&unit));
                         let advance=advance && !child;
-                        let values:Vec<_>=items.iter().map(|e|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack)).collect();
+                        let mut values:Vec<_>=items.iter().map(|e|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack)).collect();
+                        let mode=FILES.with(|files|files.borrow().mode(unit));
+                        if format==crate::format_spec::LIST_FORMAT {for v in &mut values {if let Some(s)=&mut v.3 {*s=connection_delimited(s,mode);}}}
                         let mut internal_status=0;
-                        let result=(||->anyhow::Result<()> {
+                        let result=crate::format_spec::with_connection_sign(mode&crate::unformatted_records::SIGN_PLUS!=0,||(||->anyhow::Result<()> {
                             if child {crate::format_spec::check_child_output(format.as_bytes(),items.len()).map_err(anyhow::Error::msg)?;}
                             let mut bytes=Vec::new();
                             crate::format_spec::render_shared(format.as_bytes(),items.len(),&|i,f| {
@@ -2250,7 +2264,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                                 FILES.with(|files|files.borrow_mut().write_fragment(unit,&String::from_utf8_lossy(&bytes),advance))?;
                             }
                             Ok(())
-                        })();
+                        })());
                         let Expr::Ident(status)=&args[2] else {unreachable!()};
                         call_stack.last_mut().unwrap().env_int.insert(status.clone(),if internal_status!=0 {internal_status}else{i64::from(result.is_err())});
                         if let Err(error)=result {
@@ -2333,18 +2347,24 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                             }
                         }
                         let frame=call_stack.last().unwrap().clone();
+                        // A WRITE to a file follows the SIGN= and DELIM= of its OPEN.
+                        let mode=if external {
+                            let unit=eval_expr(&args[end],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                            FILES.with(|files|files.borrow().mode(unit))
+                        } else {0};
+                        let list=format==crate::format_spec::LIST_FORMAT;
                         let items:Vec<(crate::format_spec::Value<'static>,Option<String>)>=args[1..end].iter().zip(&values).map(|(e,v)| {
                             use crate::format_spec::Value;
-                            if let Some(s)=&v.3 {(Value::Logical(false),Some(s.clone()))}
+                            if let Some(s)=&v.3 {(Value::Logical(false),Some(if list {connection_delimited(s,mode)} else {s.clone()}))}
                             else if let Some(b)=v.2 {(Value::Logical(b),None)}
                             else if let Some(f)=v.1 {(Value::Real(f,real_kind(e,&frame,f)),None)}
                             else {let i=v.0.unwrap();(Value::Integer(i,if i==i as i32 as i64 {4} else {8}),None)}
                         }).collect();
                         if child {io_result(crate::format_spec::check_child_output(format.as_bytes(),items.len()).map_err(anyhow::Error::msg));}
                         let mut bytes=Vec::new();
-                        let rendered=crate::format_spec::render_shared(format.as_bytes(),items.len(),&|i,f|{
+                        let rendered=crate::format_spec::with_connection_sign(mode&crate::unformatted_records::SIGN_PLUS!=0,||crate::format_spec::render_shared(format.as_bytes(),items.len(),&|i,f|{
                             match &items[i] {(_,Some(s))=>f(crate::format_spec::Value::Character(s.as_bytes())),(v,None)=>f(*v)}
-                        },&mut |b|bytes.push(b),advance,if child {unsafe{crate::output_record::get(6).as_mut()}}else{None});
+                        },&mut |b|bytes.push(b),advance,if child {unsafe{crate::output_record::get(6).as_mut()}}else{None}));
                         if let Err(e)=rendered {eprintln!("Runtime error: invalid output format: {e}"); std::process::exit(1)}
                         let mut output=String::from_utf8_lossy(&bytes).into_owned();
                         if internal {
@@ -2358,8 +2378,9 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         }
                         if external {
                             let unit=eval_expr(&args[end],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
-                            let output=if advance {output.strip_suffix('\n').unwrap_or(&output)} else {&output};
-                            io_result(FILES.with(|files|files.borrow_mut().write_fragment(unit,output,advance)));idx+=1;continue;
+                            // The rendered text has no final newline; a trailing one
+                            // is the empty record of a slash, as in '(i2/)'.
+                            io_result(FILES.with(|files|files.borrow_mut().write_fragment(unit,&output,advance)));idx+=1;continue;
                         }
                         print!("{output}");
                         if !advance {
@@ -2841,4 +2862,14 @@ pub extern "C" fn f90c_read_str(out: *mut u8, len: usize) -> i32 {
         *out.add(copy_len) = 0;
     }
     0
+}
+
+/// A CHARACTER value of list-directed output to a unit opened with
+/// DELIM='APOSTROPHE' or 'QUOTE', delimited; otherwise unchanged.
+fn connection_delimited(text:&str,mode:u8)->String {
+    use crate::unformatted_records as r;
+    let delimiter=if mode&r::DELIM_QUOTE!=0 {b'"'} else if mode&r::DELIM_APOSTROPHE!=0 {b'\''} else {return text.to_owned()};
+    let mut bytes=Vec::with_capacity(text.len()+2);
+    crate::format_spec::delimited(text.as_bytes(),delimiter,&mut |c|bytes.push(c));
+    String::from_utf8_lossy(&bytes).into_owned()
 }

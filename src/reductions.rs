@@ -1813,7 +1813,9 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             if name == crate::input::NONADVANCING { nonadvancing = Some(args.clone()); continue; }
         }
         let follows = match &stmt {
-            Stmt::SourceLocation(_) => true,
+            // Temporaries, as for a CHARACTER array element, may precede the READ.
+            Stmt::SourceLocation(_) | Stmt::VarDecl { .. } => true,
+            Stmt::Assign { name, .. } => name.starts_with('@'),
             Stmt::CallSub { name, .. } => matches!(name.as_str(), "@formatted_read" | "@formatted_read_status"),
             _ => false,
         };

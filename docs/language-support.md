@@ -4733,8 +4733,8 @@ writes record k at byte offset (k-1)*RECL, padding a short record with zero
 bytes, and `read(u, rec=k)` reads it; records may be written in any order.
 Transferring more than RECL bytes, reading a record beyond the end of the file,
 or REC= on a unit not opened for direct access, is an error that IOSTAT
-reports. Formatted direct access (REC= with FMT), and INQUIRE of RECL and
-NEXTREC, are not yet supported. Run `python tests/test_unformatted_records.py`.
+reports. Formatted direct access (REC= with FMT) is not yet supported. Run
+`python tests/test_unformatted_records.py`.
 
 Sequential formatted files support `OPEN(unit=20,file='data.txt',status='old',action='read')`,
 `READ(20,'(a)') text`, `BACKSPACE(20)`, `REWIND(20)`, and `CLOSE(20)`.
@@ -4883,6 +4883,25 @@ replace subsequent records at the current position. Scratch files are deleted
 on close. `INQUIRE` accepts exactly one of `UNIT=` or `FILE=`, with any
 combination of scalar-variable outputs `EXIST=`, `OPENED=`, `NAMED=`, `NUMBER=`,
 `NAME=`, `ACTION=`, `IOSTAT=` and `IOMSG=`, plus an `ERR=` statement label.
+A UNIT query also accepts `ACCESS=` (SEQUENTIAL, STREAM, DIRECT or UNDEFINED),
+`FORM=` (FORMATTED, UNFORMATTED or UNDEFINED), `BLANK=` (NULL for a formatted
+connection), `RECL=` (gfortran's 1073741824 for a sequential connection
+without RECL), `NEXTREC=` for direct access and `POS=` for stream access;
+an undefined RECL, NEXTREC or POS leaves its variable unchanged. It also
+accepts `SIGN=`, `DELIM=` and `PAD=`. FILE queries do not yet accept these.
+Run `python tests/test_inquire_connection.py`.
+
+`OPEN` of a formatted connection accepts constant `SIGN=` ('PLUS', 'SUPPRESS'
+or 'PROCESSOR_DEFINED'), `DELIM=` ('APOSTROPHE', 'QUOTE' or 'NONE') and
+`PAD=` ('YES' or 'NO'). SIGN='PLUS' starts each formatted or list-directed
+WRITE to the unit as the SP edit descriptor does. DELIM= encloses CHARACTER
+values of list-directed output in the delimiter, doubling it inside them;
+NAMELIST output does not yet follow it. With PAD='NO', a formatted READ whose
+format needs more characters than its record holds ends with IOSTAT=-2 (the
+end of the record) instead of reading blanks, and a non-advancing READ without
+PAD= takes the unit's PAD; items read before that point keep their values. The
+whole-record `(A)` READ into one CHARACTER variable does not yet check PAD='NO'.
+Run `python tests/test_open_modes.py`.
 Controls may be reordered; UNIT may also be positional. Unit queries recognize
 preconnected units 0, 5 and 6 and scratch NEWUNIT connections. `EXIST` tests
 filesystem existence for FILE queries independently of connection state: a

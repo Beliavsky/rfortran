@@ -754,7 +754,10 @@ fn body(
                             let store=dispatch(&n,index.clone(),&arrays,|slot|Stmt::Assign {name:slot,value:Expr::Ident(temp.clone())});
                             suffix.push(if let Some(status)=status {
                                 let code=&args[status];
-                                if !matches!(code,Expr::Ident(_)) {store} else {Stmt::If {cond:Expr::Bin(BinOp::Eq,Box::new(code.clone()),Box::new(Expr::IntLit("0".into()))),then_body:vec![store],else_body:Some(vec![dispatch(&n,index,&arrays,|slot|Stmt::CallSub {name:"@undefine".into(),args:vec![Expr::Ident(slot)]})])}}
+                                // At the end of a record (IOSTAT -2) the items read keep their values.
+                                let kept=Expr::Bin(BinOp::Or,Box::new(Expr::Bin(BinOp::Eq,Box::new(code.clone()),Box::new(Expr::IntLit("0".into())))),
+                                    Box::new(Expr::Bin(BinOp::Eq,Box::new(code.clone()),Box::new(Expr::IntLit(crate::record_input::END_OF_RECORD.to_string())))));
+                                if !matches!(code,Expr::Ident(_)) {store} else {Stmt::If {cond:kept,then_body:vec![store],else_body:Some(vec![dispatch(&n,index,&arrays,|slot|Stmt::CallSub {name:"@undefine".into(),args:vec![Expr::Ident(slot)]})])}}
                             } else {store});
                         }
                     }

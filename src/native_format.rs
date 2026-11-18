@@ -275,6 +275,35 @@ pub unsafe extern "C" fn rfort_file_implicit(slots:*mut *mut core::ffi::c_void,n
 }
 #[no_mangle]
 pub unsafe extern "C" fn rfort_format_end_file(pointer:*mut core::ffi::c_void,stream:*mut core::ffi::c_void)->i32 {
+    format_end_stream(pointer,stream)
+}
+/// Complete a buffered WRITE to `unit`, with the SIGN= and DELIM= of its OPEN.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_format_end_unit(pointer:*mut core::ffi::c_void,stream:*mut core::ffi::c_void,unit:i64)->i32 {
+    let mode=connection_list(pointer,unit);
+    format_spec::with_connection_sign(mode&unformatted_records::SIGN_PLUS!=0,||format_end_stream(pointer,stream))
+}
+/// Delimit the CHARACTER items of list-directed output to a unit opened with
+/// DELIM='APOSTROPHE' or 'QUOTE'; returns the unit's mode bits.
+unsafe fn connection_list(pointer:*mut core::ffi::c_void,unit:i64)->u8 {
+    let mode=unit_mode(unit);
+    let delimiter=if mode&unformatted_records::DELIM_QUOTE!=0 {b'"'} else if mode&unformatted_records::DELIM_APOSTROPHE!=0 {b'\''} else {return mode};
+    let list=&mut *pointer.cast::<OutputList>();
+    if core::slice::from_raw_parts(list.format,list.length)!=format_spec::LIST_FORMAT.as_bytes() {return mode;}
+    for i in 0..list.count {
+        let item=&mut *list.items.add(i);
+        if item.tag!=4 {continue;}
+        let text=core::slice::from_raw_parts(item.bits as usize as *const u8,item.length as usize);
+        let mut length=0usize;format_spec::delimited(text,delimiter,&mut |_|length+=1);
+        let copy=allocate(length+1);let mut at=0;
+        format_spec::delimited(text,delimiter,&mut |c|{*copy.add(at)=c;at+=1;});
+        *copy.add(length)=0;
+        free(item.bits as usize as *mut core::ffi::c_void);
+        item.bits=copy as usize as u64;item.length=length as u64;
+    }
+    mode
+}
+unsafe fn format_end_stream(pointer:*mut core::ffi::c_void,stream:*mut core::ffi::c_void)->i32 {
     let list=&*pointer.cast::<OutputList>();let mut failed=false;
     if stream==rfort_stderr_stream() {
         render_format(list.format,list.length,list.items,list.count,&mut |c|{if fputc(c as i32,stream)<0 {failed=true;}},list.advance!=0);
@@ -344,6 +373,16 @@ pub unsafe extern "C" fn rfort_read_fields(stream:*mut core::ffi::c_void,unit:i6
                 ||reader_byte(r.stream,r.source,r.length,&mut r.offset));
         }
         context=(*context).previous;
+    }
+    if unit_mode(unit)&unformatted_records::PAD_NO!=0 {
+        let stream=input_stream(stream);
+        let buffer=core::slice::from_raw_parts_mut(out,capacity);
+        let status=record_input::padded_record(buffer,width,true,||{
+            let value=fgetc(stream);
+            if value>=0 {Ok(Some(value as u8))} else if ferror(stream)!=0 {Err(())} else {Ok(None)}
+        });
+        *out.add(capacity)=0;
+        return status;
     }
     rfort_read_record(stream,out,capacity)
 }
@@ -416,7 +455,11 @@ pub unsafe extern "C" fn rfort_stream_get(stream:*mut core::ffi::c_void,tag:i64,
     0
 }
 /// The connection of each unit, by its index in the unit tables.
-static mut RECORD_UNITS:[unformatted_records::Unit;2048]=[unformatted_records::Unit{access:0,unformatted:false,recl:0,after_end:false};2048];
+static mut RECORD_UNITS:[unformatted_records::Unit;2048]=[unformatted_records::Unit{access:0,unformatted:false,recl:0,after_end:false,last_record:0,mode:0};2048];
+/// The SIGN=, DELIM= and PAD= bits of `unit` (see unformatted_records::Unit).
+unsafe fn unit_mode(unit:i64)->u8 {
+    file_inquiry::index(unit).map_or(0,|index|(*core::ptr::addr_of!(RECORD_UNITS))[index].mode)
+}
 /// The record an unformatted transfer is in, and its stream.
 static mut RECORD_ACTIVE:Option<(*mut core::ffi::c_void,unformatted_records::Active)>=None;
 struct CFile(*mut core::ffi::c_void);
@@ -443,12 +486,13 @@ impl unformatted_records::Io for CFile {
     }
 }
 /// Set how OPEN connected `unit`: ACCESS (0 sequential, 1 stream, 2 direct),
-/// RECL, and whether FORM is unformatted. Access -1 forgets the unit, at CLOSE.
+/// RECL, whether FORM is unformatted, and the SIGN=, DELIM= and PAD= bits.
+/// Access -1 forgets the unit, at CLOSE.
 #[no_mangle]
-pub unsafe extern "C" fn rfort_record_access(unit:i64,access:i64,recl:i64,unformatted:i64)->i32 {
+pub unsafe extern "C" fn rfort_record_access(unit:i64,access:i64,recl:i64,unformatted:i64,mode:i64)->i32 {
     let Some(index)=file_inquiry::index(unit) else {return 1};
     let units=&mut *core::ptr::addr_of_mut!(RECORD_UNITS);
-    units[index]=if access<0 {unformatted_records::Unit::default()} else {unformatted_records::Unit{access:access as u8,unformatted:unformatted!=0,recl,after_end:false}};
+    units[index]=if access<0 {unformatted_records::Unit::default()} else {unformatted_records::Unit::new(access as u8,unformatted!=0,recl,mode as u8)};
     0
 }
 /// Start the record of an unformatted transfer; REC is zero unless direct.
@@ -481,6 +525,18 @@ pub unsafe extern "C" fn rfort_record_backspace(unit:i64,stream:*mut core::ffi::
     let Some(index)=file_inquiry::index(unit) else {return 2};
     let units=&mut *core::ptr::addr_of_mut!(RECORD_UNITS);
     match unformatted_records::backspace(&mut units[index],&mut CFile(stream)) {Some(0)=>0,Some(_)=>1,None=>2}
+}
+/// INQUIRE of a unit's connection (see unformatted_records::inquire); the
+/// stream is null when the unit is not connected to a file.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_record_inquire(unit:i64,stream:*mut core::ffi::c_void,which:i64)->i64 {
+    let Some(index)=file_inquiry::index(unit) else {return -1};
+    // Standard input, output and error are preconnected for formatted
+    // sequential access.
+    if stream.is_null() && matches!(unit,0|5|6) {return unformatted_records::preconnected(which);}
+    let units=&*core::ptr::addr_of!(RECORD_UNITS);
+    let position=if stream.is_null() {None} else {unformatted_records::Io::tell(&mut CFile(stream))};
+    unformatted_records::inquire(&units[index],!stream.is_null(),position,which)
 }
 /// Whether `width` bytes fit in the record being transferred on `stream`.
 unsafe fn record_fits(stream:*mut core::ffi::c_void,width:usize)->bool {
@@ -779,6 +835,10 @@ pub unsafe extern "C" fn rfort_defined_output_leave() -> i32 {
 /// Complete a buffered WRITE, returning format/connection/transfer errors to IOSTAT.
 #[no_mangle]
 pub unsafe extern "C" fn rfort_format_end_checked(pointer:*mut core::ffi::c_void,stream:*mut core::ffi::c_void,unit:i64,status:i64,message:*mut u8,message_length:usize)->i64 {
+    let mode=connection_list(pointer,unit);
+    format_spec::with_connection_sign(mode&unformatted_records::SIGN_PLUS!=0,||format_end_checked(pointer,stream,unit,status,message,message_length))
+}
+unsafe fn format_end_checked(pointer:*mut core::ffi::c_void,stream:*mut core::ffi::c_void,unit:i64,status:i64,message:*mut u8,message_length:usize)->i64 {
     let list=&*pointer.cast::<OutputList>();
     let child=child_output(unit);
     let advancing=list.advance!=0 && !child;

@@ -2918,7 +2918,7 @@ fn gen_stmts(
                     let h=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let h=to_i64(b,h);
                     let unit=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);let unit=to_i64(b,unit);
                     let file=file_io::write_handle(module,b,ptr_ty,dc,unit)?;
-                    let code=file_io::call(module,b,"rfort_format_end_file",&[h,file],types::I32)?;
+                    let code=file_io::call(module,b,"rfort_format_end_unit",&[h,file,unit],types::I32)?;
                     let okay=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,code,0);file_io::require(module,b,ptr_ty,dc,okay,"formatted file WRITE failed")?;continue;
                 }
                 if name=="@file_write_record" {
@@ -3029,6 +3029,16 @@ fn gen_stmts(
                     let re=storage_addr(b,ptr_ty,reals[re]);let im=storage_addr(b,ptr_ty,reals[im]);
                     let code=file_io::call(module,b,"rfort_list_read_complex_next",&[h,width,re,im],types::I64)?;
                     let status=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,status,0);continue;
+                }
+                // INQUIRE of a unit's connection: [value, unit, which].
+                if name=="@file_inquire_connection" {
+                    let [IExpr::Ident(dest),unit,IExpr::IntLit(which)]=args.as_slice() else {anyhow::bail!("invalid connection INQUIRE");};
+                    let unit=eval_expr(b,ex,ptr_ty,unit,ints,reals,bools,func_meta);let unit=to_i64(b,unit);
+                    let stream=file_io::connected(module,b,ptr_ty,dc,unit)?;
+                    let which=b.ins().iconst(types::I64,which.parse::<i64>()?);
+                    let value=file_io::call(module,b,"rfort_record_inquire",&[unit,stream,which],types::I64)?;
+                    let address=storage_addr(b,ptr_ty,*ints.get(dest).ok_or_else(||anyhow::anyhow!("INQUIRE requires INTEGER storage"))?);
+                    b.ins().store(MemFlags::new(),value,address,0);continue;
                 }
                 // The records of unformatted files.
                 if name=="@record_begin" || name=="@record_end" || name=="@record_access" {

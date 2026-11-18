@@ -157,13 +157,14 @@ pub(crate) fn read_controls(
         }
     };
     let advancing = constant(&advance, "READ ADVANCE= must currently be the constant 'yes' or 'no'")?.unwrap_or(true);
-    let padded = constant(&pad, "READ PAD= must currently be the constant 'yes' or 'no'")?.unwrap_or(true);
+    let padded = constant(&pad, "READ PAD= must currently be the constant 'yes' or 'no'")?;
     let mut nonadvancing = None;
     if !advancing {
         if format.is_none() || matches!(&format, Some(Expr::Call(n, _)) if n == "@write_star") {
             return Err("ADVANCE='NO' requires a format other than *");
         }
-        let mut args = vec![Expr::Logical(padded)];
+        // Without PAD=, the unit's PAD from its OPEN applies.
+        let mut args = vec![padded.map_or(Expr::Call(CONNECTION_PAD.into(), vec![]), Expr::Logical)];
         args.extend(size.take());
         nonadvancing = Some(Stmt::CallSub { name: NONADVANCING.into(), args });
     } else if size.is_some() || options.iter().any(|(k, _)| k == "eor") {
@@ -204,6 +205,8 @@ pub(crate) fn read_controls(
 
 /// Precedes a non-advancing formatted READ: [PAD given as 'yes', SIZE variable?].
 pub(crate) const NONADVANCING: &str = "@nonadvancing_read";
+/// The PAD of a non-advancing READ without PAD=: that of the unit's OPEN.
+const CONNECTION_PAD: &str = "@connection_pad";
 
 /// The status variable that a READ or WRITE with ERR=, END= or EOR= and no
 /// IOSTAT= reads into; the label pass gives each statement its own.
@@ -973,19 +976,35 @@ pub(crate) fn lower_field_read(
     // Each later record is read only when the earlier ones succeeded.
     let mut nested: Vec<Stmt> = vec![];
     let end_of_record = format!("@field_end_of_record_{serial}");
+    let connection_pad = format!("@field_pad_{serial}");
     for (index, record) in records.iter().enumerate().rev() {
         let mut segment = vec![read_record(index)];
         // At the end of the record, the fields read are padded with blanks
         // (unless PAD='NO'), and the status is END_OF_RECORD afterwards.
-        if let Some(options) = nonadvancing {
-            let padded = matches!(options.first(), Some(Expr::Logical(true)));
+        if nonadvancing.is_some() {
             let at_end = equal(&code, crate::record_input::END_OF_RECORD);
-            segment.push(branch(at_end, if padded { vec![set(&end_of_record, int(1)), set(&code, int(0))] } else { vec![set(&end_of_record, int(1))] }));
+            segment.push(branch(at_end, vec![set(&end_of_record, int(1)), set(&code, int(0))]));
         }
+        // With PAD='NO', the fields within the characters read are converted
+        // and the first one past them ends the READ at the end of the record.
+        // PAD INQUIRE is 1 for PAD='NO'.
+        let pad_no = match nonadvancing.and_then(|options| options.first()) {
+            None | Some(Expr::Logical(true)) => None,
+            Some(Expr::Logical(false)) => Some(equal(&end_of_record, 1)),
+            Some(_) => Some(bin(BinOp::And, equal(&end_of_record, 1), equal(&connection_pad, 1))),
+        };
         // A failed transfer ends the input list. Later conversions must not
         // overwrite its status with success (or define subsequent items).
-        let mut fields: Vec<Stmt> = record.iter()
-            .map(|field| {let mut steps=field.7.clone();steps.extend(convert(&(field.0.clone(),field.1.clone(),field.2,field.3,field.4,field.5,field.6)));branch(equal(&code,0),steps)}).collect();
+        let mut fields: Vec<Stmt> = vec![];
+        for field in record {
+            if let Some(pad_no) = &pad_no {
+                let short = bin(BinOp::And, pad_no.clone(), bin(BinOp::Lt, var(&count), int((field.2 + field.3 - 1) as i64)));
+                fields.push(branch(bin(BinOp::And, equal(&code, 0), short), vec![set(&code, int(crate::record_input::END_OF_RECORD))]));
+            }
+            let mut steps=field.7.clone();
+            steps.extend(convert(&(field.0.clone(),field.1.clone(),field.2,field.3,field.4,field.5,field.6)));
+            fields.push(branch(equal(&code,0),steps));
+        }
         fields.extend(nested);
         segment.push(branch(equal(&code, 0), fields));
         nested = segment;
@@ -1001,6 +1020,11 @@ pub(crate) fn lower_field_read(
         body.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![end_of_record.clone()] });
         body.push(set(&count, int(0)));
         body.push(set(&end_of_record, int(0)));
+        if matches!(options.first(), Some(Expr::Call(n, _)) if n == CONNECTION_PAD) {
+            body.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![connection_pad.clone()] });
+            body.push(Stmt::CallSub { name: "@file_inquire_connection".into(),
+                args: vec![var(&connection_pad), unit.clone(), int(crate::unformatted_records::PAD)] });
+        }
         body.extend(nested);
         body.push(branch(equal(&code,0),pending));
         body.push(branch(bin(BinOp::And, equal(&end_of_record, 1), equal(&code, 0)), vec![set(&code, int(crate::record_input::END_OF_RECORD))]));

@@ -28,6 +28,78 @@ pub struct Unit {
     /// A READ found the end of the file, so the unit is after its endfile
     /// record, which a BACKSPACE steps back over.
     pub after_end: bool,
+    /// The record after the last one transferred by direct access, less one
+    /// (so zero, the default, means record 1), for INQUIRE NEXTREC.
+    pub last_record: i64,
+    /// OPEN's SIGN=, DELIM= and PAD= for formatted transfers, as the bits
+    /// SIGN_PLUS through PAD_NO.
+    pub mode: u8,
+}
+
+/// Bits of `Unit::mode`. SIGN='PLUS' starts each formatted output statement
+/// as SP does; SIGN='SUPPRESS' is the default and is kept only for INQUIRE.
+pub const SIGN_PLUS: u8 = 1;
+pub const SIGN_SUPPRESS: u8 = 2;
+/// DELIM='APOSTROPHE' or 'QUOTE' delimits CHARACTER values in list-directed
+/// output.
+pub const DELIM_APOSTROPHE: u8 = 4;
+pub const DELIM_QUOTE: u8 = 8;
+/// PAD='NO': a formatted READ that needs more characters than its record
+/// holds ends with IOSTAT END_OF_RECORD instead of reading blanks.
+pub const PAD_NO: u8 = 16;
+
+impl Unit {
+    pub fn new(access: u8, unformatted: bool, recl: i64, mode: u8) -> Self {
+        Unit { access, unformatted, recl, after_end: false, last_record: 0, mode }
+    }
+    fn formatted(&self) -> bool { !self.unformatted && self.access != DIRECT }
+}
+
+/// What INQUIRE asks of a connection.
+pub const ACCESS: i64 = 0;
+pub const RECL: i64 = 1;
+pub const NEXTREC: i64 = 2;
+pub const POS: i64 = 3;
+pub const FORM: i64 = 4;
+/// 0 PROCESSOR_DEFINED, 1 PLUS, 2 SUPPRESS.
+pub const SIGN: i64 = 5;
+/// 0 NONE, 1 APOSTROPHE, 2 QUOTE.
+pub const DELIM: i64 = 6;
+/// 0 YES, 1 NO.
+pub const PAD: i64 = 7;
+/// The RECL that gfortran reports for a sequential connection without one.
+pub const DEFAULT_RECL: i64 = 1073741824;
+
+/// INQUIRE of standard input, output or error, preconnected for formatted
+/// sequential access.
+pub fn preconnected(which: i64) -> i64 {
+    match which {
+        ACCESS | FORM | SIGN | DELIM | PAD => 0,
+        RECL => DEFAULT_RECL,
+        _ => -1,
+    }
+}
+
+/// The answer to INQUIRE `which` for a unit, or -1 when it is undefined;
+/// `connected` tells whether a file is connected, and `position` is the file
+/// position in bytes from 0. ACCESS is 0 sequential, 1 stream, 2 direct; FORM
+/// is 0 formatted, 1 unformatted.
+pub fn inquire(unit: &Unit, connected: bool, position: Option<i64>, which: i64) -> i64 {
+    if !connected { return -1; }
+    match which {
+        ACCESS => i64::from(unit.access),
+        RECL => if unit.recl > 0 { unit.recl } else if unit.access == STREAM { -1 } else { DEFAULT_RECL },
+        NEXTREC => if unit.access == DIRECT { unit.last_record + 1 } else { -1 },
+        POS => if unit.access == STREAM { position.map_or(-1, |p| p + 1) } else { -1 },
+        FORM => i64::from(unit.unformatted || unit.access == DIRECT),
+        // DELIM and PAD describe formatted connections only; gfortran gives
+        // PROCESSOR_DEFINED for the SIGN of an unformatted one.
+        DELIM | PAD if !unit.formatted() => -1,
+        SIGN => if unit.mode & SIGN_PLUS != 0 { 1 } else if unit.mode & SIGN_SUPPRESS != 0 { 2 } else { 0 },
+        DELIM => if unit.mode & DELIM_APOSTROPHE != 0 { 1 } else if unit.mode & DELIM_QUOTE != 0 { 2 } else { 0 },
+        PAD => i64::from(unit.mode & PAD_NO != 0),
+        _ => -1,
+    }
 }
 
 /// The record that an unformatted READ or WRITE is transferring.
@@ -67,6 +139,7 @@ pub fn begin(unit: &mut Unit, io: &mut dyn Io, rec: i64, writing: bool) -> (i64,
             // A record that was never written cannot be read.
             if !writing && io.length().is_none_or(|length| start + unit.recl > length) { return (ERROR, None); }
             if !io.seek(start) { return (ERROR, None); }
+            unit.last_record = rec;
             (0, Some(Active { writing, direct: true, start, end: start + unit.recl, depth: 0 }))
         }
         _ => {

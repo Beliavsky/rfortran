@@ -46,6 +46,23 @@ pub(crate) fn checked_record(destination:&mut [u8],mut byte:impl FnMut()->Result
     if status==0 && count>limit {TOO_LONG} else {status}
 }
 
+/// A record for a format that reads its first `width` characters. With
+/// `pad_no`, for a unit opened with PAD='NO', a shorter record is the end of
+/// the record, END_OF_RECORD, instead of being padded with blanks.
+pub(crate) fn padded_record(destination:&mut [u8],width:usize,pad_no:bool,mut byte:impl FnMut()->Result<Option<u8>,()>)->i64 {
+    if !pad_no {return record(destination,byte);}
+    let mut count=0usize;let mut previous=0;let mut newline=false;
+    let status=record(destination,|| {
+        let value=byte()?;
+        if let Some(value)=value {
+            if value==b'\n' {newline=true;} else if !newline {count=count.saturating_add(1);previous=value;}
+        }
+        Ok(value)
+    });
+    if newline && previous==b'\r' {count=count.saturating_sub(1);}
+    if status==0 && count<width {END_OF_RECORD} else {status}
+}
+
 /// The supported scalar CHARACTER transfer consumes one complete record.
 /// Share validation between compile-time checks, interpreter and native runtime.
 pub(crate) fn valid_format(format: &[u8]) -> bool {

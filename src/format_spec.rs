@@ -19,6 +19,34 @@ pub const T: u8 = b't';
 /// CHARACTER output with trailing blanks removed (Fortran 2023).
 pub const AT: u8 = b'v';
 pub const SIGN_PLUS: u8 = b'+';
+
+/// Whether output starts as after SP, for a unit opened with SIGN='PLUS'.
+static CONNECTION_PLUS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// Render with `plus` as the initial sign mode, as for a WRITE to a unit
+/// opened with SIGN='PLUS'.
+pub fn with_connection_sign<R>(plus: bool, render: impl FnOnce() -> R) -> R {
+    use core::sync::atomic::Ordering::Relaxed;
+    let previous = CONNECTION_PLUS.swap(plus, Relaxed);
+    let result = render();
+    CONNECTION_PLUS.store(previous, Relaxed);
+    result
+}
+
+/// The format of list-directed output to a file: each item as G0 after a
+/// blank.
+pub const LIST_FORMAT: &str = "(*(1x,g0))";
+
+/// A CHARACTER value of list-directed output to a unit opened with
+/// DELIM='APOSTROPHE' or 'QUOTE': within `delimiter`, which is doubled
+/// inside it.
+pub fn delimited(text: &[u8], delimiter: u8, out: &mut impl FnMut(u8)) {
+    out(delimiter);
+    for &c in text {
+        out(c);
+        if c == delimiter { out(c); }
+    }
+    out(delimiter);
+}
 pub const SIGN_DEFAULT: u8 = b'-';
 pub const SCALE: u8 = b'p';
 /// Input-only modes (BN, BZ) that do not change output.
@@ -1165,7 +1193,7 @@ pub fn render_shared(format: &[u8], count: usize, item: &dyn Fn(usize, &mut dyn 
     let shared=state.is_some();
     let mut local=OutputRecord::new();
     let mut record = Record { emit, buffered: tabs || shared, state: state.unwrap_or(&mut local) };
-    let mut style = Style { plus: false, scale: 0 };
+    let mut style = Style { plus: CONNECTION_PLUS.load(core::sync::atomic::Ordering::Relaxed), scale: 0 };
     let mut parser = GroupParser::new(format, count)?;
     index = 0;
     'descriptors: while let Some(d) = parser.next()? {
