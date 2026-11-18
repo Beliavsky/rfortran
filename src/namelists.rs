@@ -605,6 +605,10 @@ pub fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Program> 
         let mut symbols = inherited.clone();
         let mut objects = inherited_objects.clone();
         let mut groups = host.clone();
+        // ASSOCIATE selectors' subscripts copied when the block starts are
+        // declared by the ranks of the host's names.
+        let rank = |n: &str| symbols.get(n).map(|x| x.1.len()).or_else(|| objects.get(n).map(|x| x.1.len())).unwrap_or(0);
+        crate::ast::expand_associate_captures(statements, &rank);
         let imported = declare(statements, types, &mut symbols, &mut objects, &mut groups);
         for stmt in statements.iter() {
             if let S::DummyIntent { name, intent } = stmt {
@@ -722,7 +726,20 @@ pub fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Program> 
                 // References through ASSOCIATE names whose selector has a
                 // vector subscript need the ranks of the subscripts.
                 let rank = |n: &str| symbols.get(n).map(|x| x.1.len()).or_else(|| objects.get(n).map(|x| x.1.len())).unwrap_or(0);
-                crate::ast::resolve_associate_subscripts(s, &rank).map_err(|e| anyhow::anyhow!(e))?;
+                // A lower bound is known from the declaration, unless the array is
+                // ALLOCATABLE, POINTER or assumed-shape with a default bound.
+                let lower = |n: &str, axis: usize| -> Option<E> {
+                    if n.starts_with("@associate_subscript_") { return Some(i(1)); }
+                    let (_, dims, attrs) = symbols.get(n)?;
+                    if attrs.iter().any(|a| a == "allocatable" || a == "pointer") { return None; }
+                    match dims.get(axis - 1)? {
+                        E::Call(tag, b) if tag == "@declared_bounds" && matches!(b.first(), Some(E::IntLit(_))) => Some(b[0].clone()),
+                        E::Call(tag, _) if tag == "@declared_bounds" => None,
+                        E::Ident(n) if n.starts_with('@') => None,
+                        _ => Some(i(1)),
+                    }
+                };
+                crate::ast::resolve_associate_subscripts(s, &rank, &lower).map_err(|e| anyhow::anyhow!(e))?;
                 for child in crate::procedure_arguments::children(s) {
                     body(child, &symbols, &objects, types, &groups, serial)?;
                 }

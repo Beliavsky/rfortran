@@ -908,8 +908,10 @@ lower bounds 1, and its elements and sections are those of the array: with
 any rank such as `s => b(1:2, 2:3)` or `r => b(1, :)`. With a vector
 subscript, `x => a(v)`, `x(j)` is `a(v(j))` and `x(2:3)` is `a(v(2:3))`; the
 vector may be an array, a section, an elemental expression such as `v + 1`, or
-an array constructor of literals. As the standard requires, such a name cannot
-be defined: `x(1) = 0` is rejected. ASSOCIATED
+an array constructor such as `[i, j]` or `[(2*k, k = 1, n)]`. A vector subscript
+that is a constructor, or that reads a variable the block changes, is evaluated
+when the block starts, as are other subscripts. As the standard requires, such
+a name cannot be defined: `x(1) = 0` is rejected. ASSOCIATED
 also accepts a TARGET (a TARGET variable, section or POINTER) and is true when
 the pointer is associated with the same elements in the same order. Run
 `python tests/test_associate.py`.

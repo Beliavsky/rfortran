@@ -219,6 +219,50 @@ end program
  5.0 2
 """)
 
+    def test_vector_subscripts_copied_when_the_block_starts(self):
+        # Array constructors of variables or with implied DO, and vectors the
+        # block changes, are evaluated when the block starts.
+        self.check("""program acap
+implicit none
+real :: a(0:9), b(3,4)
+integer :: v(3), i, j, k, n
+a = [(real(i), i = 0, 9)]
+b = reshape([(real(i), i = 1, 12)], [3, 4])
+v = [7, 2, 5]
+i = 4; j = 1
+associate (x => a([i, j, i + 1]))
+  print *, size(x), x(1), x(2), x(3), x(2:)
+end associate
+n = 3
+associate (y => a([(2 * k, k = 1, n)]))
+  print *, size(y), y(3), y
+end associate
+associate (z => a(v))
+  v(1) = 0
+  print *, z(1), z(2:3), v(1)
+end associate
+v = [7, 2, 5]
+associate (r => b(2, (v(1:2) + 1) / 2))
+  v = 1
+  print *, r(1), r(2)
+end associate
+k = 2
+associate (s => a(k))
+  k = 9
+  print *, s
+end associate
+associate (t => b([j, 3], [i, 2]))
+  print *, t(1,1), t(2,2), t(:,1)
+end associate
+end program
+""", """ 3 4.0 1.0 5.0 1.0 5.0
+ 3 6.0 2.0 4.0 6.0
+ 7.0 2.0 5.0 0
+ 11.0 2.0
+ 2.0
+ 10.0 6.0 10.0 12.0
+""")
+
     def test_vector_subscript_selector_is_not_definable(self):
         self.reject("""real :: a(5)
 integer :: v(2) = [1, 3]
