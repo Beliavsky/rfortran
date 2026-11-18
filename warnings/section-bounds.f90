@@ -12,13 +12,13 @@ real, pointer :: p(:)
 integer :: i
 a = [(real(i), i = 0, 4)]
 associate (x => a(:))                    ! expect: section-bounds
-  print *, lbound(x), size(x)
+  print *, lbound(x), x(1)
 end associate
 associate (x => a)
-  print *, lbound(x), size(x)
+  print *, lbound(x), x(1)
 end associate
 associate (x => a(1:3))
-  print *, lbound(x), size(x)
+  print *, lbound(x), x(1)
 end associate
 p => a(:)                                ! expect: section-bounds
 print *, lbound(p), p(1)

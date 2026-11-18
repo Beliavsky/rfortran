@@ -902,7 +902,11 @@ Subscripts and section bounds of a selector that read a variable the block
 changes, such as `i` in `a(i)` when the block assigns `i`, are evaluated when
 the block starts, so the name keeps designating the same element or section.
 An expression selector that depends on such a variable, such as `t => r*3.0`
-when the block assigns `r`, is rejected. ASSOCIATED
+when the block assigns `r`, is rejected. The associate name of a section has
+lower bounds 1, and its elements and sections are those of the array: with
+`x => a(1:9:2)`, `x(2)` is `a(3)` and `x(2:)` is `a(3:9:2)`, for selectors of
+any rank such as `s => b(1:2, 2:3)` or `r => b(1, :)`. A selector with a vector
+subscript, such as `a(v)`, cannot be subscripted through its name. ASSOCIATED
 also accepts a TARGET (a TARGET variable, section or POINTER) and is true when
 the pointer is associated with the same elements in the same order. Run
 `python tests/test_associate.py`.

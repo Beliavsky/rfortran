@@ -25,4 +25,5 @@ Output differences, not speed:
 
 | Program or test | Difference |
 |---|---|
+| `print *, 1, p(1)` or `print *, 1, s` with a POINTER array element or scalar `p` or `s` | The interpreter writes two blanks before each item of the statement, `  1  0.0`; compiled programs, and the interpreter without a POINTER item, write one, `1 0.0`. Both are standard-conforming list-directed output |
 | `print *, z` for a `complex(kind=8)` value | The interpreter prints the parts with single-precision digits, `(1.00000000,-1.00000000)`; compiled programs print double-precision digits as gfortran does |

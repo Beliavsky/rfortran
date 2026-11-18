@@ -81,6 +81,54 @@ print *, a
 end program
 """, '-2 -3 -4 7 3\n1 -2 -3 -4 100 6\n0 0 0 0 0 0 0 7 0\n10 -20 -3 -4 100 6\n')
 
+    def test_subscripts_of_section_selectors(self):
+        # An associate name of a section has lower bounds 1; its elements and
+        # sections are those of the array it designates.
+        self.check("""program asec
+implicit none
+real :: a(0:9), b(0:3,4)
+integer :: i, j, k
+a = [(real(i), i = 0, 9)]
+b = reshape([(real(i), i = 1, 16)], [4, 4])
+associate (x => a(1:3))
+  print *, lbound(x), size(x), x(1), x(3)
+  x(2) = -1
+  print *, x(1:2), x(2:)
+end associate
+associate (y => a(::3))
+  print *, size(y), y(1), y(2), y(4)
+  y(2:3) = 100
+  print *, y(:2), y(2::2)
+end associate
+associate (z => a(4:))
+  k = 2
+  print *, z(k), z(k+1), z(:2)
+end associate
+associate (r => b(1,:), c => b(:,2), s => b(1:2, 2:3))
+  print *, r(2), c(1), c(4), s(2,2), s(1,:), s(:,2)
+  s(1,1) = 0
+  r(4) = -4
+end associate
+print *, a
+print *, b
+associate (w => a(:))
+  do j = 1, size(w)
+    w(j) = w(j) * 2
+  end do
+  print *, w(1), w(10)
+end associate
+end program
+""", """ 1 3 1.0 3.0
+ 1.0 -1.0 -1.0 3.0
+ 4 0.0 3.0 9.0
+ 0.0 100.0 100.0 9.0
+ 5.0 100.0 4.0 5.0
+ 6.0 5.0 8.0 11.0 6.0 10.0 10.0 11.0
+ 0.0 1.0 -1.0 100.0 4.0 5.0 100.0 7.0 8.0 9.0
+ 1.0 2.0 3.0 4.0 5.0 0.0 7.0 8.0 9.0 10.0 11.0 12.0 13.0 -4.0 15.0 16.0
+ 0.0 18.0
+""")
+
     def test_expression_selector_modified_in_block_is_rejected(self):
         self.reject("""program main
 implicit none
