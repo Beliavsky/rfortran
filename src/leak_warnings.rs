@@ -294,7 +294,7 @@ fn candidates(src: &str, tokens: &[Token], body: &[Stmt], params: &[String], nam
         match s {
             Stmt::SourceLocation(n) => offset = *n,
             Stmt::DummyIntent { name, intent } if intent == "pointer" => pointers.push(name.clone()),
-            Stmt::DummyIntent { name, intent } if intent == "save" => { saved.insert(name.clone()); }
+            Stmt::DummyIntent { name, intent } if intent == "save" || intent == crate::data_statements::SAVED_STORAGE => { saved.insert(name.clone()); }
             Stmt::InitializedDecl { attributes, entities, .. } => {
                 for (n, _) in entities {
                     if attributes.iter().any(|a| a.eq_ignore_ascii_case("save")) { saved.insert(n.clone()); }

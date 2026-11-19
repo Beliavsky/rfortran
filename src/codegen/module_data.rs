@@ -110,7 +110,11 @@ fn walk(
                 // Compiler-promoted SAVE targets in main/internal/external
                 // procedures have translation-unit storage. Module procedures
                 // instead retain their real module owner and exported symbol.
-                let private_saved = module == "@pointer_saved";
+                // So does the storage of saved ALLOCATABLE and POINTER locals of
+                // such procedures (see crate::saved_storage); that of module
+                // procedures belongs to their module.
+                let saved_owner = crate::saved_storage::owner(module);
+                let private_saved = module == "@pointer_saved" || saved_owner == Some("");
                 // COMMON block storage (see crate::common) is defined by every
                 // object that uses the block; weak definitions let objects
                 // compiled separately share one copy.
@@ -120,7 +124,7 @@ fn walk(
                 // procedures (see crate::host_storage), named after their host.
                 let common = crate::common::is_block_module(module) || module == crate::recursive_types::MODULE
                     || module.starts_with(crate::host_storage::MODULE);
-                let owned = private_saved || common || owners.contains(module);
+                let owned = private_saved || common || owners.contains(saved_owner.unwrap_or(module));
                 let id = obj.declare_data(
                     &symbol,
                     if private_saved {

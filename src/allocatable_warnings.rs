@@ -204,6 +204,7 @@ fn candidates(body: &[Stmt], scope: Scope, params: &[String]) -> Vec<(String, us
             Stmt::DummyIntent { name, intent } => match intent.as_str() {
                 "pointer" => pointers.push(name.clone()),
                 "save" => { saved.insert(name.clone()); }
+                i if i == crate::data_statements::SAVED_STORAGE => { saved.insert(name.clone()); }
                 "contiguous" => { contiguous.insert(name.clone()); }
                 _ => {}
             },

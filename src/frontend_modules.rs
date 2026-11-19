@@ -140,6 +140,7 @@ mod open_warnings;
 mod section_bounds_warnings;
 mod io_warnings;
 mod allocatable_warnings;
+mod saved_storage;
 mod leak_warnings;
 mod allocation_warnings;
 mod action_warnings;

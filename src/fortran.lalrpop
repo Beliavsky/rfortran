@@ -491,7 +491,11 @@ Components: Vec<Stmt> = {
         body.push(Stmt::SourceLocation(pos));
         body.push(Stmt::Accessibility{public:false,names:vec![]});body
     },
-    <mut body:Components> <decl:PreFuncDecl> => {body.extend(decl);body},
+    // A component's `=> NULL()` implies nothing about SAVE.
+    <mut body:Components> <decl:PreFuncDecl> => {
+        body.extend(decl.into_iter().filter(|s| !matches!(s, Stmt::DummyIntent { intent, .. } if intent == crate::ast::NULL_INITIALIZED)));
+        body
+    },
 };
 
 IdentList: Vec<String> = {
@@ -1404,6 +1408,7 @@ PreFuncDeclData: Vec<Stmt> = {
             return Err(lalrpop_util::ParseError::User {error:"declaration initialization requires `::`"});
         }
         Ok(entities.into_iter().flat_map(|(name, dims, value, length)| {
+            let null = crate::ast::null_initializer(&value).then(|| name.clone());
             let (value, association) = crate::ast::split_pointer_initializer(&name, value);
             let dims = if dims.is_empty() { dimension.clone().unwrap_or_default() } else { dims };
             let t = match length {
@@ -1431,6 +1436,7 @@ PreFuncDeclData: Vec<Stmt> = {
             };
             declarations.push(declaration);
             declarations.extend(association);
+            if let Some(name) = null { declarations.push(Stmt::DummyIntent { name, intent: crate::ast::NULL_INITIALIZED.into() }); }
             declarations
         }).collect())
     }

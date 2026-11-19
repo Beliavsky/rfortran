@@ -89,13 +89,12 @@ end module
         self.assertIn('local variable `p`', warning)
         self.assertIn('local variable `q`', warning)
         self.assertNotIn('local variable `r`', warning)
-        # Persistent pointer lowering is not supported yet; no implicit-SAVE
-        # advice should accompany the unrelated backend rejection.
+        # A POINTER with an explicit SAVE gets no implicit-SAVE advice.
         warning = self.check('''subroutine work()
 integer,pointer,save::p=>null()
 print *,associated(p)
 end subroutine
-''', ['-Wimplicit-save'], errors=True)
+''', ['-Wimplicit-save'])
         self.assertNotIn('[implicit-save]', warning)
 
     def test_no_initializer_and_scope_boundaries(self):

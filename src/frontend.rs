@@ -74,6 +74,7 @@ pub(crate) fn lower_program_body(
         do_variables::check(&program, src)?;
         let program = crate::chains::resolve(program)?;
         let program = internal_procedures::disambiguate(program);
+        let program = saved_storage::resolve(program)?;
         let program = host_storage::resolve(program)?;
         let program = protected::resolve(program)?;
         let program = pdt::resolve(program)?;

@@ -12,6 +12,66 @@ use std::collections::HashMap;
 pub(crate) const REPEAT: &str = "@data_repeat";
 /// The name a SAVE statement without a list gives, for every local variable.
 pub(crate) const SAVE_ALL: &str = "@save_all";
+/// `DummyIntent { name, intent: SAVED_STORAGE }`: a saved ALLOCATABLE or
+/// POINTER local of intrinsic type, whose storage `saved_storage` moves to a
+/// generated module.
+pub(crate) const SAVED_STORAGE: &str = "@saved_storage";
+
+/// Whether the saved local `name` keeps its storage in a module: a
+/// deferred-shape array, or an ALLOCATABLE or POINTER scalar, of intrinsic
+/// type other than deferred-length CHARACTER.
+fn module_storage(body: &[Stmt], name: &str) -> bool {
+    let attribute = body.iter().any(|s| matches!(s, Stmt::DummyIntent { name: n, intent } if n == name && (intent == "allocatable" || intent == "pointer")));
+    body.iter().any(|s| match s {
+        Stmt::ArrayDecl { kind, name: n, dims } if n == name => !crate::substrings::deferred(kind) && dims.iter().any(|d| {
+            let mut deferred = false;
+            crate::procedure_arguments::visit_expr(&mut d.clone(), &mut |e| deferred |= matches!(e, Expr::Ident(i) if i == "@deferred_extent"));
+            deferred
+        }),
+        Stmt::VarDecl { names, .. } if names.iter().any(|n| n == name) => attribute,
+        Stmt::InitializedDecl { entities, .. } if entities.iter().any(|(n, v)| n == name && v.is_none()) => attribute,
+        _ => false,
+    })
+}
+
+/// Rejects the saved ALLOCATABLE and POINTER variables of BLOCK constructs,
+/// whose storage is not yet kept between executions of the BLOCK.
+fn reject_block_saves(body: &[Stmt], nested: bool) -> Result<(), String> {
+    if nested {
+        for s in body {
+            let saved = match s {
+                Stmt::DummyIntent { name, intent } if intent == "save" || intent == crate::ast::NULL_INITIALIZED => Some(name.clone()),
+                Stmt::InitializedDecl { attributes, entities, .. }
+                    if attributes.iter().any(|a| a == "save") && attributes.iter().any(|a| a == "pointer" || a == "allocatable") => entities.first().map(|(n, _)| n.clone()),
+                _ => None,
+            };
+            if let Some(name) = saved {
+                let dynamic = body.iter().any(|s| matches!(s, Stmt::DummyIntent { name: n, intent } if *n == name && (intent == "allocatable" || intent == "pointer")));
+                if dynamic {
+                    return Err(format!("SAVE of the ALLOCATABLE or POINTER variable `{name}` of a BLOCK, or its `=> NULL()` initialization, is not yet supported; declare it in the procedure"));
+                }
+            }
+        }
+    }
+    for s in body {
+        if !matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. }) {
+            let mut copy = s.clone();
+            for b in crate::procedure_arguments::children(&mut copy) { reject_block_saves(b, true)?; }
+        }
+    }
+    Ok(())
+}
+
+/// Removes the NULL_INITIALIZED markers of nested constructs, whose
+/// variables are not yet saved by their initialization.
+fn strip_null_initialized(body: &mut Vec<Stmt>) {
+    body.retain(|s| !matches!(s, Stmt::DummyIntent { intent, .. } if intent == crate::ast::NULL_INITIALIZED));
+    for s in body.iter_mut() {
+        if !matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. }) {
+            for b in crate::procedure_arguments::children(s) { strip_null_initialized(b); }
+        }
+    }
+}
 /// An implied-DO list of DATA objects: `@data_implied_do(var, first, last, objects...)`.
 pub(crate) const IMPLIED_DO: &str = "@data_implied_do";
 
@@ -399,10 +459,12 @@ fn called(body: &mut [Stmt], name: &str) -> bool {
 /// which keeps its value between calls. A main program's and a module's
 /// variables keep their values anyway.
 fn save(body: &mut Vec<Stmt>, dummies: Option<&[String]>) -> Result<(), String> {
+    reject_block_saves(body, false)?;
     let mut names = vec![];
     let mut all = false;
     body.retain(|s| match s {
-        Stmt::DummyIntent { name, intent } if intent == "save" => {
+        // `=> NULL()` in a declaration implies SAVE.
+        Stmt::DummyIntent { name, intent } if intent == "save" || intent == crate::ast::NULL_INITIALIZED => {
             if name == SAVE_ALL {
                 all = true;
             } else {
@@ -412,6 +474,18 @@ fn save(body: &mut Vec<Stmt>, dummies: Option<&[String]>) -> Result<(), String> 
         }
         _ => true,
     });
+    strip_null_initialized(body);
+    // A saved ALLOCATABLE or POINTER scalar, `real, pointer, save :: p`,
+    // declares no storage of its own: a procedure keeps it in a module.
+    for s in body.iter_mut() {
+        if let Stmt::InitializedDecl { kind, attributes, entities } = s {
+            let dynamic = attributes.iter().any(|a| a == "pointer" || a == "allocatable");
+            if dynamic && attributes.iter().any(|a| a == "save") && entities.iter().all(|(_, v)| v.is_none()) {
+                names.extend(entities.iter().map(|(n, _)| n.clone()));
+                *s = Stmt::VarDecl { kind: kind.clone(), names: entities.iter().map(|(n, _)| n.clone()).collect() };
+            }
+        }
+    }
     let Some(dummies) = dummies else { return Ok(()) };
     if all {
         // External procedures and named constants are not variables.
@@ -440,6 +514,12 @@ fn save(body: &mut Vec<Stmt>, dummies: Option<&[String]>) -> Result<(), String> 
     for name in names {
         if dummies.contains(&name) {
             return Err(format!("dummy argument `{name}` cannot have the SAVE attribute"));
+        }
+        if module_storage(body, &name) {
+            if !body.iter().any(|s| matches!(s, Stmt::DummyIntent { name: n, intent } if *n == name && intent == SAVED_STORAGE)) {
+                body.push(Stmt::DummyIntent { name, intent: SAVED_STORAGE.into() });
+            }
+            continue;
         }
         if let Some(at) = body.iter().position(|s|
             matches!(s, Stmt::DerivedDecl { names, .. } if names.contains(&name))) {

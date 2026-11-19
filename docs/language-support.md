@@ -320,6 +320,17 @@ attribute or statement or by a declaration initializer, and use static storage
 like module arrays; a saved array without an initializer starts undefined.
 Saved CHARACTER arrays are limited to 1024 elements. TARGET locals and module
 initialization remain unsupported.
+Saved ALLOCATABLE and POINTER locals of intrinsic type, arrays and scalars,
+keep their allocation and values between calls: by the SAVE attribute, a SAVE
+statement, SAVE without a list, or a `=> null()` initialization, which implies
+SAVE (`real, pointer :: work(:) => null()`). They are stored as module
+variables of a generated module, so recursive activations share them, as the
+standard requires; a module procedure's saved locals belong to the module's
+object file, so programs that use a separately compiled module share them.
+Deferred-length CHARACTER scalars, `character(:), allocatable, save :: s`,
+are kept the same way; deferred-length CHARACTER arrays are not yet, and a saved
+ALLOCATABLE or POINTER variable of a BLOCK construct, or one initialized with
+`=> null()` there, is rejected. Run `python tests/test_saved_allocatables.py`.
 Run `python tests/test_saved_locals.py` and `python tests/test_saved_characters.py`;
 `tests/programs/xsave_counter.f90` is a small numeric example.
 

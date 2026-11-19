@@ -273,7 +273,7 @@ fn candidates(body: &[Stmt], params: &[String], name: &str, internal: &dyn Fn(&s
                 allocatables.extend(names.iter().map(|n| (n.clone(), offset)));
                 if attributes.iter().any(|a| a == "save") { saved.extend(names.iter().cloned()); }
             }
-            Stmt::DummyIntent { name, intent } if intent == "save" => { saved.insert(name.clone()); }
+            Stmt::DummyIntent { name, intent } if intent == "save" || intent == crate::data_statements::SAVED_STORAGE => { saved.insert(name.clone()); }
             Stmt::InitializedDecl { attributes, entities, .. } if attributes.iter().any(|a| a.eq_ignore_ascii_case("save")) => {
                 saved.extend(entities.iter().map(|(n, _)| n.clone()));
             }

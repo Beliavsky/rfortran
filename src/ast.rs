@@ -572,6 +572,14 @@ pub fn section_or_call(name: String, mut args: Vec<Expr>) -> Expr {
 pub fn pointer_initializer(target: Expr) -> Expr {
     Expr::Call("@pointer_initializer".into(), vec![target])
 }
+/// `DummyIntent { name, intent: NULL_INITIALIZED }`: `name => NULL()` in the
+/// declaration of a variable of intrinsic type, which implies SAVE (see
+/// `data_statements::save`).
+pub(crate) const NULL_INITIALIZED: &str = "@null_initialized";
+pub fn null_initializer(value: &Option<Expr>) -> bool {
+    matches!(value, Some(Expr::Call(marker, args)) if marker == "@pointer_initializer"
+        && matches!(args.as_slice(), [Expr::Call(n, a)] if n.eq_ignore_ascii_case("null") && a.is_empty()))
+}
 pub fn split_pointer_initializer(name: &str, value: Option<Expr>) -> (Option<Expr>, Option<Stmt>) {
     match value {
         Some(Expr::Call(marker, mut args)) if marker == "@pointer_initializer" && args.len() == 1 => {
