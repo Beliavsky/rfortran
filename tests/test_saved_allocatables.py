@@ -216,17 +216,77 @@ program main
 call s()
 end program
 ''', 'variable `q` of a BLOCK')
-        # Deferred-length CHARACTER arrays are not yet kept in module storage.
-        self.reject('''subroutine s(t)
-character(*), intent(in) :: t
-character(:), allocatable, save :: names(:)
+
+    def test_saved_deferred_length_character_arrays(self):
+        # One length throughout, given by ALLOCATE and typed constructors,
+        # and lengths set at run time, including by an untyped constructor.
+        # The interpreter copies each element's whole storage, which is slow.
+        self.check('''program p
+implicit none
+call add('ab'); call add('cde'); call add('f')
+call grow('ab'); call grow('cde'); call grow('f')
+call show; call show
+contains
+subroutine add(s)
+character(len=*), intent(in) :: s
+character(len=:), allocatable, save :: names(:)
 if (.not. allocated(names)) allocate (character(len=4) :: names(0))
-names = [names, t]
+names = [character(len=4) :: names, s]
+print *, size(names), len(names), names
 end subroutine
-program main
-call s('abcd')
+subroutine grow(s)
+character(len=*), intent(in) :: s
+character(len=:), allocatable, save :: names(:)
+integer :: n
+if (.not. allocated(names)) then
+  allocate (character(len=len(s)) :: names(1))
+  names(1) = s
+else
+  n = max(len(names), len(s))
+  names = [character(len=n) :: names, s]
+end if
+print *, size(names), len(names), '[', names, ']'
+end subroutine
+subroutine show
+character(len=:), allocatable, save :: t(:)
+if (allocated(t)) then
+  print *, 'kept', size(t), len(t), t
+else
+  t = ['xy', 'zw']
+  print *, 'new', size(t), len(t)
+end if
+end subroutine
 end program
-''', 'persistent initialized locals currently require')
+''', '1 4 ab\n2 4 ab cde\n3 4 ab cde f\n1 2 [ab]\n2 3 [ab cde]\n3 3 [ab cdef ]\nnew 2 2\nkept 2 2 xyzw\n', interpreter=False)
+
+    def test_module_deferred_length_character_arrays(self):
+        # A module array whose length is set by the units that use it, and
+        # by the module's own procedures. The interpreter copies each
+        # element's whole storage, which is slow.
+        self.check('''module m
+implicit none
+character(len=:), allocatable :: names(:)
+contains
+subroutine set3
+names = ['abc', 'def']
+end subroutine
+end module
+program p
+use m
+implicit none
+names = ['ab', 'cd']
+print *, size(names), len(names), '[', names, ']'
+call set3
+print *, size(names), len(names), '[', names, ']'
+call add('f')
+print *, size(names), len(names), '[', names, ']'
+contains
+subroutine add(s)
+character(len=*), intent(in) :: s
+names = [character(len=3) :: names, s]
+end subroutine
+end program
+''', '2 2 [abcd]\n2 3 [abcdef]\n3 3 [abcdeff ]\n', interpreter=False)
 
 
 if __name__ == '__main__':

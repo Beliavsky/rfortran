@@ -77,6 +77,34 @@ end subroutine
 end program
 ''', '2 abcdefabcdef\nabcdefcdabcd\ncdabcdabcdef\n2 abcdefabcdef\nabcdefabcdef\nabcdefabwxyz\n2 abcdefxyzxyz\nxyzxyzabcdef\n')
 
+    def test_typed_constructors_with_allocatable_items(self):
+        # ALLOCATABLE CHARACTER array items, local and of a module, take the
+        # constructor's length.
+        self.check('''module m
+character(len=4), allocatable :: g(:)
+end module
+program p
+use m
+implicit none
+allocate (g(1))
+g(1) = 'zz'
+g = [character(len=4) :: g, 'ab']
+print *, size(g), len(g), '[', g, ']'
+call add('cdefgh')
+contains
+subroutine add(s)
+character(len=*), intent(in) :: s
+character(len=4), allocatable :: names(:)
+allocate (names(1))
+names(1) = 'yy'
+names = [character(len=4) :: names, s, g]
+print *, size(names), '[', names, ']'
+names = [character(len=2) :: names]
+print *, size(names), '[', names, ']'
+end subroutine
+end program
+''', '2 4 [zz ab ]\n4 [yy cdefzz ab ]\n4 [yy cd zz ab ]\n')
+
     def test_typed_constructors_allocate_the_target(self):
         self.check('''program p
 implicit none

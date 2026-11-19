@@ -108,6 +108,13 @@ fn imports(body: &[Stmt], modules: &HashMap<String, Module>) -> Result<Names> {
     Ok(names)
 }
 fn rename(name: &mut String, names: &Names) {
+    // The length of a deferred-length CHARACTER array follows the array.
+    if let Some(array) = name.strip_prefix("@deferred_width$") {
+        if let Some(target) = names.get(array) {
+            *name = crate::deferred_arrays::width(target);
+        }
+        return;
+    }
     if let Some((root, component)) = name.split_once('%') {
         if let Some(target) = names.get(root) {
             *name = format!("{target}%{component}");
@@ -925,7 +932,7 @@ pub(crate) fn capture(mut program: Program) -> Result<Program> {
                         declaration.clone()
                     };
                     let mut declarations = vec![declaration];
-                    declarations.extend(body.iter().filter(|s|matches!(s,Stmt::DummyIntent {name:n,intent} if n==&name && matches!(intent.as_str(),"allocatable"|"pointer"|"target"|"@scalar_heap"))).cloned());
+                    declarations.extend(body.iter().filter(|s|matches!(s,Stmt::DummyIntent {name:n,intent} if n==&name && (matches!(intent.as_str(),"allocatable"|"pointer"|"target"|"@scalar_heap"|"@deferred_character_array") || intent.starts_with("@character_spec_length:")))).cloned());
                     data.insert(
                         name,
                         Data {
@@ -978,6 +985,10 @@ pub(crate) fn capture(mut program: Program) -> Result<Program> {
             .into_iter()
             .filter(|n| data.contains_key(n) && !declared.contains(n))
             .collect::<Vec<_>>();
+        // The length of a deferred-length CHARACTER array goes with it.
+        let widths: Vec<String> = names.iter().map(|n| crate::deferred_arrays::width(n))
+            .filter(|w| data.contains_key(w) && !declared.contains(w) && !names.contains(w)).collect();
+        names.extend(widths);
         names.sort();
         let mut prefix = vec![];
         for name in names {

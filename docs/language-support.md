@@ -327,8 +327,10 @@ SAVE (`real, pointer :: work(:) => null()`). They are stored as module
 variables of a generated module, so recursive activations share them, as the
 standard requires; a module procedure's saved locals belong to the module's
 object file, so programs that use a separately compiled module share them.
-Deferred-length CHARACTER scalars, `character(:), allocatable, save :: s`,
-are kept the same way; deferred-length CHARACTER arrays are not yet, and a saved
+Deferred-length CHARACTER scalars and arrays, `character(:), allocatable,
+save :: s, names(:)`, are kept the same way, with the length an array was last
+given. A module's deferred-length CHARACTER array may be given a new length by
+any unit that uses it and by the module's procedures. A saved
 ALLOCATABLE or POINTER variable of a BLOCK construct, or one initialized with
 `=> null()` there, is rejected. Run `python tests/test_saved_allocatables.py`.
 Run `python tests/test_saved_locals.py` and `python tests/test_saved_characters.py`;

@@ -419,11 +419,27 @@ impl Lower {
                     .context("CHARACTER constructor requires a nonnegative constant length")?;
                 let kind=TypeSpec::Character(Some(length));
                 let mut items=vec![];
+                // An item that is a CHARACTER array whose extent is known only
+                // at run time, as an ALLOCATABLE array, leaves the constructor
+                // to the assignment, which fills a temporary in item order.
+                let runtime=|arg:&Expr|matches!(arg,Expr::Ident(n)|Expr::Section{name:n,..}
+                    if matches!(symbols.get(n),Some((TypeSpec::Character(_),d)) if !d.is_empty()));
+                let mut deferred=false;
                 for arg in &args[1..] {
-                    let value=self.view(arg,symbols)?;
+                    let value=match self.view(arg,symbols) {
+                        Ok(value)=>value,
+                        Err(_) if runtime(arg)=>{deferred=true;break;}
+                        Err(error)=>return Err(error),
+                    };
                     if !matches!(value.kind,TypeSpec::Character(_)) {bail!("typed CHARACTER constructor requires CHARACTER elements");}
-                    if value.active.is_some() {bail!("typed CHARACTER constructor currently requires a fixed array extent");}
+                    if value.active.is_some() {deferred=true;break;}
                     items.extend(value.items.unwrap_or_else(||vec![arg.clone()]));
+                }
+                if deferred {
+                    let mut typed=vec![Expr::Str(serde_json::to_string(&kind)?)];
+                    typed.extend(args[1..].iter().cloned());
+                    *e=Expr::Call("@typed_constructor".into(),typed);
+                    return Ok(());
                 }
                 self.serial+=1;
                 let temp=format!("@typed_character_array_{}",self.serial);

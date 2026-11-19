@@ -18,12 +18,12 @@ pub(crate) const SAVE_ALL: &str = "@save_all";
 pub(crate) const SAVED_STORAGE: &str = "@saved_storage";
 
 /// Whether the saved local `name` keeps its storage in a module: a
-/// deferred-shape array, or an ALLOCATABLE or POINTER scalar, of intrinsic
-/// type other than deferred-length CHARACTER.
+/// deferred-shape array, including one of deferred-length CHARACTER, or an
+/// ALLOCATABLE or POINTER scalar, of intrinsic type.
 fn module_storage(body: &[Stmt], name: &str) -> bool {
     let attribute = body.iter().any(|s| matches!(s, Stmt::DummyIntent { name: n, intent } if n == name && (intent == "allocatable" || intent == "pointer")));
     body.iter().any(|s| match s {
-        Stmt::ArrayDecl { kind, name: n, dims } if n == name => !crate::substrings::deferred(kind) && dims.iter().any(|d| {
+        Stmt::ArrayDecl { name: n, dims, .. } if n == name => dims.iter().any(|d| {
             let mut deferred = false;
             crate::procedure_arguments::visit_expr(&mut d.clone(), &mut |e| deferred |= matches!(e, Expr::Ident(i) if i == "@deferred_extent"));
             deferred

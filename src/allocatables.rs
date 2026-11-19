@@ -452,7 +452,7 @@ fn logical_shape(
         Expr::Call(n, _) if matches!(n.as_str(),"size"|"shape"|"lbound"|"ubound"|"allocated"|"kind"|"@allocated_linear_element")=>Ok(None),
         // Constructor items are concatenated, not conformed; the extent is
         // their total, computed when the constructor is lowered.
-        Expr::Call(n, _) if n == "@array_constructor" => Ok(None),
+        Expr::Call(n, _) if n == "@array_constructor" || n == "@typed_constructor" => Ok(None),
         Expr::Call(n, args) if n == "matmul" && !shapes.contains_key(n) => {
             for arg in args {
                 if logical_shape(arg, shapes, guards)?.is_some_and(|(_, runtime)| runtime) {
@@ -714,7 +714,15 @@ fn runtime_character_items(value: &Expr, shapes: &Shapes, target: &str, serial: 
     let count = items.iter().map(|e| array(e).map_or(int(1),|(_,_,extent,_)| extent)).reduce(|a,b| bin(BinOp::Add,a,b)).unwrap_or(int(0));
     out.push(Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec![total.clone(),position.clone(),element.clone()]});
     out.push(assign(&total,count));
-    crate::heap::temporary(shapes[target].0.clone(),values.clone(),id(&total),out);
+    // The items of a typed constructor have its length.
+    let kind = match value {
+        Expr::Call(tag,items) if tag=="@typed_constructor" => match items.first() {
+            Some(Expr::Str(kind)) => serde_json::from_str(kind).ok().filter(|k| matches!(k,TypeSpec::Character(Some(_)))).unwrap_or_else(|| shapes[target].0.clone()),
+            _ => shapes[target].0.clone(),
+        },
+        _ => shapes[target].0.clone(),
+    };
+    crate::heap::temporary(kind,values.clone(),id(&total),out);
     out.push(assign(&position,int(0)));
     for item in items {
         let next = assign(&position,bin(BinOp::Add,id(&position),int(1)));

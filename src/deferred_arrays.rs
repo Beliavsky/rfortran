@@ -63,7 +63,10 @@ fn rewrite(body: &mut Vec<Stmt>, arrays: &[String], allocated: &mut std::collect
     let mut out = vec![];
     for mut s in std::mem::take(body) {
         match &mut s {
-            Stmt::Assign { name, value } if arrays.contains(name) => {
+            // A value that refers to the array, as [a, 'x'], is assigned
+            // with reallocation, which reads the array first.
+            Stmt::Assign { name, value } if arrays.contains(name)
+                && !serde_json::to_string(&*value).is_ok_and(|v| v.contains(&format!("\"{name}\""))) => {
                 if let Some((_, Some(size))) = shape(value) {
                     // CHARACTER arrays do not yet support a
                     // conditional DEALLOCATE, so the first assignment in
@@ -309,16 +312,60 @@ fn reallocate(body: &mut Vec<Stmt>, arrays: &[String], declared: &[String]) {
     *body = out;
 }
 
+/// The deferred-length CHARACTER arrays each module declares.
+type Modules = std::collections::HashMap<String, Vec<String>>;
+
+/// The names a unit declares, which hide those of its host and modules.
+fn local_names(body: &[Stmt]) -> Vec<String> {
+    body.iter().flat_map(|s| match s {
+        Stmt::ArrayDecl { name, .. } => vec![name.clone()],
+        Stmt::VarDecl { names, .. } | Stmt::DerivedDecl { names, .. } => names.clone(),
+        Stmt::InitializedDecl { entities, .. } => entities.iter().map(|(n, _)| n.clone()).collect(),
+        _ => vec![],
+    }).collect()
+}
+
 /// Lower the deferred-length CHARACTER arrays of a program unit and of the
 /// units it contains. An error carries the source offset of the definition
 /// whose length differs.
 pub(crate) fn resolve(body: &mut Vec<Stmt>) -> Result<(), (String, Option<usize>)> {
+    let modules: Modules = body.iter().filter_map(|s| match s {
+        Stmt::Module { name, body } => Some((name.clone(), body.iter().filter_map(|s| match s {
+            Stmt::ArrayDecl { kind, name, .. } if crate::substrings::deferred(kind) => Some(name.clone()),
+            _ => None,
+        }).collect())),
+        _ => None,
+    }).collect();
+    unit(body, &[], &modules)
+}
+
+/// A unit sees the arrays of its host and of the modules it uses, whose
+/// length any unit may set at run time, so their definitions here set it.
+fn unit(body: &mut Vec<Stmt>, host: &[String], modules: &Modules) -> Result<(), (String, Option<usize>)> {
+    let own = local_names(body);
+    let mut visible: Vec<String> = host.iter().filter(|n| !own.contains(n)).cloned().collect();
+    for s in body.iter() {
+        if let Stmt::Use { module, only, renames, .. } = s {
+            let Some(arrays) = modules.get(module) else { continue };
+            for array in arrays {
+                let renamed: Vec<&String> = renames.iter().filter(|(_, remote)| remote == array).map(|(local, _)| local).collect();
+                let names: Vec<String> = if !renamed.is_empty() {
+                    renamed.into_iter().cloned().collect()
+                } else if only.as_ref().is_none_or(|o| o.contains(array)) {
+                    vec![array.clone()]
+                } else { vec![] };
+                for n in names {
+                    if !own.contains(&n) && !visible.contains(&n) { visible.push(n); }
+                }
+            }
+        }
+    }
     let declared: Vec<String> = body.iter().filter_map(|s| match s {
         Stmt::ArrayDecl { kind, name, .. } if crate::substrings::deferred(kind) => Some(name.clone()),
         _ => None,
     }).collect();
     let mut lowered = vec![];
-    let mut runtime = vec![];
+    let mut runtime = visible.clone();
     for name in &declared {
         let mut lengths = vec![];
         definitions(body, name, None, &mut lengths);
@@ -338,15 +385,22 @@ pub(crate) fn resolve(body: &mut Vec<Stmt>) -> Result<(), (String, Option<usize>
         rewrite(body, &lowered, &mut Default::default());
     }
     if !runtime.is_empty() {
-        let declared: Vec<String> = body.iter().filter_map(|s| match s {
+        let mut declared: Vec<String> = body.iter().filter_map(|s| match s {
             Stmt::ArrayDecl { name, .. } => Some(name.clone()),
             _ => None,
         }).collect();
+        declared.extend(visible.iter().cloned());
         reallocate(body, &runtime, &declared);
     }
+    // The arrays whose length is set at run time are visible to the
+    // contained units.
     for s in body.iter_mut() {
-        if let Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } | Stmt::Block { body } = s {
-            resolve(body)?;
+        match s {
+            Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => unit(body, &runtime, modules)?,
+            // The rewriting above has reached the statements of a BLOCK,
+            // and of the BLOCKs it generates.
+            Stmt::Block { body } => unit(body, &[], modules)?,
+            _ => {}
         }
     }
     Ok(())
