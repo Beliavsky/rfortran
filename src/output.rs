@@ -970,7 +970,18 @@ pub(crate) fn prepare_character_views(mut program:crate::ast::Program)->Result<c
                     // storage is lowered. Leaving [scalar_text] for the later
                     // numeric constructor pass rejects its element type.
                     if matches!(item,Expr::Call(tag,_) if tag=="@array_constructor") {
-                        if let Ok((kind,values))=crate::character_elementals::Lower::fixed_items(item,&symbols) {
+                        // Scalar CHARACTER items whose lengths are known only
+                        // at run time, as `s(1:k)`, are stored as they are.
+                        let fixed=crate::character_elementals::Lower::fixed_items(item,&symbols);
+                        if fixed.is_err() && matches!(item,Expr::Call(_,values) if !values.is_empty()
+                            && values.iter().all(|v|matches!(crate::array_calls::scalar_actual_kind(v,&symbols),Ok(TypeSpec::Character(_))))) {
+                            let start=out.len();
+                            crate::array_calls::character_constructor(item,&symbols,&mut out,serial)?;
+                            for generated in &out[start..] {
+                                if let Stmt::ArrayDecl{kind,name,dims}=generated {symbols.insert(name.clone(),(kind.clone(),dims.clone()));}
+                            }
+                        }
+                        if let Ok((kind,values))=fixed {
                             if matches!(kind,TypeSpec::Character(_)) {
                                 *item=if values.is_empty() {crate::empty_constructors::parsed(kind,values)}
                                     else {Expr::Call("@array_constructor".into(),values)};

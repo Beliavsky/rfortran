@@ -1693,11 +1693,25 @@ pub(crate) fn character_constructor(actual:&mut Expr, shapes:&Shapes, prefix:&mu
         _ if empty.as_ref().is_some_and(|k|matches!(k,TypeSpec::Character(_)))=>vec![],
         _=>return Ok(None),
     };
-    let kind=if let Some(value)=values.first() {scalar_actual_kind(value,shapes)?} else {empty.or(section_kind).context("empty CHARACTER constructor requires an explicit type")?};
+    // An item whose length is known only at run time, as `s(1:k)` or
+    // `trim(s)`, must have the length of the others; the constructor takes
+    // the length of an item known when compiling.
+    fn runtime_length(e:&Expr,shapes:&Shapes)->bool {
+        let constant=|b:&Option<Box<Expr>>|b.as_deref().is_none_or(|e|crate::parameters::integer_constant(e).is_ok());
+        match e {
+            Expr::Section{name,lower,upper,stride:None} if matches!(shapes.get(name),Some((TypeSpec::Character(_),d)) if d.is_empty()) => !constant(lower)||!constant(upper),
+            Expr::Bin(BinOp::Concat,a,b)=>runtime_length(a,shapes)||runtime_length(b,shapes),
+            Expr::Call(n,a) if n=="trim" && a.len()==1 => !matches!(a[0],Expr::Str(_)),
+            Expr::Call(n,a) if matches!(n.as_str(),"adjustl"|"adjustr") && a.len()==1 => runtime_length(&a[0],shapes),
+            _=>false,
+        }
+    }
+    let first=values.iter().find(|v|!runtime_length(v,shapes)).or(values.first());
+    let kind=if let Some(value)=first {scalar_actual_kind(value,shapes)?} else {empty.or(section_kind).context("empty CHARACTER constructor requires an explicit type")?};
     if !matches!(kind,TypeSpec::Character(_)) {bail!("CHARACTER array actual requires CHARACTER constructor elements");}
     for value in &values {
         if matches!(value,Expr::Ident(n) if shapes.get(n).is_some_and(|(_,dims)|!dims.is_empty())) {bail!("CHARACTER array actual constructor elements must currently be scalar");}
-        if scalar_actual_kind(value,shapes)?!=kind {bail!("CHARACTER constructor elements must have equal lengths");}
+        if !runtime_length(value,shapes) && scalar_actual_kind(value,shapes)?!=kind {bail!("CHARACTER constructor elements must have equal lengths");}
     }
     if values.len()>1024 {bail!("CHARACTER array actual constructors support at most 1024 elements");}
     *serial+=1;let temp=format!("@call_character_array_{serial}");let count=values.len() as i64;

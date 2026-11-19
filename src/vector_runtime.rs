@@ -240,7 +240,18 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
         Expr::Logical(_) => Ok(Some((TypeSpec::Logical, vec![]))),
         Expr::Str(n) => Ok(Some((TypeSpec::Character(Some(n.len())), vec![]))),
         Expr::Section { name, .. } => {
-            if matches!(s.get(name),Some((TypeSpec::Character(_),d)) if d.is_empty()) {return Ok(Some((s[name].0.clone(),vec![])));}
+            // A substring of a scalar has the length of its range.
+            if let Some((TypeSpec::Character(length),d)) = s.get(name).filter(|(_,d)| d.is_empty()) {
+                let Expr::Section { lower, upper, stride: None, .. } = e else { return Ok(Some((s[name].0.clone(),d.clone()))) };
+                let first = lower.as_deref().cloned().unwrap_or(int(1));
+                let last = upper.as_deref().cloned().unwrap_or(int(length.unwrap_or(1) as i64));
+                let count = Expr::Call("max".into(), vec![int(0), Expr::Bin(BinOp::Add, Box::new(Expr::Bin(BinOp::Sub, Box::new(last), Box::new(first))), Box::new(int(1)))]);
+                let kind = match crate::parameters::integer_constant(&count) {
+                    Ok(n) => TypeSpec::Character(Some(n as usize)),
+                    Err(_) => crate::ast::character_length(count),
+                };
+                return Ok(Some((kind,vec![])));
+            }
             let a = axes(name, s)?;
             if a.len() != 1 {
                 bail!("vector expression must be rank one");
@@ -321,10 +332,18 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
                 if i == 0 {
                     kind = k;
                 } else if !crate::pointers::same_kind(&kind, &k) {
-                    if matches!((&kind, &k), (TypeSpec::Character(_), TypeSpec::Character(_))) {
+                    // A CHARACTER item whose length is known only at run time,
+                    // as `s(1:k)`, must have the length of the others; the
+                    // constructor keeps a length known when compiling.
+                    let runtime = |t: &TypeSpec| matches!(t, TypeSpec::CharacterLength(_));
+                    let character = |t: &TypeSpec| matches!(t, TypeSpec::Character(_)) || runtime(t);
+                    if character(&kind) && character(&k) && (runtime(&kind) || runtime(&k)) {
+                        if runtime(&kind) { kind = k; }
+                    } else if matches!((&kind, &k), (TypeSpec::Character(_), TypeSpec::Character(_))) {
                         bail!("CHARACTER array constructor elements must have equal lengths");
+                    } else {
+                        bail!("vector constructor items must have the same type and kind");
                     }
-                    bail!("vector constructor items must have the same type and kind");
                 }
                 dims.push(d.first().cloned().unwrap_or(int(1)));
             }

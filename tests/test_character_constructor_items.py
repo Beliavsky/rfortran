@@ -47,6 +47,36 @@ print '(3("[",a,"]"))', tags
 end program
 ''', '3\n[xxxxxx][ab    ][    ab]\n')
 
+    def test_substring_and_runtime_length_items(self):
+        # Items of the same length as substrings and concatenations of them,
+        # with constant bounds, and with lengths known only at run time.
+        self.check('''program p
+implicit none
+character(len=6) :: s, c(2)
+character(len=8) :: u
+integer :: k
+s = 'abcdef'
+u = 'xyzxyz'
+k = 2
+call show([s, s(1:2)//'cdef'])
+print *, [s, s(3:4)//s(1:4)]
+c = ['cd'//s(1:4), s(:2)//'cd'//s(5:)]
+print *, c
+call show([s, s(1:k)//'cdef'])
+print *, [s, s(1:k)//'cdef']
+c = [s, s(1:k)//'wxyz']
+print *, c
+call show([s, trim(u)])
+c = [trim(u), s]
+print *, c
+contains
+subroutine show(v)
+character(len=*), intent(in) :: v(:)
+print *, size(v), v
+end subroutine
+end program
+''', '2 abcdefabcdef\nabcdefcdabcd\ncdabcdabcdef\n2 abcdefabcdef\nabcdefabcdef\nabcdefabwxyz\n2 abcdefxyzxyz\nxyzxyzabcdef\n')
+
     def test_typed_constructors_allocate_the_target(self):
         self.check('''program p
 implicit none
