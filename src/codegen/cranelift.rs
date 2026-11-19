@@ -4235,9 +4235,10 @@ impl CraneliftBackend {
             cranelift_module::default_libcall_names(),
         )?;
         let mut obj = ObjectModule::new(builder);
-        if let Some(owners) = &self.module_owners {
-            crate::compile_profile::run("codegen.module_data", || module_data::declare(&mut obj, module, owners))?;
-        }
+        let shared = match &self.module_owners {
+            Some(owners) => crate::compile_profile::run("codegen.module_data", || module_data::declare(&mut obj, module, owners))?,
+            None => vec![],
+        };
         let file_units = obj.declare_data(".rfort.file_units", Linkage::Local, true, false)?;
         let mut file_data = DataDescription::new();
         file_data.define_zeroinit(2048 * 8);
@@ -4881,7 +4882,8 @@ impl CraneliftBackend {
             obj.clear_context(&mut ctx_main);
         }
         c_interop::exports(&mut obj,module,isa.pointer_type(),&func_ids,self.module_owners.as_ref())?;
-        let objf = obj.finish();
+        let mut objf = obj.finish();
+        module_data::finish(&mut objf, &shared);
         Ok(objf.emit()?)
     }
 }

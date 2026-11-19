@@ -30,7 +30,7 @@ fn module_name(owner: &str, unit: &str) -> String {
 /// of a module name, Some("") for the object that has the procedure, or None
 /// when `module` is not generated here.
 pub(crate) fn owner(module: &str) -> Option<&str> {
-    let rest = module.strip_prefix(MODULE)?;
+    let rest = module.strip_prefix(MODULE).or_else(|| module.strip_prefix(crate::host_storage::MODULE))?;
     let (length, rest) = rest.split_once('_')?;
     rest.get(..length.parse::<usize>().ok()?)
 }

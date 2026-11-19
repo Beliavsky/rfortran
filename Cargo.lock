@@ -1020,6 +1020,7 @@ dependencies = [
  "lazy_static",
  "log",
  "logos",
+ "object",
  "serde",
  "serde_json",
  "smallvec",

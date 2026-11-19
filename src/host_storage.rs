@@ -23,6 +23,9 @@ use crate::ast::{Expr, Program, Stmt, TypeSpec};
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 
+/// The prefix of the generated modules, `rfort_host_<n>_<m>_<host>` for a
+/// host in module m, whose name has n characters, and `rfort_host_0__<host>`
+/// for another host: see `crate::saved_storage::owner`.
 pub(crate) const MODULE: &str = "rfort_host_";
 
 /// The names of variables, procedures and constants a statement list refers
@@ -499,7 +502,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
                         }
                         let result = is_function.then(|| result_name(name, body));
                         let params = params.clone();
-                        let unit = format!("{module}_{name}");
+                        let unit = format!("{}_{module}_{name}", module.len());
                         lower.host(&unit, body, &internal, &params, result.as_deref(), false, &uses, &outer, i)?;
                     }
                 }
@@ -514,7 +517,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
                 }
                 let result = is_function.then(|| result_name(name, body));
                 let params = params.clone();
-                let unit = name.clone();
+                let unit = format!("0__{name}");
                 lower.host(&unit, body, &internal, &params, result.as_deref(), false, &[], &HashSet::new(), i)?;
             }
             _ => {}
@@ -539,7 +542,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         }
         main.reverse();
         let at = positions.first().copied().unwrap_or(p.body.len());
-        let unit = format!("main_{}", p.name);
+        let unit = format!("0__main_{}", p.name);
         lower.host(&unit, &mut main, &main_internal, &[], None, true, &[], &HashSet::new(), at)?;
         p.body.splice(at..at, main);
     }

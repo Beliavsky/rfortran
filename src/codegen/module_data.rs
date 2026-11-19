@@ -69,11 +69,25 @@ fn constant(value: &IExpr) -> Result<crate::ast::Expr> {
         _ => bail!("saved initializer must be a resolved scalar constant"),
     })
 }
+/// Storage that every object using it defines (COMMON blocks, host storage),
+/// which the linker must merge. On COFF, where weak definitions do not merge,
+/// `finish` makes a copy that is zero or has no initial values a common
+/// symbol of `size` bytes, which the linker zero-fills and merges with the
+/// other copies, and a copy with values, as BLOCK DATA gives, an ordinary
+/// definition, which takes the place of the common symbols. (A weak COFF
+/// definition would be only a default, which a common symbol overrides.)
+pub(super) struct Shared {
+    id: cranelift_module::DataId,
+    /// The size of a common symbol; None for a definition.
+    common: Option<u64>,
+}
+
 fn walk(
     obj: &mut ObjectModule,
     body: &[IStmt],
     owners: &HashSet<String>,
     types: &mut HashMap<String, TypeSpec>,
+    shared: &mut Vec<Shared>,
 ) -> Result<()> {
     // Child scopes inherit types, but must not change the parent's bindings.
     // Save only declarations introduced here instead of cloning every visible
@@ -111,19 +125,19 @@ fn walk(
                 // procedures have translation-unit storage. Module procedures
                 // instead retain their real module owner and exported symbol.
                 // So does the storage of saved ALLOCATABLE and POINTER locals of
-                // such procedures (see crate::saved_storage); that of module
-                // procedures belongs to their module.
+                // such procedures (see crate::saved_storage), and of the host
+                // variables of their internal procedures (see
+                // crate::host_storage); that of module procedures belongs to
+                // their module, whose object defines it.
                 let saved_owner = crate::saved_storage::owner(module);
                 let private_saved = module == "@pointer_saved" || saved_owner == Some("");
                 // COMMON block storage (see crate::common) is defined by every
                 // object that uses the block; weak definitions let objects
-                // compiled separately share one copy.
+                // compiled separately share one copy (on COFF, common symbols:
+                // see Shared).
                 // So is the storage of the pools of recursive types (see
                 // crate::recursive_types), which no module file describes.
-                // And so is the storage of the host variables of internal
-                // procedures (see crate::host_storage), named after their host.
-                let common = crate::common::is_block_module(module) || module == crate::recursive_types::MODULE
-                    || module.starts_with(crate::host_storage::MODULE);
+                let common = crate::common::is_block_module(module) || module == crate::recursive_types::MODULE;
                 let owned = private_saved || common || owners.contains(saved_owner.unwrap_or(module));
                 let id = obj.declare_data(
                     &symbol,
@@ -157,34 +171,40 @@ fn walk(
                             deferred: false,
                         }
                     };
+                    let contents = bytes(&initial, obj.isa().endianness() == ir::Endianness::Little)?;
+                    let coff = obj.isa().triple().binary_format == target_lexicon::BinaryFormat::Coff;
+                    if common && coff {
+                        let zero = !initial.initialized || contents.iter().all(|b| *b == 0);
+                        shared.push(Shared { id, common: zero.then_some(contents.len() as u64) });
+                        if zero {
+                            continue;
+                        }
+                    }
                     let mut data = DataDescription::new();
-                    data.define(
-                        bytes(&initial, obj.isa().endianness() == ir::Endianness::Little)?
-                            .into_boxed_slice(),
-                    );
+                    data.define(contents.into_boxed_slice());
                     data.set_align(8);
                     obj.define_data(id, &data)?;
                 }
             }
             IStmt::Block { body } | IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } => {
-                walk(obj, body, owners, types)?
+                walk(obj, body, owners, types, shared)?
             }
             IStmt::If {
                 then_body,
                 else_body,
                 ..
             } => {
-                walk(obj, then_body, owners, types)?;
+                walk(obj, then_body, owners, types, shared)?;
                 if let Some(body) = else_body {
-                    walk(obj, body, owners, types)?;
+                    walk(obj, body, owners, types, shared)?;
                 }
             }
             IStmt::SelectCase { cases, default, .. } => {
                 for case in cases {
-                    walk(obj, &case.body, owners, types)?;
+                    walk(obj, &case.body, owners, types, shared)?;
                 }
                 if let Some(body) = default {
-                    walk(obj, body, owners, types)?;
+                    walk(obj, body, owners, types, shared)?;
                 }
             }
             _ => {}
@@ -203,9 +223,24 @@ pub(super) fn declare(
     obj: &mut ObjectModule,
     module: &Module,
     owners: &HashSet<String>,
-) -> Result<()> {
+) -> Result<Vec<Shared>> {
+    let mut shared = vec![];
     for function in &module.funcs {
-        walk(obj, &function.body, owners, &mut HashMap::new())?;
+        walk(obj, &function.body, owners, &mut HashMap::new(), &mut shared)?;
     }
-    Ok(())
+    Ok(shared)
+}
+
+/// Makes the shared storage of a COFF object common symbols and ordinary
+/// definitions.
+pub(super) fn finish(product: &mut cranelift_object::ObjectProduct, shared: &[Shared]) {
+    for s in shared {
+        let Some((symbol, _)) = product.data_objects[s.id] else { continue };
+        let entry = product.object.symbol_mut(symbol);
+        entry.weak = false;
+        if let Some(size) = s.common {
+            entry.section = object::write::SymbolSection::Common;
+            entry.size = size;
+        }
+    }
 }
