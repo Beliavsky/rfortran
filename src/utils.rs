@@ -153,6 +153,7 @@ pub fn print_help() {
     println!("  -Wbare-end          Warn about END statements without the unit or type name (in -Wstyle)");
     println!("  -Wkeyword-case      Warn about keywords written in more than one case (in -Wstyle)");
     println!("  -Wtabs              Warn about tab characters in free-form code (in -Wstyle)");
+    println!("  -Wsource-suffix     Warn about .f95, .f03, .f08, .f18 and .f23 file names, which .f90 replaces (in -Wstyle)");
     println!("  -Wline-length[=N]   Warn about free-form lines longer than 132 or N characters (in -Wstyle)");
     println!("  -Wduplicate-constant Warn about REAL named constants and kind parameters defined in several scopes (in -Wstyle)");
     println!("  -Wdeclaration-order Warn about dummies declared after locals or the result (in -Wstyle)");

@@ -119,6 +119,7 @@ const CATEGORIES: &[&str] = &[
     "quote-style",
     "could-be-function",
     "redundant-use",
+    "source-suffix",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface, conversion, and module-default-public remain
@@ -189,6 +190,7 @@ const STYLE: &[&str] = &[
     "function-io",
     "old-array-constructor",
     "redundant-use",
+    "source-suffix",
 ];
 /// Categories that -Weverything leaves out: `one-line-if` reports the one-line
 /// IFs that `could-be-one-line-if` suggests. (`quote-style` is included with

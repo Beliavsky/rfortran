@@ -95,7 +95,7 @@ pub fn build(
             .to_ascii_lowercase()
             .as_str()
         {
-            "f90" | "f95" | "f03" | "f08" => sources.push(input.clone()),
+            "f90" | "f95" | "f03" | "f08" | "f18" | "f23" => sources.push(input.clone()),
             extension if utils::FIXED_FORM_EXTENSIONS.contains(&extension) => sources.push(input.clone()),
             "obj" | "o" => objects.push(input.clone()),
             _ => bail!(

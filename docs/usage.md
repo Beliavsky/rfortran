@@ -161,6 +161,7 @@ categories it wants.
 | [`-Wbare-end`](../warnings/bare-end.f90) | No | No | END statements of programs, modules, procedures and derived types without the name, such as `end` or `end subroutine` |
 | [`-Wkeyword-case`](../warnings/keyword-case.f90) | No | No | Keywords written in more than one case in a file, in one warning per file |
 | [`-Wtabs`](../warnings/tabs.f90) | No | No | Tab characters in free-form code, in one warning per file |
+| `-Wsource-suffix` | No | No | A source file named `.f95`, `.f03`, `.f08`, `.f18` or `.f23` (or upper case): the suffix marks free source form, as `.f90` does, and does not select a standard; the note suggests renaming the file to `.f90` (`.F90` for preprocessed sources) and the matching `-std=`. gfortran does not recognize `.f18` and `.f23`, and Intel's compilers take only `.f90` for free form without further options |
 | [`-Wline-length[=N]`](../warnings/line-length.f90) | No | No | Free-form lines longer than 132 characters, or N, in one warning per file |
 | [`-Wsemicolon`](../warnings/semicolon.f90) | No | No | Lines with more than one statement, such as `x = 1; y = 2`, and free-form lines ending in a semicolon; a CASE, TYPE IS, CLASS IS or RANK selector followed by one statement, such as `case ("cos"); y = cos(x)`, is not reported; in one warning per file |
 | [`-Wtrailing-whitespace`](../warnings/trailing-whitespace.f90) | No | No | Free-form lines ending in spaces or tabs, in one warning per file |
@@ -1032,8 +1033,8 @@ Fortran: Style and Usage*. Each is opt-in and can also be selected alone, and
   `-Wsemicolon`, `-Wtrailing-whitespace`, `-Wunnamed-exit`, `-Wgoto`, `-Wobsolescent`, `-Wstop-in-procedure`,
   `-Wassumed-size`, `-Wredundant-implicit`, `-Wname-case`,
   `-Wfunction-result`, `-Wduplicate-constant`, `-Wdeclaration-order`,
-  `-Wargument-order`, `-Wdo-while-true`, `-Wold-array-constructor` and
-  `-Wredundant-use`;
+  `-Wargument-order`, `-Wdo-while-true`, `-Wold-array-constructor`,
+  `-Wredundant-use` and `-Wsource-suffix`;
 - the existing checks `-Windentation`, `-Wuse-without-only`,
   `-Wmodule-default-public`, `-Wliteral-kind`, `-Wdefault-real`,
   `-Wcould-be-parameter`, `-Wmissing-intent` and `-Wimplicit-typing`.
@@ -1317,8 +1318,10 @@ Alternatively, compile modules in dependency order with `-c`, then compile their
 consumers and link the objects. Successful native compilation writes one
 `<module-name>.rmod` interface for each module defined in the source group.
 Existing `.obj`/`.o` files can also be supplied for linking. Free-form `.f90`,
-`.f95`, `.f03`, and `.f08` inputs are accepted. The existing language limitations
-still apply.
+`.f95`, `.f03`, `.f08`, `.f18` and `.f23` inputs are accepted, and their
+upper-case forms, like `.F90`, are preprocessed. The suffix marks free source
+form only; `-std=` selects the standard to check, and `-Wsource-suffix`
+suggests `.f90`. The existing language limitations still apply.
 
 For example, on Windows:
 

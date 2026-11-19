@@ -16,7 +16,7 @@ use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 
 /// Extensions of the sources that gfortran preprocesses.
-const PREPROCESSED_EXTENSIONS: &[&str] = &["F", "FOR", "FTN", "FPP", "fpp", "F77", "F90", "F95", "F03", "F08"];
+const PREPROCESSED_EXTENSIONS: &[&str] = &["F", "FOR", "FTN", "FPP", "fpp", "F77", "F90", "F95", "F03", "F08", "F18", "F23"];
 
 /// Whether a source with this file name is preprocessed by default.
 pub fn by_extension(path: &std::path::Path) -> bool {
