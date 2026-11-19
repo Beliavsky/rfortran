@@ -37,6 +37,8 @@ pub(crate) fn prepare_program(
     io_warnings::check(&prepared.source, src.len(), filename, &prepared.origins, settings, &args.warnings, args.standard)?;
     leak_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
                          &prepared.origins, settings, &args.warnings)?;
+    allocatable_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
+                                &prepared.origins, settings, &args.warnings)?;
     allocation_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
                                &prepared.origins, settings, &args.warnings)?;
     action_warnings::check(&prepared.program, &prepared.source, src.len(), filename,

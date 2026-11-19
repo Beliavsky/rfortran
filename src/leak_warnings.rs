@@ -138,6 +138,8 @@ struct Walker<'a> {
     leaks: Vec<Leak>,
     /// Allocations that some path deallocates.
     freed: HashSet<usize>,
+    /// Some path allocates the pointer while it holds storage.
+    reallocated: bool,
 }
 
 impl Walker<'_> {
@@ -212,6 +214,7 @@ impl Walker<'_> {
             match s {
                 Stmt::CallSub { name, args } if name == "@allocate" && args.iter().any(|a| root(a) == Some(self.p)) => {
                     self.leak(&cur, Point::Reassign(offset));
+                    self.reallocated |= cur.iter().any(|s| matches!(s, State::Owned { .. }));
                     let stat = args.iter().any(|a| matches!(crate::named_arguments::keyword(a), Some(("stat", _))));
                     cur = States::from([if stat { State::Free } else { State::Owned { site: offset, via: None } }]);
                 }
@@ -270,6 +273,15 @@ impl Walker<'_> {
         flow.normal = cur;
         flow
     }
+}
+
+/// Whether some path of `body` allocates the POINTER `p` again while it
+/// holds storage the body allocated, which would be an error for an
+/// ALLOCATABLE. `p` holds no storage when the body starts.
+pub(crate) fn reallocates(body: &[Stmt], p: &str) -> bool {
+    let mut w = Walker { p, leaks: vec![], freed: HashSet::new(), reallocated: false };
+    w.walk(body, States::from([State::Free]), 0);
+    w.reallocated
 }
 
 /// Local POINTERs of a procedure body that the analysis can follow.
@@ -341,7 +353,7 @@ fn procedures(src: &str, tokens: &[Token], body: &[Stmt], out: &mut Vec<Report>)
                 if gotos(body) { continue; }
                 for (p, _) in candidates(src, tokens, body, params, name) {
                     if escapes(body, &p) { continue; }
-                    let mut w = Walker { p: &p, leaks: vec![], freed: HashSet::new() };
+                    let mut w = Walker { p: &p, leaks: vec![], freed: HashSet::new(), reallocated: false };
                     let end = w.walk(body, States::from([State::Free]), 0).normal;
                     w.leak(&end, Point::Return(None));
                     // A leak is certain only for storage no path deallocates.

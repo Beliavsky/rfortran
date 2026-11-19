@@ -653,6 +653,27 @@ whose lower bounds are not constants are not reported. Disable with
 `-Wno-section-bounds`, promote with `-Werror=section-bounds`, or use
 `!#allow(section-bounds)` / `!#deny(section-bounds)`.
 
+[`-Wcould-be-allocatable`](../warnings/could-be-allocatable.f90) is opt-in and enabled by `-Wextra`.
+It reports a POINTER variable that could be ALLOCATABLE: one that is only
+allocated, deallocated, nullified, tested with one-argument ASSOCIATED and
+used for its values. An ALLOCATABLE local is deallocated automatically when
+its procedure returns, and an ALLOCATABLE cannot alias another variable, so
+the compiler can optimize its uses. The check covers local variables of the
+main program and of procedures and PRIVATE module variables, other than dummy
+arguments and function results, that some statement allocates. A use that
+needs a pointer prevents the warning: `=>` with a target other than `NULL()`
+or with bounds, the variable or part of it as the target of `=>`, ASSOCIATED
+with two arguments, the whole variable as an actual argument of a procedure
+whose dummy may be POINTER or TARGET (any procedure whose interface is not in
+the file), COMMON, and an ALLOCATE that may run while the variable holds
+storage, which would be an error for an ALLOCATABLE. Procedures with GO TO
+are skipped. The notes say to replace `associated(p)` by `allocated(p)` and
+NULLIFY or `p => null()` by `if (allocated(p)) deallocate (p)`, to drop
+CONTIGUOUS, and, for a local that is saved by SAVE or by a `=> null()`
+initialization, to declare it `allocatable, save`. Disable with
+`-Wno-could-be-allocatable`, promote with `-Werror=could-be-allocatable`, or
+use `!#allow(could-be-allocatable)` / `!#deny(could-be-allocatable)`.
+
 [`-Wrecursive-io`](../warnings/recursive-io.f90) is **on by default**. It warns about an input/output
 statement in a procedure that a function referenced by another input/output
 statement can reach, directly or through the procedures it calls, when both

@@ -48,6 +48,7 @@ const CATEGORIES: &[&str] = &[
     "implicit-open",
     "fixed-unit",
     "section-bounds",
+    "could-be-allocatable",
     "character-truncation",
     "memory-leak",
     "allocation-state",
@@ -149,6 +150,7 @@ const EXTRA: &[&str] = &[
     "fixed-unit",
     "preconnected-unit",
     "section-bounds",
+    "could-be-allocatable",
 ];
 /// The categories that -Wstyle enables: the style rules of Clerman and
 /// Spector's "Modern Fortran: Style and Usage" that rfort checks.

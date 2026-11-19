@@ -120,7 +120,7 @@ pub fn print_help() {
     println!("  -Wextra, --Wextra    Enable additional opt-in advice:");
     println!("                      missing-intent, shadow, shadow-dummy-argument, dead-store,");
     println!("                      unchecked-status, intrinsic-shadow, keyword-name, fixed-unit,");
-    println!("                      preconnected-unit, section-bounds");
+    println!("                      preconnected-unit, section-bounds, could-be-allocatable");
     println!("                      As in gfortran, it does not imply -Wall; use -Wall -Wextra");
     println!("  -Weverything        Enable every warning: -Wall, -Wextra, -Wstyle and all opt-in advice,");
     println!("                      except -Wone-line-if, the reverse of -Wcould-be-one-line-if;");
@@ -184,6 +184,7 @@ pub fn print_help() {
     println!("  -Wmaybe-out-of-bounds Warn about constant subscripts of PACK results (in -Wextra)");
     println!("  -Wconstant-condition Warn about conditions whose values are known at compile time (in -Wextra)");
     println!("  -Wconstant-condition-all Also warn when the value comes from a named constant");
+    println!("  -Wcould-be-allocatable Suggest ALLOCATABLE for POINTER variables used only as allocatables (in -Wextra)");
     println!("  -Wcould-be-intent-in Warn about INTENT(INOUT) dummy arguments that are never modified (in -Wextra)");
     println!("  -Wunused-only       Warn about USE ONLY names that are never used (in -Wextra)");
     println!("  -Winfinite-loop     Warn about DO loops without loop control that nothing in their body can end (enabled by -Wall)");
