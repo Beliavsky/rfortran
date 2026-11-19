@@ -233,6 +233,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         interfaces: &HashMap<String, Vec<usize>>,
         local_interfaces: &HashMap<String, Vec<usize>>,
         inherited_functions: &HashSet<String>,
+        outer: &HashSet<String>,
     ) -> Result<()> {
         // Result rank is independent of the ranks of the actual arguments.
         // Keep procedure names separate from arrays: f(i) is an array result,
@@ -270,10 +271,18 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
             Stmt::ArrayDecl{name,kind,..} if queried.contains(name) && numeric(kind)
                 && !matches!(kind,TypeSpec::Character(_))=>Some(name.clone()),_=>None
         }));
-        let declared: HashSet<String> = body.iter().filter_map(|s| match s {
-            Stmt::ArrayDecl { name, .. } => Some(name.clone()),
-            _ => None,
-        }).collect();
+        // Arrays of the enclosing scopes are visible too: `t = v` in a BLOCK
+        // allocates t with the extent of an array v declared outside it. A
+        // local scalar of the same name hides one.
+        let mut declared: HashSet<String> = outer.clone();
+        for s in body.iter() {
+            match s {
+                Stmt::ArrayDecl { name, .. } => { declared.insert(name.clone()); }
+                Stmt::VarDecl { names, .. } => for n in names { declared.remove(n); },
+                Stmt::InitializedDecl { entities, .. } => for (n, _) in entities { declared.remove(n); },
+                _ => {}
+            }
+        }
         fn allocation(body: &[Stmt], array: &str, declared: &HashSet<String>, functions: &HashSet<String>) -> bool {
             body.iter().any(|s|match s {
                 Stmt::CallSub{name,args} if name=="@allocate"=>args.iter().any(|e|matches!(e,Expr::Call(n,dims) if n==array) || matches!(e,Expr::Section{name:n,..} if n==array)),
@@ -469,31 +478,31 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                         // declaration until function-call lowering supplies it.
                         body.insert(0,Stmt::DummyIntent{name:result,intent:"@heap_dummy".into()});
                     }
-                    visit(body, params, interfaces, local_interfaces, &functions)?
+                    visit(body, params, interfaces, local_interfaces, &functions, &declared)?
                 }
                 Stmt::Subroutine { body, params, .. } => {
-                    visit(body, params, interfaces, local_interfaces, &functions)?
+                    visit(body, params, interfaces, local_interfaces, &functions, &declared)?
                 }
                 Stmt::Module { body, .. }
                 | Stmt::Block { body }
                 | Stmt::Do { body, .. }
-                | Stmt::DoWhile { body, .. } => visit(body, &[], interfaces, local_interfaces, &functions)?,
+                | Stmt::DoWhile { body, .. } => visit(body, &[], interfaces, local_interfaces, &functions, &declared)?,
                 Stmt::If {
                     then_body,
                     else_body,
                     ..
                 } => {
-                    visit(then_body, &[], interfaces, local_interfaces, &functions)?;
+                    visit(then_body, &[], interfaces, local_interfaces, &functions, &declared)?;
                     if let Some(b) = else_body {
-                        visit(b, &[], interfaces, local_interfaces, &functions)?;
+                        visit(b, &[], interfaces, local_interfaces, &functions, &declared)?;
                     }
                 }
                 Stmt::SelectCase { cases, default, .. } => {
                     for c in cases {
-                        visit(&mut c.body, &[], interfaces, local_interfaces, &functions)?;
+                        visit(&mut c.body, &[], interfaces, local_interfaces, &functions, &declared)?;
                     }
                     if let Some(b) = default {
-                        visit(b, &[], interfaces, local_interfaces, &functions)?;
+                        visit(b, &[], interfaces, local_interfaces, &functions, &declared)?;
                     }
                 }
                 _ => {}
@@ -519,7 +528,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
     }
     let mut functions = HashSet::new();
     module_results(&program.body, &mut functions);
-    visit(&mut program.body, &[], &interfaces, &local_interfaces, &functions)?;
+    visit(&mut program.body, &[], &interfaces, &local_interfaces, &functions, &HashSet::new())?;
     Ok(program)
 }
 

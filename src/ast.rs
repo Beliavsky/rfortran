@@ -861,10 +861,6 @@ pub(crate) fn expand_associate_captures(statements: &mut Vec<Stmt>, rank: &dyn F
         let [Expr::Ident(temp), value] = args.as_slice() else { unreachable!() };
         let (temp, value) = (temp.clone(), value.clone());
         let vector = is_vector(&value, rank);
-        // Assigned through a constructor: an ALLOCATABLE assigned another
-        // array is not yet usable as a vector subscript of a section.
-        let constructor = matches!(&value, Expr::Call(tag, _) if tag == "@array_constructor");
-        let value = if vector && !constructor { Expr::Call("@array_constructor".into(), vec![value]) } else { value };
         let mut expanded = if vector {
             vec![
                 Stmt::DummyIntent { name: temp.clone(), intent: "allocatable".into() },

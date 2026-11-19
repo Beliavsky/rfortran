@@ -11,6 +11,46 @@ import test_deallocate
 class AllocatableReallocation(unittest.TestCase):
     check = test_deallocate.Deallocate.check
 
+    def test_assignment_from_arrays_of_enclosing_scopes(self):
+        # An ALLOCATABLE of a BLOCK or internal procedure assigned an array of
+        # the enclosing scope takes its extent, also for vector subscripts.
+        self.check("""program hb
+implicit none
+real :: a(0:9)
+integer :: v(3), i, n
+a = [(real(i), i = 0, 9)]
+v = [7, 2, 5]
+block
+  integer, allocatable :: t(:)
+  t = v
+  print *, size(t), a(t(2:3)), a(t)
+  t = v(1:2)
+  print *, size(t), a(t)
+end block
+do n = 1, 2
+  block
+    integer, allocatable :: u(:)
+    u = v * n - n
+    print *, size(u), u, a(u(2:))
+  end block
+end do
+call inner
+contains
+subroutine inner
+  integer, allocatable :: w(:)
+  integer :: a
+  w = v
+  a = 3
+  print *, size(w), w(2:3), a
+end subroutine
+end program
+""", """ 3 2.0 5.0 7.0 2.0 5.0
+ 2 7.0 2.0
+ 3 6 1 4 1.0 4.0
+ 3 12 2 8 2.0 8.0
+ 3 2 5 3
+""")
+
     def test_character_constructor_implicit_allocation(self):
         self.check("""implicit none
 character(len=2),allocatable :: s(:)
