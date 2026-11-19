@@ -701,9 +701,11 @@ fn runtime_character_items(value: &Expr, shapes: &Shapes, target: &str, serial: 
             _ => None,
         }
     };
-    // The constructor lowering of CHARACTER actuals takes only scalar items.
+    // The constructor lowering of CHARACTER actuals takes only scalar items;
+    // a scalar item may be a call, as `repeat('x', n)` or an element `c(i)`.
     let arrays = items.iter().any(|e| array(e).is_some());
-    if !arrays || items.iter().any(|e| matches!(e,Expr::Section{..}|Expr::Call(..)) && array(e).is_none()) { return Ok(None); }
+    if !arrays || items.iter().any(|e| matches!(e,Expr::Section{..}|Expr::Call(..)) && array(e).is_none()
+        && crate::array_calls::scalar_actual_kind(e,shapes).is_err()) { return Ok(None); }
     *serial += 1;
     let values = format!("@alloc_char_items_{serial}");
     let total = format!("@alloc_char_items_total_{serial}");

@@ -1189,8 +1189,14 @@ transformational intrinsics remain outside this subset. Local CHARACTER
 array PARAMETERs support explicit or inferred rank-one extents. Untyped constructors require equal-length CHARACTER literals
 (including substituted constants). Typed `[CHARACTER(LEN=n) :: ...]` constructors
 accept constant CHARACTER elements of different lengths and a constant length;
-elements are padded or truncated to that length before assignment. Run
-`python tests/test_character_arrays.py`.
+elements are padded or truncated to that length before assignment.
+Constructors may also hold scalar CHARACTER variables, elements, substrings,
+concatenations, CHARACTER intrinsic results such as `repeat('x', n)` or
+`adjustr(s)`, and other CHARACTER arrays, whose elements they take in order,
+as in `c = [s, adjustr(s)]` or `tags = [tags, repeat('x', n)]`, which appends
+to an ALLOCATABLE array; a typed constructor of such items allocates an
+ALLOCATABLE target. Run `python tests/test_character_arrays.py` and
+`python tests/test_character_constructor_items.py`.
 
 ### CHARACTER array parameters
 

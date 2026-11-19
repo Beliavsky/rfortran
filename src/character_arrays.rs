@@ -313,6 +313,25 @@ fn expression(e: Expr, arrays: &Arrays) -> Result<Value> {
         other => Value::Scalar(other),
     })
 }
+/// The elements of a constructor assigned to a CHARACTER array, when it is
+/// not one of literals: scalar items, as `[s, repeat('x', 6)]`, and the
+/// elements of CHARACTER array items, in order. A constructor with
+/// implied-DO items is not split.
+fn constructor_elements(value: &Expr, arrays: &Arrays) -> Result<Option<Value>> {
+    let Expr::Call(n, args) = value else { return Ok(None) };
+    if n != "@array_constructor" || args.is_empty() || args.iter().all(|e| matches!(e, Expr::Str(_)))
+        || args.iter().any(|e| matches!(e, Expr::Call(t, _) if t == "@output_implied_do")) {
+        return Ok(None);
+    }
+    let mut items = vec![];
+    for e in args {
+        match expression(e.clone(), arrays)? {
+            Value::Scalar(e) => items.push(e),
+            Value::Array(v) => items.extend(v),
+        }
+    }
+    Ok(Some(Value::Array(items)))
+}
 fn assign(
     targets: Vec<String>,
     length: usize,
@@ -327,7 +346,7 @@ fn assign(
     } else {
         length
     };
-    let values=if let Expr::Call(tag,args)=&value {
+    let values=if let Some(items)=constructor_elements(&value,arrays)? {items} else if let Expr::Call(tag,args)=&value {
         if tag=="@packed_view" && args.len()==2 {
             if let Expr::Ident(source)=&args[0] {
                 if let Some(array)=arrays.get(source) {
