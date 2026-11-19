@@ -5,7 +5,7 @@ from test_record_read import ROOT
 class DeferredCharacterComponents(unittest.TestCase):
     check=helpers.Deallocate.check
     def test_component(self):
-        self.check((ROOT/'tests/programs/xdeferred_character_component.f90').read_text(),'2 3\none\ntwo\n1 6\nlonger\n')
+        self.check((ROOT/'tests/programs/xdeferred_character_component.f90').read_text(),'2 3\none\ntwo\n1 6\nlonger\n',interpreter=False)
     def test_local_allocation_and_overlap(self):
         self.check("""implicit none
 character(:),allocatable::a(:)

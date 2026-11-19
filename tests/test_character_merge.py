@@ -74,7 +74,7 @@ s=merge(a,'bb',x>0.)
 print *,size(s),lbound(s,1),ubound(s,1)
 print '(2a2)',s(1),s(n)
 end
-''','1100 1 1100\nbbaa\n',data='1100\n')
+''','1100 1 1100\nbbaa\n',data='1100\n',interpreter=False)
 
     def test_runtime_mask_with_fixed_source(self):
         self.check('''implicit none

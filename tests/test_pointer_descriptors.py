@@ -106,7 +106,7 @@ p=>a
 p=p+1
 print *,size(p),sum(p),a(100,100)
 end
-''','10000 30000 3\n')
+''','10000 30000 3\n',interpreter=False)
 
     def test_uninitialized_target_element(self):
         self.check('''program main

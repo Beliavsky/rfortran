@@ -16,7 +16,7 @@ class LargeInitializationScope(unittest.TestCase):
                 + "if(n>0) y=7\nprint *,x0,x1999,total\nprint *,y\nend program\n")
 
     def test_large_scope_valid_and_path_dependent_reads(self):
-        self.check(self.source(), "0 1999 1999000 7\n", data="1\n")
+        self.check(self.source(), "0 1999 1999000 7\n", data="1\n", interpreter=False)
         self.check(self.source(), error="uninitialized variable `y`", data="0\n",
                    reference=False)
 

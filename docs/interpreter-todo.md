@@ -20,6 +20,10 @@ goes through CHARACTER temporaries, so programs using them are the most affected
 | `test_parameterized_types.py` `test_runtime_len_values` | Runtime LEN type parameters with CHARACTER components; about 12 s |
 | `test_testsuite_fixes.py` `test_namelist_derived_members_module_groups_and_end` | Three NAMELIST reads and a write of groups with arrays of derived type and nested components; 7 to 11 s, while the compiled program takes 0.2 s |
 | `test_namelist.py` `test_allocatable_pointer_and_assumed_shape_members` | A NAMELIST group of seven ALLOCATABLE, POINTER and derived-type members: each IF of the READ's dispatch copies the frame, so one READ of 25 values takes about 4 s (6 s for the program, over 15 s under the full suite's load), while the compiled program takes 0.13 s |
+| `test_character_merge.py` `test_runtime_large_arrays_and_nondefault_bounds` | MERGE of CHARACTER arrays of 1100 elements; about 2.7 s alone, but over the 15 s limit under the full suite's load, while the compiled program builds and runs in 0.4 s |
+| `test_deferred_character_components.py` `test_component` | Deferred-length CHARACTER components (`tests/programs/xdeferred_character_component.f90`); about 2.6 s alone, over 15 s under load |
+| `test_large_initialization_scope.py` `test_large_scope_valid_and_path_dependent_reads`, the valid run | A program of 6000 lines; about 3.3 s alone, over 15 s under load. The run that reads an uninitialized variable still uses the interpreter, which reports the read |
+| `test_pointer_descriptors.py` `test_no_element_count_limit` | POINTER arrays of 10000 elements; about 3.7 s alone, over 15 s under load |
 
 Output differences, not speed:
 
