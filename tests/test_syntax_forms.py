@@ -19,6 +19,22 @@ from test_record_read import build_commands
 class SyntaxForms(unittest.TestCase):
     check = test_deallocate.Deallocate.check
 
+    def test_source_that_is_not_utf8(self):
+        # Windows-1252 dashes and quotes in comments were rejected with
+        # "stream did not contain valid UTF-8".
+        from test_record_read import COMPILER
+        source = b"program p\n! Luus\x96Jaakola, Student\x92s t\nprint *, 'ok'\nend program\n"
+        with tempfile.TemporaryDirectory(prefix="non-utf8-") as tmp:
+            path = Path(tmp) / "p.f90"
+            path.write_bytes(source)
+            for args in (["run", path], [path, "-o", Path(tmp) / "p.exe"]):
+                with self.subTest(command=args[0]):
+                    result = subprocess.run([COMPILER, *map(str, args)], cwd=tmp, capture_output=True,
+                                            text=True, timeout=60)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+            result = subprocess.run([str(Path(tmp) / "p.exe")], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.stdout.split(), ["ok"])
+
     def test_calls_and_subroutines_without_argument_lists(self):
         self.check("""module m
 implicit none

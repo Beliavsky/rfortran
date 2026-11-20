@@ -24,6 +24,33 @@ print *,associated(p,a(0:2)),associated(p,a(-1:1)),size(p)
 end
 """, "T F 3\n")
 
+    def test_automatic_array_with_runtime_lower_bound(self):
+        # A program with a POINTER rejected any automatic array whose lower
+        # bound is known only at run time, with a PARAMETER error.
+        self.check("""module m
+implicit none
+contains
+subroutine s(a, n)
+integer, intent(in) :: a(:), n
+real :: e(1-size(a):n)
+integer :: i
+do i = lbound(e, 1), ubound(e, 1)
+  e(i) = i
+end do
+print *, lbound(e), ubound(e), sum(e)
+end subroutine
+end module m
+program main
+use m
+implicit none
+real, target :: t(3) = [1.0, 2.0, 3.0]
+real, pointer :: q(:)
+q => t
+call s([1, 2], 3)
+print *, q
+end program
+""", "-1 3 5.0\n1.0 2.0 3.0\n")
+
     def test_scalar_alias_and_multiple_nullify(self):
         self.check("""program main
 integer,target::x,y

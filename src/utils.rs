@@ -32,7 +32,11 @@ use std::{
 };
 
 pub fn read_file_to_string(path: &Path) -> Result<String> {
-    Ok(fs::read_to_string(path)?.trim_start_matches('\u{feff}').to_owned())
+    let bytes = fs::read(path)?;
+    // A source that is not UTF-8, such as one with a Windows-1252 dash or
+    // quote in a comment, is read one character per byte, as gfortran does.
+    let text = String::from_utf8(bytes).unwrap_or_else(|e| e.into_bytes().iter().map(|&b| char::from(b)).collect());
+    Ok(text.trim_start_matches('\u{feff}').to_owned())
 }
 
 /// Extensions of fixed source form files, in lower case.

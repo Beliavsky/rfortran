@@ -133,6 +133,9 @@ fn children(s: &mut Stmt) -> Vec<&mut Vec<Stmt>> {
     }
 }
 
+/// The `@pointer_bounds` of an array whose lower bounds are not constant.
+const DYNAMIC_BOUNDS: &str = "dynamic";
+
 pub fn prepare(mut p: Program) -> Result<Program> {
     fn has_pointer(body: &mut Vec<Stmt>) -> bool {
         body.iter_mut().any(|s| {
@@ -152,17 +155,17 @@ pub fn prepare(mut p: Program) -> Result<Program> {
                         }
                         _ => Ok(1),
                     })
-                    .collect::<Result<Vec<_>>>()?;
+                    .collect::<Result<Vec<_>>>();
+                // An automatic array whose lower bound is known only at run
+                // time, such as `e(1-size(a):n)`, is not a pointer target
+                // with constant bounds.
+                let bounds = match lower {
+                    Ok(lower) => lower.iter().map(i64::to_string).collect::<Vec<_>>().join(","),
+                    Err(_) => DYNAMIC_BOUNDS.into(),
+                };
                 extra.push(Stmt::DummyIntent {
                     name: name.clone(),
-                    intent: format!(
-                        "@pointer_bounds:{}",
-                        lower
-                            .iter()
-                            .map(i64::to_string)
-                            .collect::<Vec<_>>()
-                            .join(",")
-                    ),
+                    intent: format!("@pointer_bounds:{bounds}"),
                 });
             }
             if let Stmt::Block { body } = s {
@@ -423,7 +426,9 @@ impl Lower {
                         .iter()
                         .map(crate::parameters::integer_constant)
                         .collect::<Result<Vec<_>>>();
-                    if let Ok(dims) = extents {
+                    let dynamic = attrs.iter().any(|(n, i)| n == &name
+                        && i.strip_prefix("@pointer_bounds:") == Some(DYNAMIC_BOUNDS));
+                    if let (Ok(dims), false) = (extents, dynamic) {
                         if dims.len() > MAX_RANK {
                             bail!("array rank exceeds {MAX_RANK}");
                         }
