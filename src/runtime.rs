@@ -1747,6 +1747,14 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         idx+=1;continue;
                     }
                     if name == "@stop" && args.is_empty() { std::process::exit(0); }
+                    // GNU CALL EXIT(STATUS) and CALL SLEEP(SECONDS).
+                    if name == "@exit" || name == "@sleep" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let value=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap_or(0);
+                        if name == "@exit" { std::process::exit(value as i32); }
+                        std::thread::sleep(std::time::Duration::from_secs(value.max(0) as u64));
+                        idx+=1;continue;
+                    }
                     if name == "@error_stop" || name == "@stop" {
                         let keyword=if name=="@stop" {"STOP"} else {"ERROR STOP"};
                         let (message,code)=match args.as_slice() {

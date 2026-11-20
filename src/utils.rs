@@ -217,6 +217,7 @@ pub fn print_help() {
     println!("  -Wunderflow         Warn about nonzero constants rounding to zero");
     println!("  -Wempty-case        Warn about reversed constant CASE ranges");
     println!("  -Wunused-label      Warn about unreferenced statement labels");
+    println!("  -Wgnu-extension     Warn about GNU extension procedures such as CALL SYSTEM, with standard replacements");
     println!("  -Wcharacter-truncation  Warn about CHARACTER values of known length truncated by assignment");
     println!("  -Wimplicit-open     Warn about READ/WRITE on a constant unit no OPEN names (on by default;");
     println!("                      the unit connects to fort.N, as in gfortran and ifx)");

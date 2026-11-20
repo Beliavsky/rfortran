@@ -34,12 +34,20 @@ intrinsics, including CPU_TIME, command/environment queries, newer bit and math
 functions, RANDOM_INIT, OUT_OF_RANGE, and the Fortran 2023 degree/pi trig functions.
 User-defined procedures and arrays sharing intrinsic names are distinguished.
 
+With `-std=`, extensions that are in no revision are errors, each naming the
+standard replacement where one exists: the GNU extension procedures CALL
+SYSTEM, GETARG, GETCWD, FLUSH, SLEEP, EXIT and ABORT, and the functions
+DFLOAT, DCMPLX, DCONJG and ISNAN, unless the program defines or declares a
+procedure of that name; and type specifications with a byte size, such as
+`real*8`, `integer*4` and `complex*16` (`character*n` is standard). Without
+`-std=`, `-Wgnu-extension`, in `-Wall`, warns about the same procedures.
+
 FORALL produces an obsolescence warning in the 2018 and 2023 modes; `-Werror`
 promotes it to an error. The permissive default does not enable these warnings.
 Introduction, obsolescence and deletion metadata live in `src/standards.rs`.
 
 **These are partial compatibility checks, not complete standard-conformance
-validation.** Context-dependent intrinsic overloads, all extension spellings,
+validation.** Context-dependent intrinsic overloads, other extension spellings,
 every obsolescent/deleted feature and every language constraint are not yet
 classified. Passing `-std=f90`, for example, does not certify Fortran 90
 conformance. Regression checks: `python tests/test_standards.py`.
@@ -217,6 +225,7 @@ categories it wants.
 | [`-Wunderflow`](../warnings/underflow.f90) | Yes | No | Supported nonzero constant expressions or assignments rounding to zero in REAL(4)/REAL(8) |
 | [`-Wempty-case`](../warnings/empty-case.f90) | Yes | No | Reversed constant INTEGER, CHARACTER or enumeration CASE ranges |
 | [`-Wunused-label`](../warnings/unused-label.f90) | Yes | No | Unreferenced statement labels within each program unit, including FORMAT labels |
+| [`-Wgnu-extension`](../warnings/gnu-extension.f90) | Yes | No | GNU extension procedures rfort provides, when the program does not define them: CALL SYSTEM, GETARG, GETCWD, FLUSH, SLEEP, EXIT and ABORT, and DFLOAT, DCMPLX, DCONJG and ISNAN, each with its standard replacement where one exists. With `-std=` these are errors; see [Standard selection](#standard-selection) |
 | [`-Wcharacter-truncation`](../warnings/character-truncation.f90) | Yes | No | CHARACTER values of compile-time length (literals, fixed-length variables and PARAMETERs, concatenations, constant substrings, array constructors) assigned or initialized into a shorter fixed-length variable, element, component or substring, as gfortran's `-Wcharacter-truncation`. Deferred-length destinations reallocate and are exempt; actual arguments and DATA statements are not checked |
 
 Interface advice distinguishes optional warnings from language requirements.
@@ -1368,7 +1377,10 @@ The default executable and object names come from the last source file:
 `main.exe` and `main.obj` on Windows, or `main` and `main.o` on Linux/macOS.
 `-o` changes the executable name, or the object name when used with `-c`.
 A source group without a main program emits an object without linking;
-use `-c -o file.obj` to select its object filename.
+use `-c -o file.obj` to select its object filename. When the driver links, the
+object is an intermediate file written to a temporary directory and removed
+afterwards, so no `main.obj` is left beside the sources.
+A procedure that no source or object defines is reported by name at link time.
 
 For multiple source files, the driver retains `main.f90c-sources.f90` for
 diagnostics. `! Source:` comments identify the original files. Existing

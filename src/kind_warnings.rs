@@ -478,6 +478,30 @@ fn analyze(src: &str, tokens: &[Token], own_len: usize) -> Analysis {
     Analysis { overrides: overridden, statements, constants: reports, defaults, real_kind }
 }
 
+/// Type specifications that give a size in bytes, such as `real*8`, which no
+/// standard has: the span, the text as written and a standard spelling.
+pub(crate) fn byte_sizes(src: &str, tokens: &[Token]) -> Vec<(std::ops::Range<usize>, String, String)> {
+    let mut out = vec![];
+    let mut i = 0;
+    while i < tokens.len() {
+        let ts = crate::declaration_warnings::statement_tokens(tokens, tokens[i].span.start, usize::MAX, src);
+        i += ts.len().max(1);
+        let (mut found, mut uses) = (vec![], vec![]);
+        statement(src, ts, &mut found, &mut uses);
+        for f in found.into_iter().filter(|f| f.written.contains('*')) {
+            let head = f.written.split('*').next().unwrap_or("").trim().to_owned();
+            let size = f.written.rsplit('*').next().unwrap_or("").trim().to_owned();
+            let kind = if head.eq_ignore_ascii_case("complex") { size.parse::<u32>().map(|n| (n / 2).to_string()).unwrap_or(size) } else { size };
+            let standard = match &f.replacement {
+                Some(named) => format!("{named} with ISO_FORTRAN_ENV, or {head}(kind={kind})"),
+                None => format!("{head}(kind={kind})"),
+            };
+            out.push((f.span, f.written, standard));
+        }
+    }
+    out
+}
+
 fn type_name(t: Type) -> &'static str {
     match t { Type::Real => "REAL", Type::Integer => "INTEGER", Type::Logical => "LOGICAL" }
 }

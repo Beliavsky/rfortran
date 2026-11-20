@@ -4823,7 +4823,13 @@ absent). CLOSE accepts STATUS='keep' or 'delete'. Without FILE, OPEN connects
 a unit to the file `fort.N`, as gfortran does; a unit known only at run time
 with default properties is connected by its first data transfer, which uses
 the same name. `CALL GETARG(N, VALUE)`, a GNU extension, is
-GET_COMMAND_ARGUMENT for an N of any INTEGER kind.
+GET_COMMAND_ARGUMENT for an N of any INTEGER kind. The GNU extension
+subroutines `CALL SYSTEM(COMMAND [, STATUS])` (EXECUTE_COMMAND_LINE with
+EXITSTAT=STATUS), `CALL FLUSH([UNIT])` (the FLUSH statement, unit 6 when no
+unit is given), `CALL EXIT([STATUS])` (ends the program without a message),
+`CALL ABORT()` (stops with an error) and `CALL SLEEP(SECONDS)` are provided
+too, unless the program defines a procedure of the same name. `-std=` rejects
+them and `-Wgnu-extension` warns about them (see [usage](usage.md)).
 A READ from a unit opened with ACTION='write', or a WRITE to one opened with
 ACTION='read', stops the program with an error; with IOSTAT=, a READ instead
 sets a positive status. `-Waction-mismatch`, on by default, reports such a

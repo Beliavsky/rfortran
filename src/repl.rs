@@ -178,7 +178,7 @@ impl Session {
         body.append(&mut parsed.body);
         let program = Program { name: "<repl>".into(), body, contains: vec![] };
         if args.standard.is_some() {
-            crate::standards::check(&program, input, &tokens, "<repl>", None, args.standard, args.werror)?;
+            crate::standards::check(&program, input, &tokens, "<repl>", None, args.standard, args.werror, None)?;
         }
         let prepared = dynamic::prepare(program, &self.allocations, &names, self.automatic)?;
         history.inferred(&prepared.inferred)?;

@@ -127,6 +127,34 @@ end program shell
             self.assertEqual([line.rstrip() for line in stdout.splitlines()],
                              ['before', 'from the shell', '   3   0', '   0   0 unset', '  -2'])
 
+    def test_gnu_system_subroutine(self):
+        # CALL SYSTEM, a GNU extension, failed to link (undefined rfort$system)
+        # or stopped the compiler with verifier errors.
+        source = '''program shell
+  implicit none
+  integer :: st
+  call system('echo from system')
+  call system('exit 3', st)
+  print '(i0)', st
+end program shell
+'''
+        for code, stdout, stderr in self.run_program(source):
+            self.assertEqual(code, 0, stderr)
+            self.assertEqual(stdout.split(), ['from', 'system', '3'])
+        # A program's own SYSTEM is still called.
+        source = '''program own
+  call system('x')
+contains
+  subroutine system(c)
+    character(*) :: c
+    print '(2a)', 'mine ', c
+  end subroutine
+end program own
+'''
+        for code, stdout, stderr in self.run_program(source):
+            self.assertEqual(code, 0, stderr)
+            self.assertEqual(stdout.split(), ['mine', 'x'])
+
 
 if __name__ == '__main__':
     unittest.main()

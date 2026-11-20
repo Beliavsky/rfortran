@@ -273,6 +273,15 @@ pub(crate) fn prepare(
     if let Some(parent) = filename.parent().filter(|p| !p.as_os_str().is_empty()) {
         search.push(parent.to_owned());
     }
+    // A combined source is written to a temporary directory; its parts'
+    // directories are searched as a single source's would be.
+    for origin in origins.unwrap_or_default() {
+        if let Some(parent) = Path::new(&origin.name).parent().filter(|p| !p.as_os_str().is_empty()) {
+            if !search.iter().any(|s| s == parent) {
+                search.push(parent.to_owned());
+            }
+        }
+    }
     let original_origins = origins.map(|o| o.to_vec()).unwrap_or_else(|| {
         vec![SourceOrigin {
             name: filename.display().to_string(),

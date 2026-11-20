@@ -102,6 +102,26 @@ class NativeDriver(unittest.TestCase):
         self.assertTrue(library.with_suffix(".obj" if os.name=="nt" else ".o").exists())
         self.assertFalse(self.exe("library").exists())
 
+    def test_linked_build_leaves_no_object_beside_sources(self):
+        # The object of a linked build is an intermediate file; it was
+        # written beside the last source, a directory the user may not own.
+        suffix=".obj" if os.name=="nt" else ".o"
+        library=self.source("lib.f90","module lib\ninteger,parameter::n=3\nend module lib\n")
+        source=self.source()
+        self.success(library,source)
+        self.execute(self.exe())
+        self.assertFalse(source.with_suffix(suffix).exists())
+        self.success(source)
+        self.assertFalse(source.with_suffix(suffix).exists())
+
+    def test_undefined_procedure_at_link_time(self):
+        # The error named the missing procedure only in the linker output,
+        # under advice to install Visual Studio.
+        result=self.compile(self.source(text="call not_supplied(1)\nend\n"))
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn("no definition of procedure `not_supplied`",result.stderr)
+        self.assertNotIn("Visual Studio",result.stderr)
+
     def test_run_and_verbose(self):
         source=self.source()
         result=self.compile("--run",source)

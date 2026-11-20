@@ -109,7 +109,7 @@ fn compiler_main(started: std::time::Instant) -> Result<()> {
             let tokens = lexer::lex(&src);
             match parser::parse_with_origins(&src, &tokens, input.to_str().unwrap_or("<unknown>"), Some(&source_input.origins)) {
                 Ok(p) => {
-                    standards::check(&p, &src, &tokens, input.to_str().unwrap_or("<unknown>"), Some(&source_input.origins), args.standard, args.werror)?;
+                    standards::check(&p, &src, &tokens, input.to_str().unwrap_or("<unknown>"), Some(&source_input.origins), args.standard, args.werror, None)?;
                     if let Some(out_path) = out {
                         let serialized = serde_json::to_string_pretty(&p)?;
                         std::fs::write(&out_path, serialized)?;

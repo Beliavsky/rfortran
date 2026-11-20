@@ -60,9 +60,12 @@ pub(crate) fn prepare_program(
     return_warnings::check(&prepared.source, src.len(), filename, &prepared.origins, settings, &args.warnings)?;
     style_warnings::check(&prepared.source, src.len(), filename, &prepared.origins, settings, &args.warnings,
                           args.is_fixed_form(input), args.standard)?;
-    if args.standard.is_some() {
+    // -Wgnu-extension, in -Wall: Some(error) when enabled.
+    let (gnu, gnu_error) = crate::unused::selected(standards::GNU_EXTENSION, false, settings, &args.warnings);
+    let gnu = gnu.then_some(gnu_error);
+    if args.standard.is_some() || gnu.is_some() {
         standards::check(&prepared.program, &prepared.source, &lexer::lex(&prepared.source), filename,
-                         Some(&prepared.origins), args.standard, settings.werror)?;
+                         Some(&prepared.origins), args.standard, settings.werror, gnu)?;
     }
     Ok(prepared)
 }

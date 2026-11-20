@@ -3334,6 +3334,28 @@ fn gen_stmts(
                     let code=b.ins().iconst(types::I32,0);b.ins().call(function,&[code]);
                     b.ins().trap(ir::TrapCode::unwrap_user(1));return Ok(true);
                 }
+                // GNU CALL EXIT(STATUS) and CALL SLEEP(SECONDS).
+                if name == "@exit" || name == "@sleep" {
+                    let value=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let value=to_i64(b,value);
+                    let mut sig=module.make_signature();
+                    if name == "@exit" {
+                        sig.params.push(ir::AbiParam::new(types::I32));
+                        let id=module.declare_function("exit",Linkage::Import,&sig)?;
+                        let function=module.declare_func_in_func(id,b.func);
+                        let code=b.ins().ireduce(types::I32,value);b.ins().call(function,&[code]);
+                        b.ins().trap(ir::TrapCode::unwrap_user(1));return Ok(true);
+                    }
+                    let zero=b.ins().iconst(types::I64,0);let seconds=b.ins().smax(value,zero);
+                    sig.params.push(ir::AbiParam::new(types::I32));
+                    sig.returns.push(ir::AbiParam::new(types::I32));
+                    // Sleep(milliseconds) on Windows, sleep(seconds) elsewhere.
+                    let (symbol,amount)=if cfg!(windows) {("Sleep",b.ins().imul_imm(seconds,1000))} else {("sleep",seconds)};
+                    if cfg!(windows) {sig.returns.clear();}
+                    let id=module.declare_function(symbol,Linkage::Import,&sig)?;
+                    let function=module.declare_func_in_func(id,b.func);
+                    let amount=b.ins().ireduce(types::I32,amount);b.ins().call(function,&[amount]);
+                    continue;
+                }
                 if name=="@heap_bounds" {
                     let lower=eval_expr(b,ex,ptr_ty,&args[2],ints,reals,bools,func_meta);let lower=to_i64(b,lower);
                     let upper=eval_expr(b,ex,ptr_ty,&args[3],ints,reals,bools,func_meta);let upper=to_i64(b,upper);

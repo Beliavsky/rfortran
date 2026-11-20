@@ -206,6 +206,30 @@ struct Issue {
     offset: usize,
     message: String,
     warning: bool,
+    /// A GNU extension, also reported by -Wgnu-extension without -std.
+    extension: bool,
+}
+
+/// The `-Wgnu-extension` category, in -Wall.
+pub(crate) const GNU_EXTENSION: &str = "gnu-extension";
+
+/// GNU extension procedures that rfort provides, with the standard way to
+/// write each, when the program does not define a procedure of that name.
+fn gnu_extension(name: &str, subroutine: bool) -> Option<&'static str> {
+    Some(match (name, subroutine) {
+        ("system", true) => "use EXECUTE_COMMAND_LINE(command, exitstat=status)",
+        ("getarg", true) => "use GET_COMMAND_ARGUMENT(number, value)",
+        ("getcwd", true) => "the standard has no equivalent",
+        ("flush", true) => "use the FLUSH statement, FLUSH(unit)",
+        ("exit", true) => "use STOP code",
+        ("abort", true) => "use ERROR STOP",
+        ("sleep", true) => "the standard has no equivalent",
+        ("dfloat", false) => "use DBLE",
+        ("dcmplx", false) => "use CMPLX(x, y, kind(1d0))",
+        ("dconjg", false) => "use CONJG",
+        ("isnan", false) => "use IEEE_IS_NAN from the intrinsic module IEEE_ARITHMETIC",
+        _ => return None,
+    })
 }
 struct Checker<'a> {
     standard: Standard,
@@ -217,6 +241,8 @@ struct Checker<'a> {
     env_names: HashSet<String>,
     c_pointer_names: HashSet<String>,
     module_env: HashMap<String, HashSet<String>>,
+    /// No -std: only GNU extensions are reported, for -Wgnu-extension.
+    extensions_only: bool,
 }
 impl Checker<'_> {
     fn env_imports(&self, body: &[Stmt], inherited: &HashSet<String>) -> HashSet<String> {
@@ -298,6 +324,7 @@ impl Checker<'_> {
         if f.deleted.is_some_and(|year| self.standard.0 >= year) {
             self.issues.push(Issue {
                 offset,
+                extension: false,
                 warning: false,
                 message: format!(
                     "{} was deleted in {}; selected standard is {}",
@@ -309,15 +336,31 @@ impl Checker<'_> {
         } else if f.obsolete.is_some_and(|year| self.standard.0 >= year) {
             self.issues.push(Issue {
                 offset,
+                extension: false,
                 warning: true,
                 message: format!("{} is obsolescent in {} [-std]", f.name, self.standard),
             });
         }
     }
+    fn extension(&mut self, name: &str, subroutine: bool, offset: usize) {
+        let Some(advice) = gnu_extension(name, subroutine) else { return };
+        let what = if subroutine { format!("CALL {}", name.to_ascii_uppercase()) } else { name.to_ascii_uppercase() };
+        self.issues.push(Issue {
+            offset,
+            extension: true,
+            warning: false,
+            message: if self.extensions_only {
+                format!("{what} is a GNU extension; {advice} [{GNU_EXTENSION}]")
+            } else {
+                format!("{what} is a GNU extension, not part of {}; {advice}", self.standard)
+            },
+        });
+    }
     fn require(&mut self, name: &str, first: u16, offset: usize) {
         if self.standard.0 < first {
             self.issues.push(Issue {
                 offset,
+                extension: false,
                 warning: false,
                 message: format!(
                     "{name} requires {}; selected standard is {}",
@@ -455,6 +498,7 @@ impl Checker<'_> {
                     if let Some(year) = intrinsic_year(n) {
                         self.require(&format!("intrinsic '{n}'"), year, offset);
                     }
+                    self.extension(n, false, offset);
                 }
                 for a in args {
                     self.expr(a, offset, names);
@@ -799,6 +843,7 @@ impl Checker<'_> {
                         if let Some(year) = intrinsic_year(name) {
                             self.require(&format!("intrinsic '{name}'"), year, offset);
                         }
+                        self.extension(name, true, offset);
                     }
                     for e in args {
                         self.expr(e, offset, &names);
@@ -858,12 +903,17 @@ pub(crate) fn check(
     origins: Option<&[crate::source_diagnostics::SourceOrigin]>,
     standard: Option<Standard>,
     werror: bool,
+    extension_warnings: Option<bool>,
 ) -> Result<()> {
-    let Some(standard) = standard else {
+    // With -std, extensions are errors; without it, -Wgnu-extension warns
+    // (Some(true) when its warnings are errors).
+    let extensions_only = standard.is_none();
+    if extensions_only && extension_warnings.is_none() {
         return Ok(());
-    };
+    }
     let mut checker = Checker {
-        standard,
+        standard: standard.unwrap_or(Standard(2023)),
+        extensions_only,
         source,
         tokens,
         issues: vec![],
@@ -893,6 +943,22 @@ pub(crate) fn check(
         false,
         &HashSet::new(),
     );
+    if extensions_only {
+        let error = extension_warnings == Some(true);
+        checker.issues.retain(|i| i.extension);
+        for issue in &mut checker.issues {
+            issue.warning = !error;
+        }
+    } else {
+        for (span, written, standard) in crate::kind_warnings::byte_sizes(source, tokens) {
+            checker.issues.push(Issue {
+                offset: span.start,
+                extension: true,
+                warning: false,
+                message: format!("`{written}` is an extension, not part of {}; write {standard}", checker.standard),
+            });
+        }
+    }
     checker
         .issues
         .sort_by(|a, b| (a.offset, &a.message).cmp(&(b.offset, &b.message)));
@@ -944,6 +1010,9 @@ pub(crate) fn check(
         failed |= error;
     }
     if failed {
+        if extensions_only {
+            bail!("{GNU_EXTENSION} warnings treated as errors");
+        }
         bail!("standard compatibility checks failed");
     }
     Ok(())

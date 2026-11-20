@@ -34,6 +34,44 @@ impl Drop for WorkDir {
     }
 }
 
+/// Symbols the linker found no definition for; the toolchain itself works.
+#[derive(Debug)]
+struct Undefined(Vec<String>);
+
+impl std::fmt::Display for Undefined {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let names: Vec<_> = self.0.iter().map(|n| format!("`{n}`")).collect();
+        write!(
+            f,
+            "linking failed: no definition of {} {}; supply the source or object file that defines it",
+            if names.len() == 1 { "procedure" } else { "procedures" },
+            names.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for Undefined {}
+
+/// Undefined symbols named by ld.lld or GNU ld, as Fortran names.
+fn undefined_symbols(text: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for line in text.lines() {
+        let symbol = if let Some(rest) = line.split("undefined symbol: ").nth(1) {
+            rest.trim()
+        } else if let Some(rest) = line.split("undefined reference to `").nth(1) {
+            rest.trim_end_matches(['\'', '"']).trim()
+        } else {
+            continue;
+        };
+        let symbol = symbol.trim_start_matches('_');
+        let name = symbol.strip_prefix("rfort$").unwrap_or(symbol).to_owned();
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
 fn run(command: &mut Command, cli: &Cli) -> Result<()> {
     if !cli.quiet {
         eprintln!("[link] {command:?}");
@@ -42,6 +80,11 @@ fn run(command: &mut Command, cli: &Cli) -> Result<()> {
         .output()
         .with_context(|| format!("could not execute {command:?}"))?;
     if !output.status.success() {
+        let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        let missing = undefined_symbols(&text);
+        if !missing.is_empty() {
+            return Err(Undefined(missing).into());
+        }
         bail!(
             "tool failed ({})\n{}{}",
             output.status,
@@ -197,7 +240,13 @@ pub fn link(objects: &[PathBuf], out: &Path, cli: &Cli) -> Result<()> {
             command.arg(arg);
         }
         command.args(["msvcrt.lib", "legacy_stdio_definitions.lib", "kernel32.lib"]);
-        run(&mut command, cli).context("Windows linking failed; install Visual Studio C++ Build Tools and the Windows SDK, or set RFORT_LIB_PATH to their library directories")?;
+        run(&mut command, cli).map_err(|e| {
+            if e.is::<Undefined>() {
+                e
+            } else {
+                e.context("Windows linking failed; install Visual Studio C++ Build Tools and the Windows SDK, or set RFORT_LIB_PATH to their library directories")
+            }
+        })?;
     }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {

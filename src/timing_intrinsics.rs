@@ -106,6 +106,41 @@ pub fn resolve(mut p: Program) -> Result<Program> {
                     *name = "get_command_argument".into();
                     args[0] = Expr::Call("int".into(), vec![args[0].clone()]);
                 }
+                // SYSTEM(COMMAND [, STATUS]), a GNU extension, runs COMMAND and
+                // waits, as EXECUTE_COMMAND_LINE(COMMAND, EXITSTAT=STATUS).
+                if name == "system" && matches!(args.len(), 1 | 2) && !procedures.contains(name) {
+                    *name = "execute_command_line".into();
+                    if args.len() == 2 {
+                        let status = args.pop().unwrap();
+                        args.push(Expr::Call("@keyword:exitstat".into(), vec![status]));
+                    }
+                }
+                // Other GNU extension subroutines: FLUSH([UNIT]) is the FLUSH
+                // statement (all output, taken as unit 6, without a unit);
+                // EXIT([STATUS]) ends the program silently with STATUS; ABORT()
+                // stops with an error; SLEEP(SECONDS) pauses.
+                if !procedures.contains(name) {
+                    match (name.as_str(), args.len()) {
+                        ("flush", 0 | 1) => {
+                            *name = "@io_flush".into();
+                            if args.is_empty() {
+                                args.push(Expr::IntLit("6".into()));
+                            }
+                        }
+                        ("exit", 0 | 1) => {
+                            *name = "@exit".into();
+                            if args.is_empty() {
+                                args.push(Expr::IntLit("0".into()));
+                            }
+                        }
+                        ("abort", 0) => {
+                            *name = "@error_stop".into();
+                            args.push(Expr::Str("Program aborted".into()));
+                        }
+                        ("sleep", 1) => *name = "@sleep".into(),
+                        _ => {}
+                    }
+                }
             }
             let result = match &mut s {
                 Stmt::CallSub { name, args }

@@ -395,7 +395,7 @@ current limits.
 | `RANDOM_NUMBER`, [`RANDOM_SEED`](language-support.md#intrinsic-keywords-and-random_seed) | F90 | ✅ |  | test_intrinsic_keywords.py |
 | [`CPU_TIME`, `SYSTEM_CLOCK`, `DATE_AND_TIME`](language-support.md#cpu_time-system_clock-and-date_and_time) | Mixed | ✅ | SYSTEM_CLOCK and DATE_AND_TIME: F90; CPU_TIME: F95. | test_timing.py, test_date_and_time.py |
 | [`GET_COMMAND_ARGUMENT`, `GET_ENVIRONMENT_VARIABLE`](language-support.md#command-line-and-environment) | F2003 | ✅ |  | test_command_argument.py, test_environment.py |
-| `COMMAND_ARGUMENT_COUNT`, `GET_COMMAND`, `EXECUTE_COMMAND_LINE` | Mixed | ✅ | COMMAND_ARGUMENT_COUNT and GET_COMMAND: F2003; EXECUTE_COMMAND_LINE: F2008. Commands run synchronously through the system shell; with WAIT=.FALSE., CMDSTAT is -2 as the standard specifies. The browser interpreter cannot run commands (CMDSTAT -1) | test_command_and_bit_intrinsics.py |
+| `COMMAND_ARGUMENT_COUNT`, `GET_COMMAND`, `EXECUTE_COMMAND_LINE` | Mixed | ✅ | COMMAND_ARGUMENT_COUNT and GET_COMMAND: F2003; EXECUTE_COMMAND_LINE: F2008. Commands run synchronously through the system shell; with WAIT=.FALSE., CMDSTAT is -2 as the standard specifies. The browser interpreter cannot run commands (CMDSTAT -1). The GNU extension `CALL SYSTEM(command [, status])` runs as EXECUTE_COMMAND_LINE with EXITSTAT=status, unless the program defines its own SYSTEM | test_command_and_bit_intrinsics.py |
 
 ## Parallel features
 
