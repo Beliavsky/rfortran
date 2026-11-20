@@ -77,6 +77,35 @@ print '(2("[",a,"]"))', v
 end program
 """, "[beta ][alpha]\n 3 3 aaabbbccc\n[ccc][bet]\n", interpreter=False)
 
+    def test_constructors_with_section_items(self):
+        # Sections of the array itself, with strides, omitted and run-time
+        # bounds, and empty sections, and sections of other arrays. The
+        # interpreter copies each element's whole storage, which is slow.
+        self.check("""program p
+implicit none
+character(len=:), allocatable :: names(:), other(:)
+character(len=3) :: fixed(4)
+integer :: k
+fixed = ['aaa', 'bbb', 'ccc', 'ddd']
+names = ['ab', 'cd', 'gh', 'ij']
+names = [names(::2), names(4:1:-2)]
+print *, size(names), len(names), '[', names, ']'
+k = 3
+names = [names(k:), 'zz', names(:k-2)]
+print *, size(names), len(names), '[', names, ']'
+names = [character(len=4) :: names(2:3), 'wxyz']
+print *, size(names), len(names), '[', names, ']'
+other = [names(1:0), names(3:3)]
+print *, size(other), len(other), '[', other, ']'
+other = [fixed(2:4:2), fixed(1:1)]
+print *, size(other), len(other), '[', other, ']'
+names = [other(2:), other(1:1)]
+print *, size(names), len(names), '[', names, ']'
+names = [names(2:1)]
+print *, size(names), len(names)
+end program
+""", "4 2 [abghijcd]\n4 2 [ijcdzzab]\n3 4 [cd  zz  wxyz]\n1 4 [wxyz]\n3 3 [bbbdddaaa]\n3 3 [dddaaabbb]\n0 3\n", interpreter=False)
+
     def test_procedure_and_block_locals(self):
         self.check("""program p
 call s(4)

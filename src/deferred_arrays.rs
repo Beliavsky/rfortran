@@ -128,13 +128,13 @@ pub(crate) fn width(name: &str) -> String {
     format!("@deferred_width${name}")
 }
 
-/// The items of a constructor, each the name of a whole array declared in
-/// the program unit or None for a scalar, when no item is an array section,
-/// implied DO or nested constructor.
-fn items(items: &[Expr], declared: &[String]) -> Option<Vec<Option<String>>> {
+/// The items of a constructor, each a whole array or a section of a
+/// rank-one array declared in the program unit, or None for a scalar, when
+/// no item is another array section, implied DO or nested constructor.
+fn items(items: &[Expr], declared: &[String]) -> Option<Vec<Option<Expr>>> {
     items.iter().map(|i| match i {
-        Expr::Ident(n) => Some(declared.contains(n).then(|| n.clone())),
-        Expr::Section { name: n, .. } => (!declared.contains(n)).then_some(None),
+        Expr::Ident(n) => Some(declared.contains(n).then(|| i.clone())),
+        Expr::Section { name: n, .. } => Some(declared.contains(n).then(|| i.clone())),
         Expr::Call(n, a) | Expr::Index(n, a) if declared.contains(n) => a.iter().all(|a| !matches!(a, Expr::Section { .. })).then_some(None),
         Expr::Call(n, _) => (n != "@output_implied_do" && n != "@array_constructor").then_some(None),
         _ => Some(None),
@@ -157,14 +157,14 @@ fn runtime_shape(e: &Expr, arrays: &[String], declared: &[String]) -> Option<(Ex
     let size = |n: &str| Expr::Call("size".into(), vec![Expr::Ident(n.into())]);
     let length = |e: &Expr| match e {
         Expr::Str(s) => int(s.len()),
-        Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) if arrays.contains(n) => Expr::Ident(width(n)),
+        Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) | Expr::Section { name: n, .. } if arrays.contains(n) => Expr::Ident(width(n)),
         _ => Expr::Call("len".into(), vec![e.clone()]),
     };
     if let Some(values) = constructor(e) {
         let plan = items(values, declared)?;
         // An empty typed constructor still supplies its element length.
         // Its zero size must not prevent allocation/reallocation lowering.
-        let count = plan.iter().map(|p| p.as_deref().map_or(int(1), size))
+        let count = plan.iter().map(|p| p.as_ref().map_or(int(1), |a| Expr::Call("size".into(), vec![a.clone()])))
             .reduce(|a, b| Expr::Bin(crate::ast::BinOp::Add, Box::new(a), Box::new(b))).unwrap_or_else(|| int(0));
         let typed = match e {
             Expr::Call(n, items) if n == "@typed_constructor" => {
@@ -263,10 +263,24 @@ fn reallocate(body: &mut Vec<Stmt>, arrays: &[String], declared: &[String]) {
                                     block.push(Stmt::AssignIndex { name: name.clone(), indices: vec![id(&position)], value: item.clone() });
                                     continue;
                                 };
-                                let bound = |b: &str| Expr::Call(b.into(), vec![id(&array), Expr::IntLit("1".into())]);
-                                block.push(Stmt::Do { var: index.clone(), start: bound("lbound"), end: bound("ubound"), body: vec![
+                                let one = || Expr::IntLit("1".into());
+                                let bound = |a: &str, b: &str| Expr::Call(b.into(), vec![id(a), one()]);
+                                let (array, start, end, element) = match array {
+                                    Expr::Ident(a) => (a.clone(), bound(&a, "lbound"), bound(&a, "ubound"), id(&index)),
+                                    // Element k of a(l:u:s) is a(l + (k - 1)*s).
+                                    Expr::Section { ref name, ref lower, ref stride, .. } => {
+                                        let lower = lower.as_deref().cloned().unwrap_or_else(|| bound(name, "lbound"));
+                                        let stride = stride.as_deref().cloned().unwrap_or_else(one);
+                                        let offset = Expr::Bin(crate::ast::BinOp::Mul,
+                                            Box::new(Expr::Bin(crate::ast::BinOp::Sub, Box::new(id(&index)), Box::new(one()))), Box::new(stride));
+                                        (name.clone(), one(), Expr::Call("size".into(), vec![array.clone()]),
+                                            Expr::Bin(crate::ast::BinOp::Add, Box::new(lower), Box::new(offset)))
+                                    }
+                                    _ => unreachable!(),
+                                };
+                                block.push(Stmt::Do { var: index.clone(), start, end, body: vec![
                                     next.clone(),
-                                    Stmt::AssignIndex { name: name.clone(), indices: vec![id(&position)], value: Expr::Index(array.clone(), vec![id(&index)]) },
+                                    Stmt::AssignIndex { name: name.clone(), indices: vec![id(&position)], value: Expr::Index(array, vec![element]) },
                                 ] });
                             }
                         }

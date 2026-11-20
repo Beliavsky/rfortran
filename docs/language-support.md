@@ -1093,14 +1093,17 @@ with a type specification sets the length, which may be a runtime value, as in
 `allocate(character(len=n) :: w(m))`. Assignment of a whole array value
 reallocates the array to the value's length and size: a constructor, typed or
 not, another CHARACTER array, or a value that refers to the array itself, as in
-`w = [w(2), w(1)]` or the growth idiom `w = [w, item]`. Element assignment pads
+`w = [w(2), w(1)]`, `w = [w(1:2), 'ef']` or the growth idiom `w = [w, item]`.
+Constructor items may be whole arrays and sections of rank-one arrays, with
+any bounds and stride. Element assignment pads
 or truncates to the current length, and LEN, SIZE, ALLOCATED, DEALLOCATE,
 substrings of elements and internal READ and WRITE with an element work. When
 every assignment and ALLOCATE gives the same constant length, the array is
 stored with that fixed length. Otherwise each element has room for at least 4096
-characters, and a longer length stops the program. Deferred-length array
-dummy arguments, function results and module variables are not yet supported,
-nor are constructors with array sections or implied DO loops whose length is
+characters, and a longer length stops the program. Module variables, and
+SAVEd locals, are supported; any unit that uses the module may give the array
+a new length. Deferred-length array dummy arguments and function results are
+not yet supported, nor are constructors with implied DO loops whose length is
 set at run time. Programs using runtime-length arrays are slow in the
 interpreter (`rfort run`); see [interpreter-todo.md](interpreter-todo.md).
 Scalar derived objects may also contain deferred-length allocatable CHARACTER

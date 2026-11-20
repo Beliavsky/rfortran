@@ -143,6 +143,14 @@ fn expression(e: Expr, arrays: &Arrays) -> Result<Value> {
                 .to_string(),
             ))
         }
+        // The elements of a section have the array's length.
+        Expr::Call(n, args)
+            if n == "len"
+                && matches!(args.as_slice(), [Expr::Section { name, .. }] if arrays.contains_key(name)) =>
+        {
+            let [Expr::Section { name, .. }] = args.as_slice() else { unreachable!() };
+            Value::Scalar(Expr::IntLit(arrays[name].length.to_string()))
+        }
         Expr::Call(n, args) if n == "@array_substring" => {
             let [base, range] = args.as_slice() else {
                 unreachable!()
