@@ -22,6 +22,9 @@ struct Scope {
     // an intrinsic module, may supply any undeclared name, in this scope or
     // its hosts, so no implicit declarations are inserted.
     opaque: bool,
+    // Names that construct markers mention, such as associate names and
+    // READ destinations: not reported as undeclared under IMPLICIT NONE.
+    markers: HashSet<String>,
 }
 struct Analysis {
     scopes: Vec<Scope>,
@@ -41,6 +44,8 @@ struct Analysis {
     // statement: (scope, name, offset).
     procedures: HashSet<usize>,
     undeclared: Vec<(usize, String, usize)>,
+    // Indices of implied-DO loops, which have their own diagnostic.
+    implied_indices: HashSet<String>,
 }
 
 fn declarations(body: &[Stmt]) -> HashMap<String, bool> {
@@ -175,7 +180,13 @@ impl Analysis {
         let Some(kind) = self.scopes[owner].implicit[letter].clone() else {
             // A dummy argument or function result without a type has its
             // own diagnostic.
-            if found.is_none() && !self.undeclared.iter().any(|(o, n, _)| *o == owner && n == name) {
+            let mut marked = false;
+            let mut at = Some(scope);
+            while let Some(s) = at {
+                marked |= self.scopes[s].markers.contains(&name.to_ascii_lowercase());
+                at = self.scopes[s].parent;
+            }
+            if found.is_none() && !marked && !self.undeclared.iter().any(|(o, n, _)| *o == owner && n == name) {
                 self.undeclared.push((owner, name.into(), offset));
             }
             return;
@@ -203,6 +214,11 @@ impl Analysis {
     fn expr(&mut self, scope: usize, e: &Expr, offset: usize) {
         if let Expr::Call(n, _) | Expr::Index(n, _) = e {
             self.called.insert(n.clone());
+        }
+        if let Expr::Call(n, args) = e {
+            if let (true, Some(Expr::Ident(index))) = (n == "@output_implied_do", args.first()) {
+                self.implied_indices.insert(index.clone());
+            }
         }
         match e {
             Expr::Ident(n) | Expr::Index(n, _) | Expr::Section { name: n, .. } => {
@@ -252,12 +268,8 @@ impl Analysis {
         }
         names.extend(self.imports(body, &mut HashSet::new()));
         names.extend(declarations(body));
-        // Associate names of ASSOCIATE, SELECT TYPE and similar constructs.
         let mut markers = HashSet::new();
         crate::implicit_none::declared(body, &mut markers);
-        for n in markers {
-            names.entry(n).or_insert(true);
-        }
         let mut implicit = parent
             .map(|p| self.scopes[p].implicit.clone())
             .unwrap_or_else(|| {
@@ -303,6 +315,7 @@ impl Analysis {
             implicit,
             block,
             opaque,
+            markers,
         });
         let offset = body
             .iter()
@@ -445,6 +458,7 @@ pub fn check(
         declare: false,
         procedures: HashSet::new(),
         undeclared: vec![],
+        implied_indices: HashSet::new(),
     };
     analysis.scope(
         &mut program.body.clone(),
@@ -533,6 +547,7 @@ pub fn declare(mut program: Program) -> Result<Program> {
         declare: true,
         procedures: HashSet::new(),
         undeclared: vec![],
+        implied_indices: HashSet::new(),
     };
     let contains = program.contains.clone();
     analysis.scope(&mut program.body, None, &[], None, Some(&contains), false);
@@ -549,6 +564,7 @@ pub fn declare(mut program: Program) -> Result<Program> {
             // A procedure, such as an intrinsic or external function passed
             // as an actual argument, has no implicit type to give.
             && !analysis.called.contains(name)
+            && !analysis.implied_indices.contains(name)
             && crate::intrinsics::purity(name).is_none()
     });
     if let Some((_, name, offset)) = undeclared {
