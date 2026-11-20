@@ -6,8 +6,13 @@ Each case is checked in the interpreter, at -O0 and -O2, and against gfortran.
 Run after cargo build --bin rfort: python tests/test_deferred_character_arrays.py
 Set RFORT_TEST_COMPILER to check another compiler build.
 """
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
+
 import test_deallocate
+from test_record_read import COMPILER
 
 
 class DeferredCharacterArrays(unittest.TestCase):
@@ -105,6 +110,158 @@ names = [names(2:1)]
 print *, size(names), len(names)
 end program
 """, "4 2 [abghijcd]\n4 2 [ijcdzzab]\n3 4 [cd  zz  wxyz]\n1 4 [wxyz]\n3 3 [bbbdddaaa]\n3 3 [dddaaabbb]\n0 3\n", interpreter=False)
+
+    def test_function_results(self):
+        # Module, renamed and internal functions; a RETURN before the end;
+        # references in assignments, output lists, IF conditions, DO bounds
+        # and arguments; and one result passed to another function. The
+        # interpreter copies each element's whole storage, which is slow.
+        self.check("""module words_mod
+implicit none
+contains
+function split(s) result(words)
+character(len=*), intent(in) :: s
+character(len=:), allocatable :: words(:)
+integer :: i, j, n
+allocate (character(len=0) :: words(0))
+i = 1
+do while (i <= len(s))
+  if (s(i:i) == ' ') then
+    i = i + 1
+    cycle
+  end if
+  j = index(s(i:) // ' ', ' ') - 1
+  n = max(len(words), j)
+  words = [character(len=n) :: words, s(i:i+j-1)]
+  i = i + j
+end do
+end function
+function repeat_all(a, k)
+character(len=*), intent(in) :: a(:)
+integer, intent(in) :: k
+character(len=:), allocatable :: repeat_all(:)
+integer :: i
+allocate (character(len=k*len(a)) :: repeat_all(size(a)))
+if (k == 0) return
+do i = 1, size(a)
+  repeat_all(i) = repeat(a(i), k)
+end do
+end function
+end module
+program p
+use words_mod, only: sp => split, repeat_all
+implicit none
+character(len=:), allocatable :: w(:)
+integer :: i
+w = sp('ab cdef g')
+print *, size(w), len(w), '[', w, ']'
+print *, size(sp('x yy zzz')), len(sp('x yy zzz'))
+print *, '[', repeat_all(sp('ab c'), 2), ']'
+w = repeat_all(w, 0)
+print *, size(w), len(w)
+if (size(sp('a b c d')) == 4) print *, 'four'
+print *, '[', twice(['ab', 'cd']), ']'
+do i = 1, size(sp('p q'))
+  print *, i
+end do
+contains
+function twice(a)
+character(len=*), intent(in) :: a(:)
+character(len=:), allocatable :: twice(:)
+twice = [a, a]
+end function
+end program
+""", "3 4 [ab  cdefg   ]\n3 3\n[ababc c ]\n3 0\nfour\n[abcdabcd]\n1\n2\n", interpreter=False)
+
+    # Results of one length throughout, results in typed constructors, in
+    # a DO loop, a BLOCK and a fixed-length target, and a module function
+    # using another module's.
+    RESULT_MODULES = """module a_mod
+implicit none
+contains
+function pair() result(r)
+character(len=:), allocatable :: r(:)
+r = ['ab', 'cd']
+end function
+function upto(n)
+integer, intent(in) :: n
+character(len=:), allocatable :: upto(:)
+integer :: i
+allocate (character(len=n) :: upto(n))
+do i = 1, n
+  upto(i) = repeat('x', i)
+end do
+end function
+end module
+module b_mod
+use a_mod
+implicit none
+contains
+function both(n) result(r)
+integer, intent(in) :: n
+character(len=:), allocatable :: r(:)
+r = [character(len=n) :: pair(), upto(n)]
+end function
+end module
+"""
+    RESULT_PROGRAM = """program p
+use b_mod
+implicit none
+character(len=:), allocatable :: w(:)
+character(len=5), allocatable :: v(:)
+integer :: i
+do i = 1, 3
+  w = upto(i)
+  print *, size(w), len(w), '[', w, ']'
+end do
+block
+  character(len=:), allocatable :: q(:)
+  q = pair()
+  print *, size(q), len(q), '[', q, ']'
+end block
+v = upto(2)
+print *, size(v), len(v), '[', v, ']'
+w = [character(len=3) :: upto(1), pair()]
+print *, size(w), len(w), '[', w, ']'
+print *, '[', both(3), ']'
+print *, len(both(4)), size(both(4))
+end program
+"""
+    RESULT_OUTPUT = "1 1 [x]\n2 2 [x xx]\n3 3 [x  xx xxx]\n2 2 [abcd]\n2 5 [x    xx   ]\n3 3 [x  ab cd ]\n[ab cd x  xx xxx]\n4 6\n"
+
+    def test_function_results_of_used_modules(self):
+        self.check(self.RESULT_MODULES + self.RESULT_PROGRAM, self.RESULT_OUTPUT, interpreter=False)
+
+    def test_function_results_of_modules_compiled_separately(self):
+        with tempfile.TemporaryDirectory(prefix="deferred-") as tmp:
+            d = Path(tmp)
+            modules = self.RESULT_MODULES.split("module b_mod")
+            (d / "a.f90").write_text(modules[0])
+            (d / "b.f90").write_text("module b_mod" + modules[1])
+            (d / "main.f90").write_text(self.RESULT_PROGRAM)
+            run = lambda *args: subprocess.run([str(COMPILER), *map(str, args)], cwd=d, capture_output=True, text=True, timeout=120)
+            for step in [("-c", "a.f90", "-o", "a.obj"), ("-c", "b.f90", "-o", "b.obj"), ("main.f90", "a.obj", "b.obj", "-o", "main.exe")]:
+                result = run(*step)
+                self.assertEqual(result.returncode, 0, result.stderr)
+            result = subprocess.run([str(d / "main.exe")], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.stdout.split(), self.RESULT_OUTPUT.split())
+
+    def test_block_locals_with_runtime_length(self):
+        self.check("""program p
+implicit none
+character(len=:), allocatable :: w(:)
+integer :: n
+n = 3
+allocate (character(len=n) :: w(2))
+w(1) = 'abc'; w(2) = 'de'
+block
+  character(len=:), allocatable :: q(:)
+  q = w
+  q = [character(len=n+1) :: q, 'z']
+  print *, size(q), len(q), '[', q, ']'
+end block
+end program
+""", "3 4 [abc de  z   ]\n", interpreter=False)
 
     def test_procedure_and_block_locals(self):
         self.check("""program p

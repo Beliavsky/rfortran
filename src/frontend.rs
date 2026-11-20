@@ -72,6 +72,12 @@ pub(crate) fn lower_program_body(
     origins: Option<&[source_diagnostics::SourceOrigin]>,
 ) -> Result<ast::Program> {
     (|| {
+        // After the definitions of separately compiled modules are added,
+        // so that their functions returning deferred-length CHARACTER
+        // arrays and their arrays are known.
+        let mut program = program;
+        crate::deferred_arrays::resolve(&mut program.body)
+            .map_err(|(message, at)| source_diagnostics::at(anyhow::anyhow!(message), at))?;
         do_variables::check(&program, src)?;
         let program = crate::chains::resolve(program)?;
         let program = internal_procedures::disambiguate(program);

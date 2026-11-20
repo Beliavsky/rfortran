@@ -1102,9 +1102,16 @@ every assignment and ALLOCATE gives the same constant length, the array is
 stored with that fixed length. Otherwise each element has room for at least 4096
 characters, and a longer length stops the program. Module variables, and
 SAVEd locals, are supported; any unit that uses the module may give the array
-a new length. Deferred-length array dummy arguments and function results are
-not yet supported, nor are constructors with implied DO loops whose length is
-set at run time. Programs using runtime-length arrays are slow in the
+a new length. BLOCK locals may have a length set at run time. ALLOCATABLE
+dummy arguments of any intent take the actual argument's length, and an
+INTENT(OUT) or INTENT(INOUT) dummy may give it a new one. Functions, including
+module functions compiled separately, may return a deferred-length array, as
+in `function split(s) result(words)` with `character(len=:), allocatable ::
+words(:)`; the result may be referenced in assignments, output lists, actual
+arguments, IF conditions, SELECT CASE selectors and DO bounds, but not yet in
+a DO WHILE condition, and the function may not yet be RECURSIVE. Constructors
+with implied DO loops whose length is set at run time are not yet supported.
+Programs using runtime-length arrays are slow in the
 interpreter (`rfort run`); see [interpreter-todo.md](interpreter-todo.md).
 Scalar derived objects may also contain deferred-length allocatable CHARACTER
 array components. Their element length accompanies the component storage when

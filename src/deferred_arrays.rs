@@ -204,7 +204,8 @@ fn runtime_shape(e: &Expr, arrays: &[String], declared: &[String]) -> Option<(Ex
 /// length is set at run time: ALLOCATE with a type specification sets the
 /// length, and assignment of a whole array value reallocates the array to
 /// the value's length and size.
-fn reallocate(body: &mut Vec<Stmt>, arrays: &[String], declared: &[String]) {
+/// `outer` are the arrays of an enclosing unit, which a BLOCK reads.
+fn reallocate(body: &mut Vec<Stmt>, arrays: &[String], declared: &[String], outer: &[String]) {
     let id = |n: &str| Expr::Ident(n.into());
     let set_width = |name: &str, length: Expr| Stmt::Assign {
         name: width(name),
@@ -227,12 +228,13 @@ fn reallocate(body: &mut Vec<Stmt>, arrays: &[String], declared: &[String]) {
                 ];
                 let mut inner = arrays.to_vec();
                 inner.push(temp);
-                reallocate(&mut block, &inner, declared);
+                reallocate(&mut block, &inner, declared, outer);
                 out.extend(block);
                 continue;
             }
             Stmt::Assign { name, value } if arrays.contains(name) => {
-                if let Some((length, size)) = runtime_shape(value, arrays, declared) {
+                let widths: Vec<String> = arrays.iter().chain(outer).cloned().collect();
+                if let Some((length, size)) = runtime_shape(value, &widths, declared) {
                     let temp = format!("@deferred_value${name}");
                     out.push(Stmt::Block { body: vec![] });
                     let Some(Stmt::Block { body: block }) = out.last_mut() else { unreachable!() };
@@ -311,19 +313,208 @@ fn reallocate(body: &mut Vec<Stmt>, arrays: &[String], declared: &[String]) {
                 }
             }
             Stmt::If { then_body, else_body, .. } => {
-                reallocate(then_body, arrays, declared);
-                if let Some(b) = else_body { reallocate(b, arrays, declared); }
+                reallocate(then_body, arrays, declared, outer);
+                if let Some(b) = else_body { reallocate(b, arrays, declared, outer); }
             }
-            Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => reallocate(body, arrays, declared),
+            Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => reallocate(body, arrays, declared, outer),
             Stmt::SelectCase { cases, default, .. } => {
-                for c in cases { reallocate(&mut c.body, arrays, declared); }
-                if let Some(b) = default { reallocate(b, arrays, declared); }
+                for c in cases { reallocate(&mut c.body, arrays, declared, outer); }
+                if let Some(b) = default { reallocate(b, arrays, declared, outer); }
             }
             _ => {}
         }
         out.push(s);
     }
     *body = out;
+}
+
+/// The result variable of a function whose result is a deferred-length
+/// CHARACTER array.
+fn deferred_result(body: &[Stmt], name: &str) -> Option<String> {
+    let result = match body.last() {
+        Some(Stmt::Return(Some(Expr::Ident(r)))) => r.clone(),
+        _ => name.to_string(),
+    };
+    body.iter().any(|s| matches!(s, Stmt::ArrayDecl { kind, name, .. } if *name == result && crate::substrings::deferred(kind)))
+        .then_some(result)
+}
+
+/// The functions, in all units, whose result is a deferred-length
+/// CHARACTER array.
+fn deferred_functions(body: &[Stmt], names: &mut Vec<String>) {
+    for s in body {
+        match s {
+            Stmt::Function { name, body, .. } => {
+                if deferred_result(body, name).is_some() && !names.contains(name) { names.push(name.clone()); }
+                deferred_functions(body, names);
+            }
+            Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => deferred_functions(body, names),
+            _ => {}
+        }
+    }
+}
+
+/// Replace each string of a serialized AST equal to `from`, except string
+/// literals, by `to`.
+fn rename_value(v: &mut serde_json::Value, from: &str, to: &str) {
+    use serde_json::Value;
+    match v {
+        Value::String(s) if s == from => *s = to.to_string(),
+        Value::Array(a) => for v in a { rename_value(v, from, to); },
+        Value::Object(o) => for (k, v) in o.iter_mut() {
+            if k != "Str" { rename_value(v, from, to); }
+        },
+        _ => {}
+    }
+}
+
+/// A function whose result is a deferred-length CHARACTER array becomes a
+/// subroutine with the result as a last INTENT(OUT) dummy, whose length is
+/// returned as that of any deferred-length dummy. Each reference to the
+/// function becomes a call before its statement, giving a temporary.
+fn results(body: &mut Vec<Stmt>) -> Result<(), (String, Option<usize>)> {
+    let mut names = vec![];
+    deferred_functions(body, &mut names);
+    if names.is_empty() { return Ok(()); }
+    calls(body, &names, &mut 0, None)
+}
+
+type Located<T> = Result<T, (String, Option<usize>)>;
+
+/// Hoist the references to the functions in a serialized expression,
+/// innermost first, into calls giving temporaries.
+fn hoist(v: &mut serde_json::Value, names: &[String], serial: &mut usize, temps: &mut Vec<(String, Stmt)>) {
+    use serde_json::Value;
+    match v {
+        Value::Array(a) => for v in a { hoist(v, names, serial, temps); },
+        Value::Object(o) => {
+            for (k, v) in o.iter_mut() { if k != "Str" { hoist(v, names, serial, temps); } }
+            let Some(Value::Array(call)) = o.get("Call") else { return };
+            let (Some(Value::String(f)), Some(args)) = (call.first(), call.get(1)) else { return };
+            if !names.contains(f) { return; }
+            let Ok(mut args) = serde_json::from_value::<Vec<Expr>>(args.clone()) else { return };
+            *serial += 1;
+            let temp = format!("@deferred_result_{serial}");
+            args.push(Expr::Ident(temp.clone()));
+            temps.push((temp.clone(), Stmt::CallSub { name: f.clone(), args }));
+            *v = serde_json::json!({ "Ident": temp });
+        }
+        _ => {}
+    }
+}
+
+/// The subroutine for a function whose result is a deferred-length
+/// CHARACTER array.
+fn subroutine(name: &str, params: &mut Vec<String>, body: &mut Vec<Stmt>, result: &str, at: Option<usize>) -> Located<(Vec<String>, Vec<Stmt>)> {
+    use serde_json::Value;
+    let mut body = std::mem::take(body);
+    if matches!(body.last(), Some(Stmt::Return(Some(_)))) { body.pop(); }
+    let mut v = serde_json::to_value(&body).map_err(|e| (e.to_string(), at))?;
+    // Within the subroutine, the result has a name of its own.
+    let dummy = if result == name { format!("@result${name}") } else { result.to_string() };
+    rename_value(&mut v, result, &dummy);
+    // A RETURN of the function ends the subroutine.
+    fn returns(v: &mut Value) {
+        match v {
+            Value::Array(a) => for v in a { returns(v); },
+            Value::Object(o) => {
+                if o.contains_key("Return") { o.insert("Return".into(), Value::Null); }
+                for (k, v) in o.iter_mut() { if k != "Str" { returns(v); } }
+            }
+            _ => {}
+        }
+    }
+    returns(&mut v);
+    let mut body: Vec<Stmt> = serde_json::from_value(v).map_err(|e| (e.to_string(), at))?;
+    let position = body.iter().position(|s| !matches!(s, Stmt::SourceLocation(_) | Stmt::Use { .. } | Stmt::Implicit(_))).unwrap_or(body.len());
+    body.insert(position, Stmt::DummyIntent { name: dummy.clone(), intent: "intent(out)".into() });
+    let mut params = std::mem::take(params);
+    params.push(dummy);
+    Ok((params, body))
+}
+
+/// The references in a unit, which declares the temporaries.
+fn calls(body: &mut Vec<Stmt>, host: &[String], serial: &mut usize, at: Option<usize>) -> Located<()> {
+    let own = local_names(body);
+    let mut visible: Vec<String> = host.iter().filter(|n| !own.contains(n)).cloned().collect();
+    for s in body.iter() {
+        if let Stmt::Use { renames, .. } = s {
+            for (local, remote) in renames {
+                if host.contains(remote) && !own.contains(local) && !visible.contains(local) { visible.push(local.clone()); }
+            }
+        }
+    }
+    let mut declarations = vec![];
+    statements(body, &visible, serial, at, &mut declarations)?;
+    // The temporaries are declared with the unit's declarations.
+    let position = body.iter().position(|s| !matches!(s, Stmt::SourceLocation(_) | Stmt::Use { .. } | Stmt::Implicit(_)
+        | Stmt::VarDecl { .. } | Stmt::ArrayDecl { .. } | Stmt::InitializedDecl { .. } | Stmt::DummyIntent { .. }
+        | Stmt::DerivedDecl { .. } | Stmt::DerivedType { .. } | Stmt::Accessibility { .. }
+        | Stmt::GenericInterface { .. } | Stmt::OperatorInterface { .. })).unwrap_or(body.len());
+    body.splice(position..position, declarations);
+    Ok(())
+}
+
+fn statements(body: &mut Vec<Stmt>, names: &[String], serial: &mut usize, mut at: Option<usize>, declarations: &mut Vec<Stmt>) -> Located<()> {
+    let mut out = vec![];
+    for mut s in std::mem::take(body) {
+        if let Stmt::SourceLocation(p) = s { at = Some(p); }
+        let mut temps = vec![];
+        if !names.is_empty() {
+            let mut each = |e: &mut Expr, temps: &mut Vec<(String, Stmt)>| -> Located<()> {
+                let mut v = serde_json::to_value(&*e).map_err(|e| (e.to_string(), at))?;
+                hoist(&mut v, names, serial, temps);
+                *e = serde_json::from_value(v).map_err(|e| (e.to_string(), at))?;
+                Ok(())
+            };
+            match &mut s {
+                Stmt::Assign { value, .. } => each(value, &mut temps)?,
+                Stmt::AssignIndex { indices, value, .. } => { for i in indices { each(i, &mut temps)?; } each(value, &mut temps)?; }
+                Stmt::Print { items } => for i in items { each(i, &mut temps)?; },
+                Stmt::CallSub { args, .. } => for a in args { each(a, &mut temps)?; },
+                Stmt::If { cond, .. } => each(cond, &mut temps)?,
+                Stmt::SelectCase { expr, .. } => each(expr, &mut temps)?,
+                Stmt::Return(Some(e)) => each(e, &mut temps)?,
+                // The bounds are evaluated once, before the loop.
+                Stmt::Do { start, end, .. } => { each(start, &mut temps)?; each(end, &mut temps)?; }
+                Stmt::DoWhile { cond, .. } => {
+                    each(cond, &mut temps)?;
+                    if !temps.is_empty() {
+                        return Err(("a deferred-length CHARACTER array function result in a DO WHILE condition is not yet supported".into(), at));
+                    }
+                }
+                _ => {}
+            }
+        }
+        match &mut s {
+            Stmt::If { then_body, else_body, .. } => {
+                statements(then_body, names, serial, at, declarations)?;
+                if let Some(b) = else_body { statements(b, names, serial, at, declarations)?; }
+            }
+            Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => statements(body, names, serial, at, declarations)?,
+            Stmt::SelectCase { cases, default, .. } => {
+                for c in cases { statements(&mut c.body, names, serial, at, declarations)?; }
+                if let Some(b) = default { statements(b, names, serial, at, declarations)?; }
+            }
+            Stmt::Module { body, .. } | Stmt::Subroutine { body, .. } => calls(body, names, serial, at)?,
+            Stmt::Function { name, params, body: fbody, elemental, pure, .. } => {
+                calls(fbody, names, serial, at)?;
+                if let Some(result) = deferred_result(fbody, name).filter(|_| names.contains(name)) {
+                    let (params, fbody) = subroutine(name, params, fbody, &result, at)?;
+                    s = Stmt::Subroutine { elemental: *elemental, pure: *pure, name: name.clone(), params, body: fbody };
+                }
+            }
+            _ => {}
+        }
+        for (temp, call) in temps.iter() {
+            declarations.push(Stmt::DummyIntent { name: temp.clone(), intent: "allocatable".into() });
+            declarations.push(Stmt::ArrayDecl { kind: crate::ast::character_length(Expr::Ident("@deferred_character".into())), name: temp.clone(), dims: vec![Expr::Ident("@deferred_extent".into())] });
+            out.push(call.clone());
+        }
+        out.push(s);
+    }
+    *body = out;
+    Ok(())
 }
 
 /// The deferred-length CHARACTER arrays each module declares.
@@ -343,6 +534,7 @@ fn local_names(body: &[Stmt]) -> Vec<String> {
 /// units it contains. An error carries the source offset of the definition
 /// whose length differs.
 pub(crate) fn resolve(body: &mut Vec<Stmt>) -> Result<(), (String, Option<usize>)> {
+    results(body)?;
     let modules: Modules = body.iter().filter_map(|s| match s {
         Stmt::Module { name, body } => Some((name.clone(), body.iter().filter_map(|s| match s {
             Stmt::ArrayDecl { kind, name, .. } if crate::substrings::deferred(kind) => Some(name.clone()),
@@ -350,12 +542,15 @@ pub(crate) fn resolve(body: &mut Vec<Stmt>) -> Result<(), (String, Option<usize>
         }).collect())),
         _ => None,
     }).collect();
-    unit(body, &[], &modules)
+    unit(body, &[], &modules, &[], &[])
 }
 
 /// A unit sees the arrays of its host and of the modules it uses, whose
 /// length any unit may set at run time, so their definitions here set it.
-fn unit(body: &mut Vec<Stmt>, host: &[String], modules: &Modules) -> Result<(), (String, Option<usize>)> {
+/// `params` are the unit's dummy arguments, whose length is always set at
+/// run time, as the actual argument's. A BLOCK may assign the `outer`
+/// arrays of its unit.
+fn unit(body: &mut Vec<Stmt>, host: &[String], modules: &Modules, params: &[String], outer: &[String]) -> Result<(), (String, Option<usize>)> {
     let own = local_names(body);
     let mut visible: Vec<String> = host.iter().filter(|n| !own.contains(n)).cloned().collect();
     for s in body.iter() {
@@ -384,7 +579,7 @@ fn unit(body: &mut Vec<Stmt>, host: &[String], modules: &Modules) -> Result<(), 
         let mut lengths = vec![];
         definitions(body, name, None, &mut lengths);
         let Some((Some(first), _)) = lengths.first().copied() else { runtime.push(name.clone()); continue };
-        if lengths.iter().any(|l| l.0 != Some(first)) {
+        if lengths.iter().any(|l| l.0 != Some(first)) || params.contains(name) {
             runtime.push(name.clone());
             continue;
         }
@@ -403,17 +598,21 @@ fn unit(body: &mut Vec<Stmt>, host: &[String], modules: &Modules) -> Result<(), 
             Stmt::ArrayDecl { name, .. } => Some(name.clone()),
             _ => None,
         }).collect();
-        declared.extend(visible.iter().cloned());
-        reallocate(body, &runtime, &declared);
+        declared.extend(visible.iter().chain(outer).cloned());
+        reallocate(body, &runtime, &declared, outer);
     }
     // The arrays whose length is set at run time are visible to the
     // contained units.
     for s in body.iter_mut() {
         match s {
-            Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => unit(body, &runtime, modules)?,
+            Stmt::Function { body, params, .. } | Stmt::Subroutine { body, params, .. } => unit(body, &runtime, modules, params, &[])?,
+            Stmt::Module { body, .. } => unit(body, &runtime, modules, &[], &[])?,
             // The rewriting above has reached the statements of a BLOCK,
             // and of the BLOCKs it generates.
-            Stmt::Block { body } => unit(body, &[], modules)?,
+            Stmt::Block { body } => {
+                let outer: Vec<String> = outer.iter().chain(&runtime).cloned().collect();
+                unit(body, &[], modules, &[], &outer)?
+            }
             _ => {}
         }
     }

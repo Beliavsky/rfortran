@@ -91,6 +91,10 @@ fn visit(body: &mut [Stmt], serial: &mut usize) {
                 for name in names {
                     let local = format!("{name}{MARK}{serial}");
                     rename(body, &name, &local);
+                    // The length of a deferred-length CHARACTER array whose
+                    // length is set at run time.
+                    let width = crate::deferred_arrays::width(&name);
+                    rename(body, &width, &crate::deferred_arrays::width(&local));
                 }
             }
         }

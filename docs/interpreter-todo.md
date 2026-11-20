@@ -16,6 +16,7 @@ goes through CHARACTER temporaries, so programs using them are the most affected
 | `test_deferred_character_arrays.py` `test_assignment_reallocates_to_length_and_size` | Deferred-length arrays with a runtime length use temporaries of 4096 characters per element access (about 20 s) |
 | `test_deferred_character_arrays.py` `test_values_that_refer_to_the_array` | As above |
 | `test_deferred_character_arrays.py` `test_constructors_with_section_items` | As above (about 40 s) |
+| `test_deferred_character_arrays.py` `test_function_results`, `test_function_results_of_used_modules`, `test_block_locals_with_runtime_length` | As above (minutes for the function results) |
 | `test_saved_allocatables.py` `test_saved_deferred_length_character_arrays`, `test_module_deferred_length_character_arrays` | Saved and module deferred-length CHARACTER arrays with a runtime length; each element copy walks the 4096-character storage (15 to 40 s) |
 | `test_allocatable_scalar_components.py` `test_deferred_length_character`, `test_arrays_of_records`, `test_character_array_components_of_record_arrays` | Deferred-length CHARACTER components of records; a dozen statements take about 15 s |
 | `test_deferred_character_components.py` `test_local_allocation_and_overlap` | Deferred-length CHARACTER array with a runtime length; about 12 s |

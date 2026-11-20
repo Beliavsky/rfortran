@@ -838,9 +838,8 @@ pub fn parse_with_origins(
                 .and_then(|_| crate::statement_labels::formats(&mut p.body))
                 .and_then(|_| crate::data_statements::resolve(&mut p.body))
                 .and_then(|_| crate::defined_io::interfaces(&mut p.body))
-                .map_err(|msg| (msg, None))
-                .and_then(|_| crate::deferred_arrays::resolve(&mut p.body))
-                .and_then(|_| crate::deferred_arrays::type_parameter_inquiries(&mut p.body).map_err(|msg| (msg, None)))) {
+                .and_then(|_| crate::deferred_arrays::type_parameter_inquiries(&mut p.body))
+                .map_err(|msg| (msg, None))) {
                 // Label the statement when the error has a source offset.
                 let span = at.map_or(0..0, |p| p..src[p..].find('\n').map_or(src.len(), |n| p + n));
                 let mut diag = Diagnostic::error().with_message(&msg);
