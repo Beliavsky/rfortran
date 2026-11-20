@@ -65,7 +65,14 @@ fn declared(body: &[Stmt]) -> HashSet<String> {
 
 fn imported(body: &[Stmt], modules: &Modules) -> Result<Symbols> {
     let mut selected = Symbols::new();
+    let mut at = None;
     for s in body {
+        if let Stmt::SourceLocation(p) = s { at = Some(*p); }
+        // A name the module does not make public, highlighted in the USE.
+        let missing = |message: String, name: &str| match at {
+            Some(p) => crate::source_diagnostics::named(message, p, name),
+            None => anyhow::anyhow!(message),
+        };
         if let Stmt::Use { module, only, renames, .. } = s {
             let Some(exports) = modules.get(module) else {
                 if only.is_some() {
@@ -76,11 +83,11 @@ fn imported(body: &[Stmt], modules: &Modules) -> Result<Symbols> {
             if let Some(names) = only {
                 for name in names {
                     if !exports.contains_key(name) {
-                        bail!("`{name}` is not a public entity of module `{module}` in USE ONLY");
+                        return Err(missing(format!("`{name}` is not a public entity of module `{module}` in USE ONLY"), name));
                     }
                 }
             }
-            for (_,remote) in renames {if !exports.contains_key(remote) {bail!("`{remote}` is not a public entity of module `{module}` in USE");}}
+            for (_,remote) in renames {if !exports.contains_key(remote) {return Err(missing(format!("`{remote}` is not a public entity of module `{module}` in USE"), remote));}}
             for (remote, origin) in exports {
                 if only.as_ref().is_some_and(|names| !names.contains(remote)) {
                     continue;
@@ -206,7 +213,15 @@ impl Validator {
         visible.extend(body.iter().filter_map(|s|match s {
             Stmt::DummyIntent{name,intent} if intent==REFERENCE=>Some(name.clone()),_=>None,
         }));
+        let mut at = None;
         for s in body {
+            if let Stmt::SourceLocation(p) = s { at = Some(*p); }
+            self.statement(s, &visible).map_err(|e| crate::source_diagnostics::at(e, at))?;
+        }
+        Ok(())
+    }
+    fn statement(&self, s: &Stmt, visible: &HashSet<String>) -> Result<()> {
+        {
             match s {
                 Stmt::Module { body, .. } => self.body(body, &HashSet::new())?,
                 Stmt::Function { params, body, .. } => {
@@ -400,6 +415,14 @@ fn public_symbols(name: &str, body: &[Stmt], modules: &Modules) -> Result<Symbol
             format!("{}{name}::{n}", if generic { "generic:" } else { "" }),
         );
     }
+    let (default_public, access) = access(body);
+    symbols.retain(|n, _| access.get(n).copied().unwrap_or(default_public));
+    Ok(symbols)
+}
+
+/// Whether a module's entities are public by default, and the names whose
+/// accessibility is stated.
+fn access(body: &[Stmt]) -> (bool, HashMap<String, bool>) {
     let mut default_public = true;
     let mut access = HashMap::new();
     for s in body {
@@ -428,8 +451,36 @@ fn public_symbols(name: &str, body: &[Stmt], modules: &Modules) -> Result<Symbol
             _ => {}
         }
     }
-    symbols.retain(|n, _| access.get(n).copied().unwrap_or(default_public));
-    Ok(symbols)
+    (default_public, access)
+}
+
+/// The PRIVATE entities of each module defined in the program, local or
+/// obtained by USE: (module, name, whether PRIVATE only by default).
+pub(crate) fn private_entities(program: &Program) -> Vec<(String, String, bool)> {
+    let mut modules = Modules::new();
+    let mut private = Vec::new();
+    for s in &program.body {
+        if let Stmt::Module { name, body } = s {
+            let (default_public, access) = access(body);
+            let mut names: Vec<String> = declared(body).into_iter()
+                .chain(imported(body, &modules).map(|i| i.into_keys().collect::<Vec<_>>()).unwrap_or_default())
+                .filter(|n| !n.starts_with('@'))
+                .collect();
+            names.sort();
+            names.dedup();
+            for n in names {
+                match access.get(&n) {
+                    Some(false) => private.push((name.clone(), n, false)),
+                    None if !default_public => private.push((name.clone(), n, true)),
+                    _ => {}
+                }
+            }
+            if let Ok(symbols) = public_symbols(name, body, &modules) {
+                modules.insert(name.clone(), symbols);
+            }
+        }
+    }
+    private
 }
 
 /// The public entity names of each module defined in the program, in source

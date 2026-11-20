@@ -8,6 +8,7 @@ mod ast;
 mod cli;
 mod errors;
 mod source_diagnostics;
+mod private_entities;
 mod source_includes;
 mod submodules;
 mod standards;

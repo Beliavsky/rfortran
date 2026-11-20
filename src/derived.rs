@@ -363,7 +363,9 @@ impl Lowerer {
                 _ => {}
             }
         }
+        let mut at = None;
         for s in body {
+            if let Stmt::SourceLocation(p) = s { at = Some(*p); }
             if let Stmt::DerivedDecl {
                 type_name,
                 names,
@@ -373,7 +375,11 @@ impl Lowerer {
             } = s
             {
                 if !self.types.contains_key(type_name) {
-                    bail!("unknown derived type `{type_name}`");
+                    let message = format!("unknown derived type `{type_name}`");
+                    return Err(match at {
+                        Some(p) => crate::source_diagnostics::named(message, p, type_name),
+                        None => anyhow::anyhow!(message),
+                    });
                 }
                 for n in names {
                     if *polymorphic {

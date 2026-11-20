@@ -45,7 +45,14 @@ fn declarations(body: &[Stmt]) -> HashSet<String> {
 }
 fn imports(body: &[Stmt], modules: &HashMap<String, Module>) -> Result<Names> {
     let mut names = Names::new();
+    let mut at = None;
     for statement in body {
+        if let Stmt::SourceLocation(p) = statement { at = Some(*p); }
+        // A name the module does not make public, highlighted in the USE.
+        let missing = |message: String, name: &str| match at {
+            Some(p) => crate::source_diagnostics::named(message, p, name),
+            None => anyhow::anyhow!(message),
+        };
         if let Stmt::Use {
             module,
             only,
@@ -62,14 +69,14 @@ fn imports(body: &[Stmt], modules: &HashMap<String, Module>) -> Result<Names> {
                         continue;
                     }
                     if !definition.exports.contains_key(name) {
-                        bail!("`{name}` is not a public entity of module `{module}` in USE ONLY");
+                        return Err(missing(format!("`{name}` is not a public entity of module `{module}` in USE ONLY"), name));
                     }
                 }
             }
             for (_, remote) in renames {
                 if remote.starts_with("operator(") { continue; }
                 if !definition.exports.contains_key(remote) {
-                    bail!("`{remote}` is not a public entity of module `{module}` in USE");
+                    return Err(missing(format!("`{remote}` is not a public entity of module `{module}` in USE"), remote));
                 }
             }
             for (remote, target) in &definition.exports {

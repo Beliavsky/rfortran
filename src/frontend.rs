@@ -76,6 +76,7 @@ pub(crate) fn lower_program_body(
         // so that their functions returning deferred-length CHARACTER
         // arrays and their arrays are known.
         let mut program = program;
+        crate::private_entities::record(&program);
         crate::deferred_arrays::resolve(&mut program.body)
             .map_err(|(message, at)| source_diagnostics::at(anyhow::anyhow!(message), at))?;
         do_variables::check(&program, src)?;
@@ -91,7 +92,7 @@ pub(crate) fn lower_program_body(
         let program = scalar_components::resolve(program)?;
         let program = multidim::shape_arguments(program);
         let program = common::resolve(program)?;
-        let program = implicit_warnings::declare(program);
+        let program = implicit_warnings::declare(program)?;
         let program = namelists::resolve(program)?;
         let program = c_pointers::prepare(program)?;
         let program = c_interop::prepare(program)?;

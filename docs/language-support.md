@@ -401,6 +401,10 @@ checks with gfortran comparisons.
 - `IMPLICIT NONE (TYPE)`, `IMPLICIT NONE (EXTERNAL)` and
   `IMPLICIT NONE (TYPE, EXTERNAL)` are accepted. TYPE disables implicit
   typing; EXTERNAL is accepted but not checked.
+- Under IMPLICIT NONE, a variable that a procedure references but does not
+  declare is an error, whether IMPLICIT NONE is in the procedure, its host
+  or its module. The check is skipped in a scope that uses a module whose
+  source is not available, such as an intrinsic module without ONLY.
 - A function may be declared `type(t) function f(...)`, with or without RESULT.
 - The DIMENSION statement (`dimension a(2), b(0:n)`) gives array bounds to
   entities typed elsewhere in the same scope or typed implicitly.
@@ -4071,6 +4075,29 @@ name in different modules retain distinct identities. Two USE statements may
 import different entities with the same name as long as the scope does not
 reference that name; a reference is an "ambiguous imported name" error. A
 type-bound binding to such a procedure still calls its own module's procedure.
+
+When an error names an entity that a module keeps PRIVATE, the error gets a
+note naming the module and the `public` statement that would make the entity
+accessible, for example
+
+```text
+error: undefined variable `f`
+   ┌─ a.f90:18:10
+   │
+18 │ print *, f(2)
+   │          ^
+   │
+   = help: `f` is PRIVATE in module `m`, whose entities are PRIVATE by default; to use it outside the module, add `public :: f` to module `m`
+```
+
+This covers variables, named constants (including kind parameters),
+procedures, derived types, generic interfaces and defined operators, names
+in USE ONLY lists and renames, and entities a module obtains by USE but does
+not make public again. It covers modules in the same file and modules compiled
+separately from `.rmod` files. When linking, a reference to such a name is
+taken to be an external procedure; a warning with the note comes before the
+linker's error. The note is not given when the program declares its own
+variable with the name. Coverage is in `tests/test_private_entity_notes.py`.
 
 Named generic procedures, defined operators and defined assignment can merge
 across USE-associated modules and local interface extensions. ONLY imports,

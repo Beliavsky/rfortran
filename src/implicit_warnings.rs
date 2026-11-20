@@ -36,6 +36,11 @@ struct Analysis {
     // Names used with parentheses or in CALL: procedures or statement
     // functions, never implicitly typed scalar variables, so not declared.
     called: HashSet<String>,
+    // The scopes of procedures, and the names they reference without a
+    // declaration while IMPLICIT NONE is in effect, with the offset of the
+    // statement: (scope, name, offset).
+    procedures: HashSet<usize>,
+    undeclared: Vec<(usize, String, usize)>,
 }
 
 fn declarations(body: &[Stmt]) -> HashMap<String, bool> {
@@ -161,12 +166,18 @@ impl Analysis {
             let Some(parent) = self.scopes[unit].parent else { break };
             unit = parent;
         }
-        let (owner, explicit) = self.lookup(scope, name).unwrap_or((unit, false));
+        let found = self.lookup(scope, name);
+        let (owner, explicit) = found.unwrap_or((unit, false));
         if explicit || self.seen.contains(&(owner, name.to_owned())) {
             return;
         }
         let letter = (name.as_bytes()[0].to_ascii_lowercase() - b'a') as usize;
         let Some(kind) = self.scopes[owner].implicit[letter].clone() else {
+            // A dummy argument or function result without a type has its
+            // own diagnostic.
+            if found.is_none() && !self.undeclared.iter().any(|(o, n, _)| *o == owner && n == name) {
+                self.undeclared.push((owner, name.into(), offset));
+            }
             return;
         };
         self.scopes[owner].names.insert(name.into(), false);
@@ -241,6 +252,12 @@ impl Analysis {
         }
         names.extend(self.imports(body, &mut HashSet::new()));
         names.extend(declarations(body));
+        // Associate names of ASSOCIATE, SELECT TYPE and similar constructs.
+        let mut markers = HashSet::new();
+        crate::implicit_none::declared(body, &mut markers);
+        for n in markers {
+            names.entry(n).or_insert(true);
+        }
         let mut implicit = parent
             .map(|p| self.scopes[p].implicit.clone())
             .unwrap_or_else(|| {
@@ -368,6 +385,7 @@ impl Analysis {
                     };
                     let host = contained.is_none_or(|c| c.contains(name)).then_some(scope);
                     let id = self.scopes.len();
+                    self.procedures.insert(id);
                     self.scope(body, host, params, Some(&result), None, false);
                     // A RESULT variable without a declaration has its implicit type.
                     if self.declare && result != *name && return_type.is_none() && !self.scopes[id].opaque
@@ -386,6 +404,7 @@ impl Analysis {
                     name, params, body, ..
                 } => {
                     let host = contained.is_none_or(|c| c.contains(name)).then_some(scope);
+                    self.procedures.insert(self.scopes.len());
                     self.scope(body, host, params, None, None, false);
                 }
                 Stmt::Module { body, .. } => self.scope(body, None, &[], None, None, false),
@@ -424,6 +443,8 @@ pub fn check(
         implicit: vec![],
         called: HashSet::new(),
         declare: false,
+        procedures: HashSet::new(),
+        undeclared: vec![],
     };
     analysis.scope(
         &mut program.body.clone(),
@@ -489,7 +510,11 @@ pub fn check(
 /// Declare every implicitly typed variable explicitly, with the type its
 /// scoping unit's IMPLICIT rules give it, so that every later pass sees the
 /// type: `i = 7.9` stores 7 and `x = 7` stores 7.0.
-pub fn declare(mut program: Program) -> Program {
+///
+/// A procedure that references a name with no declaration while IMPLICIT
+/// NONE is in effect is an error. The main program's references are
+/// diagnosed by semantic analysis.
+pub fn declare(mut program: Program) -> Result<Program> {
     let mut analysis = Analysis {
         scopes: vec![],
         modules: program
@@ -506,8 +531,29 @@ pub fn declare(mut program: Program) -> Program {
         implicit: vec![],
         called: HashSet::new(),
         declare: true,
+        procedures: HashSet::new(),
+        undeclared: vec![],
     };
     let contains = program.contains.clone();
     analysis.scope(&mut program.body, None, &[], None, Some(&contains), false);
-    program
+    let unit = |mut scope: usize| {
+        while analysis.scopes[scope].block {
+            let Some(parent) = analysis.scopes[scope].parent else { break };
+            scope = parent;
+        }
+        scope
+    };
+    let undeclared = analysis.undeclared.iter().find(|(owner, name, _)| {
+        analysis.procedures.contains(&unit(*owner))
+            && !analysis.scopes[*owner].opaque
+            // A procedure, such as an intrinsic or external function passed
+            // as an actual argument, has no implicit type to give.
+            && !analysis.called.contains(name)
+            && crate::intrinsics::purity(name).is_none()
+    });
+    if let Some((_, name, offset)) = undeclared {
+        return Err(crate::source_diagnostics::named(
+            format!("undefined variable `{name}`: IMPLICIT NONE is in effect, so declare it"), *offset, name));
+    }
+    Ok(program)
 }

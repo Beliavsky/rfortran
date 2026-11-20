@@ -107,7 +107,7 @@ fn check_unit(body: &[Stmt], scope: &Scope, modules: &HashMap<String, Scope>) ->
 }
 
 /// Add the names that `body` declares or mentions in a construct marker.
-fn declared(body: &[Stmt], names: &mut HashSet<String>) {
+pub(crate) fn declared(body: &[Stmt], names: &mut HashSet<String>) {
     for s in body {
         let mut add = |n: &str| {
             names.insert(n.to_ascii_lowercase());

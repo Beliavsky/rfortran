@@ -965,6 +965,14 @@ pub fn analyze_with_origins(
     }
     // Lowering declares its temporaries inside the branch or loop that uses them.
     program_level_reads.retain(|name| !name.starts_with('@'));
+    // The end of the source file of the main program's statements. The
+    // source of separately compiled modules is added after it, and a name
+    // there is not the use being reported.
+    let main_end = program.body.iter()
+        .filter_map(|s| match s { Stmt::SourceLocation(p) => Some(*p), _ => None })
+        .max()
+        .and_then(|last| origins?.iter().find(|o| o.range.contains(&last)).map(|o| o.range.end))
+        .unwrap_or(usize::MAX);
 
     for name in &program_level_reads {
         let lname = name.to_ascii_lowercase();
@@ -980,7 +988,7 @@ pub fn analyze_with_origins(
         }
 
         let use_idx_opt = tokens.iter().rposition(|t| match &t.kind {
-            TokenKind::Ident(s) => s.eq_ignore_ascii_case(name),
+            TokenKind::Ident(s) => t.span.start < main_end && s.eq_ignore_ascii_case(name),
             _ => false,
         });
         let use_span = use_idx_opt.map(|i| tokens[i].span.clone()).unwrap_or(0..0);
@@ -2681,7 +2689,17 @@ pub fn analyze_with_origins(
             continue;
         }
         if seen_undef.insert(lname.clone()) {
-            let span = find_ident_span(name);
+            // The last reference written as a call in the main program's
+            // file, not a declaration such as a module's `private :: name`
+            // or the definition of a module procedure with the name.
+            let span = tokens.iter().enumerate().rev().find(|(i, t)| {
+                let previous = i.checked_sub(1).map(|j| &tokens[j].kind);
+                t.span.start < main_end
+                    && matches!(&t.kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case(name))
+                    && !matches!(previous, Some(TokenKind::KwSubroutine | TokenKind::KwFunction))
+                    && (matches!(previous, Some(TokenKind::KwCall))
+                        || tokens.get(i + 1).is_some_and(|next| matches!(next.kind, TokenKind::LParen)))
+            }).map_or_else(|| find_ident_span(name), |(_, t)| t.span.clone());
             report_error(
                 &format!("undefined function or subroutine `{}`@UNDEFINED", name),
                 span,

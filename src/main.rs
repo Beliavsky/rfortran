@@ -28,7 +28,7 @@ fn main() -> Result<()> {
     let started = std::time::Instant::now();
     // Windows' small default main-thread stack is insufficient for the AST
     // traversals needed by valid high-rank array expressions.
-    match std::thread::Builder::new().name("rfort".into()).stack_size(32*1024*1024).spawn(move || compiler_main(started))?.join() {
+    match std::thread::Builder::new().name("rfort".into()).stack_size(32*1024*1024).spawn(move || compiler_main(started).map_err(private_entities::annotate))?.join() {
         // Report as returning the error from main would, with user names.
         Ok(Err(error))=>{
             if let Some(exit) = error.downcast_ref::<command_time::ProgramExit>() {
@@ -334,6 +334,19 @@ fn compile_to_object(
         let mut has_error = false;
         for e in &sema_errs {
             if allow_undefined && e.message.contains("undefined") {
+                // Left to the linker as an external procedure. When the name
+                // is a PRIVATE module entity, say so before the linker fails.
+                let notes = private_entities::notes(&e.message);
+                if !notes.is_empty() {
+                    use codespan_reporting::diagnostic::{Diagnostic, Label};
+                    let file = source_diagnostics::SourceFile::new(input.to_str().unwrap_or("<unknown>"), src, Some(&prepared.origins));
+                    let diagnostic = Diagnostic::warning()
+                        .with_message(format!("{}; it is taken to be an external procedure", source_diagnostics::user_names(&e.message)))
+                        .with_labels(vec![Label::primary((), e.span.clone())])
+                        .with_notes(notes);
+                    let mut stderr = codespan_reporting::term::termcolor::StandardStream::stderr(codespan_reporting::term::termcolor::ColorChoice::Auto);
+                    let _ = source_diagnostics::emit_mapped(&mut stderr, &codespan_reporting::term::Config::default(), &file, &diagnostic);
+                }
                 continue;
             }
             eprintln!("{}", e);

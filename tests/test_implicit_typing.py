@@ -305,6 +305,86 @@ end subroutine s
 end program p
 """, "`y` has no IMPLICIT type")
 
+    def test_implicit_none_rejects_undeclared_references(self):
+        # A name that is only read in a procedure was accepted under
+        # IMPLICIT NONE and read as an uninitialized implicit local.
+        cases = {
+            "external subroutine": """subroutine s()
+implicit none
+print *, zzz
+end subroutine
+program p
+call s()
+end program p
+""",
+            "internal subroutine": """program p
+implicit none
+call s()
+contains
+subroutine s()
+print *, zzz
+end subroutine
+end program p
+""",
+            "module subroutine": """module u
+implicit none
+contains
+subroutine s()
+print *, zzz
+end subroutine
+end module u
+program p
+use u
+call s()
+end program p
+""",
+            "module function": """module u
+contains
+integer function f()
+implicit none
+f = zzz + 1
+end function
+end module u
+program p
+use u
+print *, f()
+end program p
+""",
+            "BLOCK in a procedure": """subroutine s()
+implicit none
+block
+  integer :: b
+  b = zzz
+  print *, b
+end block
+end subroutine
+program p
+call s()
+end program p
+""",
+        }
+        for case, program in cases.items():
+            with self.subTest(case=case):
+                self.reject(program, "undefined variable `zzz`: IMPLICIT NONE is in effect, so declare it")
+        # A PRIVATE module entity, found in the module.
+        self.reject("""module m
+implicit none
+integer, private :: total = 3
+end module m
+module u
+use m
+implicit none
+contains
+subroutine s()
+print *, total
+end subroutine
+end module u
+program p
+use u
+call s()
+end program p
+""", "add `public :: total` to module `m`")
+
     def test_implicit_none_accepts_declared_definitions(self):
         # Locals, dummies, results, host and module variables, BLOCK and
         # COMMON names, and a procedure's own IMPLICIT rule.

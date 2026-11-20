@@ -67,11 +67,20 @@ pub(crate) fn emit_mapped(
     }).collect();
     let mapped = codespan_reporting::diagnostic::Diagnostic {
         severity: diagnostic.severity, code: diagnostic.code.clone(), message: diagnostic.message.clone(),
-        labels, notes: diagnostic.notes.clone(),
+        labels, notes: notes(diagnostic),
     };
     codespan_reporting::term::emit_to_io_write(writer, config, &files, &mapped)
 }
 
+/// The notes of a diagnostic, with those for an error that names a PRIVATE
+/// module entity.
+fn notes(diagnostic: &codespan_reporting::diagnostic::Diagnostic<()>) -> Vec<String> {
+    let mut notes = diagnostic.notes.clone();
+    if diagnostic.severity == codespan_reporting::diagnostic::Severity::Error {
+        notes.extend(crate::private_entities::notes(&diagnostic.message));
+    }
+    notes
+}
 /// Check source declarations before backend specialization can obscure a
 /// missing function result type with an unrelated unsupported-feature error.
 pub(crate) fn validate_function_results(program: &crate::ast::Program) -> anyhow::Result<()> {
@@ -336,6 +345,7 @@ pub(crate) fn report(
     }
     let message = user_names(&located.message);
     let diagnostic = Diagnostic::error()
+        .with_notes(crate::private_entities::notes(&message))
         .with_message(message)
         .with_labels(vec![Label::primary((), span)]);
     let file = SimpleFile::new(name, source);

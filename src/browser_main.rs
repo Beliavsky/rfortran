@@ -58,7 +58,7 @@ fn main() {
         run_program(check, &rest)
     };
     if let Err(error) = result {
-        eprintln!("Error: {}", source_diagnostics::user_names(&format!("{error:#}")));
+        eprintln!("Error: {}", private_entities::with_notes(source_diagnostics::user_names(&format!("{error:#}"))));
         std::process::exit(1);
     }
 }
