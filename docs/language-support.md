@@ -4941,8 +4941,12 @@ List-directed READ supports these records on standard input, connected files,
 and scalar CHARACTER internal files; constant-format READ supports them too.
 Records can be mixed with primitive items and runtime list-directed implied-DOs
 in a single input session, retaining null fields, repetition counts, slash
-termination and IOSTAT handling. Records with ALLOCATABLE or POINTER components
-require defined I/O and are rejected. Run `python tests/test_derived_read.py`.
+termination and IOSTAT handling. Elements, sections and whole arrays of
+records are input items too, in array element order, as are elements of an
+ALLOCATABLE array component of derived type, as in
+`read (text, *) xx%dates(i), xx%rates(i)`. Records with ALLOCATABLE or POINTER
+components require defined I/O and are rejected. Run
+`python tests/test_derived_read.py`.
 
 This is not yet complete Fortran input support: CHARACTER internal-file arrays,
 COMPLEX section destinations, vector subscripts, whole derived-array destinations

@@ -168,5 +168,68 @@ end
 ''', 'input of derived object `a` with an ALLOCATABLE or POINTER component requires defined input/output')
 
 
+    def test_elements_sections_and_arrays_of_records(self):
+        # Elements, sections and whole arrays of records, and elements of an
+        # ALLOCATABLE array component of a record, were rejected as input
+        # items: "type `port` has no binding `dates`", or "unsupported
+        # expression in numeric array reduction".
+        self.check('''module m
+implicit none
+type date
+   integer :: month = 0, day = 0, year = 0
+end type
+type port
+   type(date) :: date_exp
+   type(date), allocatable :: dates(:)
+   real, allocatable :: rates(:), vols(:,:)
+end type
+contains
+subroutine load(xx, n)
+type(port), intent(inout) :: xx
+integer, intent(in) :: n
+character(len=100) :: text
+integer :: i
+allocate(xx%dates(n), xx%rates(n), xx%vols(n, 2))
+do i = 1, n
+   write (text, '(i0,",",i0,",",i0,",12,31,2030,",f4.1,",1.5,2.5")') i, 10+i, 2020+i, 0.5*i
+   read (text, *) xx%dates(i), xx%date_exp, xx%rates(i), xx%vols(i,:)
+end do
+end subroutine
+end module
+program main
+use m
+implicit none
+type(port) :: p
+integer :: i
+call load(p, 3)
+do i = 1, 3
+   print *, p%dates(i), p%rates(i), p%vols(i,:)
+end do
+print *, p%date_exp
+end program
+''', "1 11 2021 0.5 1.5 2.5\n2 12 2022 1.0 1.5 2.5\n3 13 2023 1.5 1.5 2.5\n12 31 2030\n")
+        self.check('''program p
+implicit none
+type date
+   integer :: month, day, year
+end type
+type rec
+   type(date) :: d
+   real :: v(2)
+end type
+type(date) :: a(4)
+type(rec) :: r(2)
+character(len=60) :: text
+a = date(0, 0, 0)
+text = '01/02/2003 04/05/2006'
+read (text, '(2(i2,1x,i2,1x,i4,1x))') a(2:3)
+print *, a
+read (*, *) r(2), a(4)
+print *, r(2)%d, r(2)%v, a(4)
+read (*, *) r
+print *, r
+end program
+''', "0 0 0 1 2 2003 4 5 2006 0 0 0\n7 8 2009 1.5 2.5 9 9 1999\n1 1 2001 0.5 0.25 2 2 2002 3.5 4.5\n", data="7 8 2009 1.5 2.5 9 9 1999\n1 1 2001 0.5 0.25 2 2 2002 3.5 4.5\n")
+
 if __name__ == '__main__':
     unittest.main()

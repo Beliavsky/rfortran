@@ -1832,6 +1832,38 @@ impl Lower {
         }
         Ok(Some(Stmt::Block { body }))
     }
+    /// Input items that are elements, sections or whole arrays of records
+    /// without ALLOCATABLE components: the same component designators, in
+    /// the same order, as their output.
+    fn input_items(&mut self, items: &mut Vec<Expr>, objects: &mut Objects, prefix: &mut Vec<Stmt>) -> Result<()> {
+        let mut out = vec![];
+        for item in std::mem::take(items) {
+            let record = match &item {
+                Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) | Expr::Section { name: n, .. } => {
+                    objects.get(n).filter(|o| !o.dims.is_empty()).map(|o| o.ty.clone())
+                }
+                _ => None,
+            };
+            if let Some(ty) = record {
+                if !self.fields(&ty)?.iter().any(|f| f.heap.is_some()) {
+                    let mut designators = vec![item];
+                    self.output(&mut designators, objects, prefix)?;
+                    for e in &mut designators {
+                        crate::procedure_arguments::visit_expr(e, &mut |e| {
+                            if let Expr::Call(n, _) = e {
+                                if n == "@output_implied_do" { *n = "@input_implied_do".into(); }
+                            }
+                        });
+                    }
+                    out.extend(designators);
+                    continue;
+                }
+            }
+            out.push(item);
+        }
+        *items = out;
+        Ok(())
+    }
     fn output(
         &mut self,
         items: &mut Vec<Expr>,
@@ -2382,6 +2414,11 @@ impl Lower {
                         args.extend(values);
                     }
                     Stmt::CallSub { name, args } => {
+                        if let Some(first) = crate::input::transfer_start(name) {
+                            let mut items = args.split_off(first.min(args.len()));
+                            self.input_items(&mut items, &mut objects, &mut prefix)?;
+                            args.extend(items);
+                        }
                         let prepared = name.strip_prefix(PREPARED_CALL).map(str::to_owned);
                         if let Some(original) = &prepared { *name = original.clone(); }
                         if !name.starts_with("@heap_record_") {
@@ -2424,6 +2461,7 @@ impl Lower {
                         else { self.output(items, &mut objects, &mut prefix)?; }
                     }
                     Stmt::Read { args: items } => {
+                        self.input_items(items, &mut objects, &mut prefix)?;
                         for e in items {
                             self.heap_component_actual(e,&mut objects,&mut prefix,Some(&mut suffix))?;
                             self.expression(e, &mut objects, &mut prefix)?;
