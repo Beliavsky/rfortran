@@ -124,5 +124,56 @@ end program
         # gfortran -fcheck=all warns about the array temporaries for these
         # actuals; its output is the same.
 
+    def test_record_components_of_elements_assigned_to_records(self):
+        # `old = xx(i)%day` was rejected: "derived assignment to `old`
+        # requires a value of type `date`".
+        self.check("""module m
+implicit none
+type date
+   integer :: month = 0, year = 0
+end type
+type contract
+   character(len=4) :: stock
+   type(date) :: exp_date
+end type
+type quote
+   type(date) :: day
+   type(contract) :: option
+end type
+contains
+subroutine scan(xx)
+type(quote), intent(in out), allocatable :: xx(:)
+type(date) :: old
+integer :: i
+old = date(0, 0)
+do i = 1, size(xx)
+   if (xx(i)%day%year /= old%year) then
+      old = xx(i)%day
+      print *, i, old%year
+   end if
+end do
+end subroutine
+end module
+program main
+use m
+implicit none
+type(quote), allocatable :: q(:)
+type(quote) :: w
+type(date) :: d
+type(contract) :: c
+integer :: i
+allocate(q(3))
+do i = 1, 3
+   q(i) = quote(date(i, 2019 + i/2), contract('s'//achar(48+i), date(i+3, 2021)))
+end do
+call scan(q)
+i = 2
+d = q(i)%option%exp_date
+c = q(i+1)%option
+w%day = q(1)%day
+print *, d, c%stock, c%exp_date, w%day
+end program
+""", "1 2019\n2 2020\n5 2021 s3 6 2021 1 2019\n")
+
 if __name__ == '__main__':
     unittest.main()

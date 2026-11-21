@@ -2405,6 +2405,10 @@ state are preserved, and INTENT(IN) components remain read-only. The view does
 not own the parent's allocations. See `tests/test_derived_component_views.py`
 and `tests/test_component_array_assignment.py`.
 
+A record component of one element, such as `xx(i)%date` or
+`xx(i)%option%exp_date`, may be assigned to a scalar record or to a record
+component of one, as in `old = xx(i)%date`.
+
 Designators may subscript several parts, as in `y(1)%at(j)%i(k)`,
 `z(2)%bs(3)%at(1)%i = [1, 2, 3, 4]` or `y(2)%at(:)%i(4)`, for array
 components of derived type with fixed bounds. A designator with two parts of

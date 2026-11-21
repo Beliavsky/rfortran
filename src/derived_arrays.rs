@@ -2455,6 +2455,19 @@ impl Lower {
                                 *value=Expr::Ident(self.element_temp(value,&mut objects,&mut prefix,None)?);
                             }
                         }
+                        // A record component of an element, as in
+                        // `old = q(i)%day`: a component of the element's copy.
+                        if let Expr::Call(tag,args)=&*value {
+                            if let (Some(path),[element])=(tag.strip_prefix("@record_component:"),args.as_slice()) {
+                                let root=name.split('%').next().unwrap_or(name);
+                                if self.element(element,&objects).is_some() && objects.get(name).or_else(||objects.get(root)).is_some_and(|o|o.dims.is_empty()) {
+                                    let path=path.to_owned();
+                                    let element=element.clone();
+                                    let temp=self.element_temp(&element,&mut objects,&mut prefix,None)?;
+                                    *value=Expr::Ident(format!("{temp}%{path}"));
+                                }
+                            }
+                        }
                         self.component(name, &objects)?;
                         self.expression(value, &mut objects, &mut prefix)?;
                     }
