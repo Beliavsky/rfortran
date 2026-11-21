@@ -3838,7 +3838,7 @@ ELEMENTAL functions support explicitly declared numeric, LOGICAL, and CHARACTER
 scalar results and input dummies. Supported scalar derived-type INTENT(IN)
 dummies are expanded into their needed components for scalar or array calls.
 Derived-type scalar results with scalar primitive components (including nested
-scalar records) support scalar and constant rank-one array calls. These calls
+scalar records) support scalar and rank-one array calls. These calls
 are evaluated once into result storage through a hidden elemental subroutine;
 self-assignment, nested calls, scalar broadcasting, OPTIONAL/named inputs,
 constructors, constant sections, vector subscripts, empty arrays, early RETURN,
@@ -3846,8 +3846,13 @@ and default component initialization are covered. IMPURE calls retain one call
 per element in array element order. Scalar reductions such as SUM, COUNT and
 DOT_PRODUCT remain scalar when supplied as arguments.
 
-Derived-valued elemental results currently share the subroutine expansion's
-limitations: runtime-sized and multidimensional array calls, CHARACTER
+Rank-one array calls whose extents are known only at run time, with
+assumed-shape or ALLOCATABLE actuals and their sections, give a result of
+that extent; numeric actuals and scalars may accompany them, and actuals of
+different extents stop the program with "ELEMENTAL argument shape mismatch".
+
+Derived-valued elemental results otherwise share the subroutine expansion's
+limitations: multidimensional array calls, CHARACTER
 components in array results, array components, and ALLOCATABLE/POINTER
 components are outside this subset. An ELEMENTAL result itself cannot be
 ALLOCATABLE or POINTER.

@@ -150,9 +150,13 @@ impl Lower {
                         self.array_shapes.remove(name);
                     }
                 }
-                return shape.map(Some).context(
-                    "ELEMENTAL derived results currently require fixed rank-one array sections",
-                );
+                // A section of a rank-one array whose bounds are known only
+                // at run time has the section's size.
+                return match shape {
+                    Some(shape) => Ok(Some(shape)),
+                    None if o.dims.len() == 1 => Ok(Some(vec![Expr::Call("size".into(), vec![actual.clone()])])),
+                    None => bail!("ELEMENTAL derived results currently require rank-one array sections"),
+                };
             }
         }
         if let Some(shape) = self.array_shape(actual) {
@@ -227,8 +231,10 @@ impl Lower {
             self.expression(arg, objects, prefix)?;
         }
         let mut dims = vec![];
+        let mut shaped = None;
         for arg in args.iter() {
             if let Some(shape) = self.result_actual_shape(arg, objects)? {
+                shaped = Some(arg.clone());
                 dims = shape
                     .into_iter()
                     .map(|dim| match dim {
@@ -250,25 +256,36 @@ impl Lower {
         if dims.len() > 1 {
             bail!("ELEMENTAL derived results currently require scalar or rank-one actuals");
         }
-        if dims
-            .iter()
-            .any(|d| matches!(d, Expr::Ident(n) if n == "@deferred_extent"))
-        {
-            bail!("ELEMENTAL derived results currently require constant rank-one extents");
+        // An extent known only at run time, as of an assumed-shape or
+        // ALLOCATABLE actual, is the actual's size.
+        for dim in dims.iter_mut() {
+            if matches!(dim, Expr::Ident(n) if n == "@deferred_extent") {
+                let actual = shaped.clone().context("ELEMENTAL derived result extent")?;
+                *dim = Expr::Call("size".into(), vec![actual]);
+            }
         }
         self.serial += 1;
         let temp = format!("@elemental_record_result_{}", self.serial);
+        // A result whose extent is known only at run time is an ALLOCATABLE
+        // temporary, allocated here, as automatic derived arrays are.
+        let runtime = dims.iter().any(|d| crate::vector_subscripts::fixed_extent(d).is_none());
+        let declared = if runtime { vec![Expr::Ident("@deferred_extent".into()); dims.len()] } else { dims.clone() };
         let mut generated = vec![Stmt::DerivedDecl {
             type_name: procedure.ty.clone(),
             names: vec![temp.clone()],
-            attributes: vec![],
+            attributes: if runtime { vec!["allocatable".into()] } else { vec![] },
             polymorphic: false,
-            dims: dims.clone(),
+            dims: declared.clone(),
         }];
+        if runtime {
+            generated.push(Stmt::CallSub { name: "@allocate".into(), args: vec![Expr::Call(temp.clone(), dims.clone())] });
+        }
         let owned = self.fields(&procedure.ty)?.iter().any(|f| f.heap.is_some());
-        if owned && !dims.is_empty() {
+        if (owned || runtime) && !dims.is_empty() {
             // Scalarize before record argument flattening: each invocation owns
             // an independent result and receives ordinary scalar record actuals.
+            // So does a result of run-time extent, whose shape the elemental
+            // call lowering cannot check.
             let index = format!("@owned_elemental_index_{}", self.serial);
             generated.push(Stmt::VarDecl {
                 kind: TypeSpec::Integer(Some(8)),
@@ -315,17 +332,24 @@ impl Lower {
                         .context("missing ELEMENTAL intrinsic dummy type")?;
                     self.serial += 1;
                     let actual = format!("@owned_elemental_actual_{}", self.serial);
-                    generated.push(Stmt::ArrayDecl {
-                        kind,
-                        name: actual.clone(),
-                        dims: shape
-                            .iter()
-                            .map(|d| {
-                                crate::vector_subscripts::fixed_extent(d)
-                                    .map_or_else(|| d.clone(), |n| Expr::IntLit(n.to_string()))
-                            })
-                            .collect(),
-                    });
+                    let fixed: Option<Vec<i64>> = shape.iter().map(crate::vector_subscripts::fixed_extent).collect();
+                    match fixed {
+                        Some(extents) => generated.push(Stmt::ArrayDecl {
+                            kind,
+                            name: actual.clone(),
+                            dims: extents.iter().map(|n| Expr::IntLit(n.to_string())).collect(),
+                        }),
+                        // Of run-time extent: ALLOCATABLE, allocated by the
+                        // assignment below.
+                        None => {
+                            generated.push(Stmt::ArrayDecl {
+                                kind,
+                                name: actual.clone(),
+                                dims: vec![Expr::Ident("@deferred_extent".into()); shape.len()],
+                            });
+                            generated.push(Stmt::DummyIntent { name: actual.clone(), intent: "allocatable".into() });
+                        }
+                    }
                     generated.push(Stmt::Assign {
                         name: actual.clone(),
                         value: arg,
@@ -376,12 +400,12 @@ impl Lower {
             temp.clone(),
             Object {
                 ty: procedure.ty.clone(),
-                dims: dims.clone(),
+                dims: declared.clone(),
             },
         );
         if dims.is_empty() {
             self.register_components(&temp, &procedure.ty, objects);
-        } else {
+        } else if !runtime {
             for field in self.fields(&procedure.ty)? {
                 self.array_shapes
                     .insert(storage(&temp, &field.name), storage_dims(&field, &dims));

@@ -265,6 +265,121 @@ a=make([1,2],[3,4,5])
 end
 """, 'shapes do not conform')
 
+    def test_run_time_extents(self):
+        # Assumed-shape and ALLOCATABLE actuals, and their sections, were
+        # rejected: "ELEMENTAL derived results currently require constant
+        # rank-one extents".
+        self.check("""module m
+implicit none
+type mdy
+  integer :: month, day, year
+end type
+type my
+  integer :: month, year
+end type
+contains
+elemental function to_my(x) result(y)
+type(mdy), intent(in) :: x
+type(my) :: y
+y%month = x%month
+y%year = x%year
+end function
+integer function first_match(v, list)
+type(my), intent(in) :: v, list(:)
+integer :: i
+first_match = 0
+do i = 1, size(list)
+  if (list(i)%month == v%month .and. list(i)%year == v%year) then
+    first_match = i
+    return
+  end if
+end do
+end function
+subroutine show(d)
+type(mdy), intent(in) :: d(:)
+type(my) :: r(size(d))
+r = to_my(d)
+print *, r%month, r%year
+print *, first_match(my(3, 2013), to_my(d)), size(to_my(d(2:))), to_my(d(2:3))
+end subroutine
+end module
+program p
+use m
+implicit none
+type(mdy), allocatable :: d(:)
+integer :: n
+n = 3
+allocate(d(n))
+d = [mdy(1, 5, 2012), mdy(3, 6, 2013), mdy(7, 1, 2014)]
+call show(d)
+print *, to_my(d)
+end program
+""", "1 3 7 2012 2013 2014\n2 2 3 2013 7 2014\n1 2012 3 2013 7 2014\n")
+
+    def test_run_time_extents_with_numeric_and_scalar_actuals(self):
+        self.check("""module m
+implicit none
+type pt
+  real :: x, y
+end type
+contains
+elemental function shift(p, dx, dy) result(q)
+type(pt), intent(in) :: p
+real, intent(in) :: dx, dy
+type(pt) :: q
+q%x = p%x + dx
+q%y = p%y + dy
+end function
+subroutine run(p, dx)
+type(pt), intent(in) :: p(:)
+real, intent(in) :: dx(:)
+type(pt), allocatable :: q(:)
+q = shift(p, dx, 10.0)
+print *, q
+print *, shift(p(size(p):1:-1), 0.5, dx(1))
+end subroutine
+end module
+program p
+use m
+implicit none
+type(pt), allocatable :: a(:)
+real, allocatable :: d(:)
+integer :: n
+n = 3
+allocate(a(0:n-1), d(n))
+a = [pt(1, 2), pt(3, 4), pt(5, 6)]
+d = [0.25, 0.5, 0.75]
+call run(a, d)
+print *, shift(a, d, 1.0)
+end program
+""", "1.25 12.0 3.5 14.0 5.75 16.0\n5.5 6.25 3.5 4.25 1.5 2.25\n1.25 3.0 3.5 5.0 5.75 7.0\n")
+
+    def test_run_time_extents_that_do_not_conform(self):
+        self.check("""module m
+implicit none
+type pt
+  real :: x
+end type
+contains
+elemental function shift(p, dx) result(q)
+type(pt), intent(in) :: p
+real, intent(in) :: dx
+type(pt) :: q
+q%x = p%x + dx
+end function
+subroutine run(p, dx)
+type(pt), intent(in) :: p(:)
+real, intent(in) :: dx(:)
+print *, shift(p, dx)
+end subroutine
+end module
+program p
+use m
+implicit none
+call run([pt(1.0), pt(2.0)], [1.0, 2.0, 3.0])
+end program
+""", error="ELEMENTAL argument shape mismatch")
+
     def test_pure_function_still_rejects_external_io(self):
         self.reject(MODULE.replace('y%value=x\n','print *,x\ny%value=x\n') + """use result_records
 type(item)::a
