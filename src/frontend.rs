@@ -85,13 +85,13 @@ pub(crate) fn lower_program_body(
         do_variables::check(&program, src)?;
         let program = crate::chains::resolve(program)?;
         let program = internal_procedures::disambiguate(program);
+        let program = internal_procedures::inline_simple(program);
         let program = saved_storage::resolve(program)?;
         let program = host_storage::resolve(program)?;
         let program = protected::resolve(program)?;
         let program = pdt::resolve(program)?;
         let program = character_pointers::resolve(program)?;
         let program = recursive_types::resolve(program)?;
-        let program = recursive_outputs::resolve(program)?;
         let program = scalar_components::resolve(program)?;
         let program = multidim::shape_arguments(program);
         let program = common::resolve(program)?;
@@ -107,6 +107,9 @@ pub(crate) fn lower_program_body(
         let program = compile_profile::run("equivalence::resolve", || equivalence::resolve(program))?;
         let program = compile_profile::run("external_calls::resolve", || external_calls::resolve(program))?;
         let program = compile_profile::run("derived::resolve", || derived::resolve(program))?;
+        // After generic calls are resolved to their specifics, so that calls
+        // through a generic name pass one-element temporaries too.
+        let program = recursive_outputs::resolve(program)?;
         let program = compile_profile::run("defining_functions::resolve_components", || defining_functions::resolve_components(program))?;
         let program = compile_profile::run("external_calls::resolve_complex", || external_calls::resolve_complex(program))?;
         let program = compile_profile::run("random_seed::resolve", || random_seed::resolve(program))?;

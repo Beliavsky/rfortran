@@ -610,6 +610,91 @@ print *, shared%value
 end
 ''', 'PRIVATE to module `boxes`')
 
+    def test_argument_free_subroutine_using_optional_and_automatic_host_arrays(self):
+        # Host association rejected OPTIONAL dummies, and whole automatic
+        # arrays of the host in expressions; an internal subroutine without
+        # arguments or local entities now runs in its host's scope.
+        self.check('''module m
+implicit none
+contains
+subroutine fit(a, b, pred, resid, n)
+real, intent(in) :: a(:,:), b(:)
+real, intent(out), optional :: pred(:), resid(:)
+integer, intent(out), optional :: n
+real :: work(size(b))
+work = matmul(a, [1.0, 2.0])
+call finish()
+if (present(n)) call count_them()
+contains
+subroutine finish()
+if (present(pred)) pred = work
+if (present(resid)) resid = b - work
+if (.not. present(pred) .and. .not. present(resid)) print *, 'neither'
+end subroutine
+subroutine count_them()
+n = size(work)
+call finish()
+end subroutine
+end subroutine
+end module
+program p
+use m
+implicit none
+real :: a(3,2), b(3), pr(3), rs(3)
+integer :: k
+a = 1; b = [3.0, 4.0, 5.0]
+call fit(a, b, pr, rs, k)
+print *, pr, rs, k
+call fit(a, b, resid=rs)
+print *, rs
+call fit(a, b)
+call fit(a, b, n=k)
+print *, k
+end program
+''', "3.0 3.0 3.0 0.0 1.0 2.0 3\n0.0 1.0 2.0\nneither\nneither\nneither\n3\n")
+
+    def test_optional_host_dummies_present_and_absent(self):
+        # An internal function with arguments captures the host's OPTIONAL
+        # dummies, with whether each is present.
+        self.check('''module m
+implicit none
+contains
+subroutine scaled(x, y, factor, tally)
+real, intent(in) :: x(:)
+real, intent(out) :: y(:)
+real, intent(in), optional :: factor
+integer, intent(inout), optional :: tally
+integer :: i
+do i = 1, size(x)
+   y(i) = g(x(i))
+end do
+contains
+real function g(v)
+real, intent(in) :: v
+if (present(factor)) then
+   g = v * factor
+else
+   g = v
+end if
+if (present(tally)) tally = tally + 1
+end function
+end subroutine
+end module
+program p
+use m
+implicit none
+real :: y(3)
+integer :: t
+t = 0
+call scaled([1.0, 2.0, 3.0], y, 2.0, t)
+print *, y, t
+call scaled([1.0, 2.0, 3.0], y)
+print *, y
+call scaled([1.0, 2.0, 3.0], y, tally=t)
+print *, y, t
+end program
+''', "2.0 4.0 6.0 3\n1.0 2.0 3.0\n1.0 2.0 3.0 6\n")
+
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

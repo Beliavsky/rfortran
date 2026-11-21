@@ -4022,7 +4022,18 @@ Reads of undefined host values retain runtime checks; writes to host INTENT(IN)
 variables are rejected. The native backend passes borrowed storage addresses;
 the interpreter uses handles identifying the owning call frame.
 
-Through the borrowed environment, CHARACTER, POINTER, ALLOCATABLE, or OPTIONAL
+OPTIONAL dummy arguments of the host are borrowed with whether each is
+present, so the internal procedure may test them with PRESENT and use them
+when present.
+
+An internal subroutine of a procedure that has no dummy arguments and no
+entities of its own, and no RETURN, statement labels or ENTRY, under
+IMPLICIT NONE, runs as if its statements were in the host: each CALL of it
+from the host is replaced by its statements, so it may use any host
+variable as the host does, such as whole automatic arrays of the host and
+absent OPTIONAL dummies in PRESENT tests.
+
+Through the borrowed environment, CHARACTER, POINTER or ALLOCATABLE
 host objects, whole-array host values/assignments, sections, READ/I/O
 definitions through host objects, and forwarding captured objects directly to
 ordinary subroutine dummies or internal writable dummy arguments remain

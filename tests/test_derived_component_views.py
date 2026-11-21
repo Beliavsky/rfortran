@@ -87,5 +87,42 @@ print *,value(a(:,2)%child%child)
 end
 """, '1 2 3 4\n3 4\n')
 
+    def test_nested_component_actuals_select_generic_specifics(self):
+        # A nested component of an array or section had no known type, so
+        # no specific of a generic matched it.
+        self.check("""module m
+implicit none
+type opt
+  real :: strike
+end type
+type rec
+  type(opt) :: option
+end type
+interface nearest
+  module procedure nearest_real
+end interface
+contains
+function nearest_real(x, v) result(y)
+real, intent(in) :: x, v(:)
+real :: y
+y = v(minloc(abs(v - x), 1))
+end function
+end module
+program p
+use m
+implicit none
+type(rec) :: xx(4), one
+integer :: i
+do i = 1, 4
+  xx(i)%option%strike = 10.0*i
+end do
+one%option%strike = 7.0
+print *, nearest(23.0, xx(2:4)%option%strike), nearest(31.0, xx%option%strike)
+print *, nearest(one%option%strike, [1.0, 6.0, 9.0])
+end program
+""", '20.0 30.0\n6.0\n', reference=False)
+        # gfortran -fcheck=all warns about the array temporaries for these
+        # actuals; its output is the same.
+
 if __name__ == '__main__':
     unittest.main()

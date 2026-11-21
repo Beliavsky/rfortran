@@ -52,6 +52,8 @@ struct Capture {
     flags: String,
     label: String,
     axes: Vec<(String, String)>,
+    /// For an OPTIONAL dummy of the host: 1 when it is present, else 0.
+    present: Option<String>,
 }
 impl Capture {
     fn fields(&self) -> Vec<String> {
@@ -59,6 +61,7 @@ impl Capture {
         for (lower, extent) in &self.axes {
             fields.extend([lower.clone(), extent.clone()]);
         }
+        fields.extend(self.present.clone());
         fields
     }
     fn suffix(&self) -> &'static str {
@@ -424,6 +427,14 @@ impl Rewrite<'_> {
                     }
                     *e = self.read(n, &c, &[], before)?;
                 }
+            }
+            Expr::Call(n, args)
+                if n == "present" && !self.procedures.contains_key(n)
+                    && matches!(args.as_slice(), [Expr::Ident(a)] if self.capture(a, locals).is_some_and(|c| c.present.is_some())) =>
+            {
+                let Expr::Ident(a) = &args[0] else { unreachable!() };
+                let present = self.capture(a, locals).unwrap().present.clone().unwrap();
+                *e = bin(BinOp::Ne, id(&present), int(0));
             }
             Expr::Call(n, args)
                 if !self.procedures.contains_key(n)
@@ -860,7 +871,7 @@ fn procedure(
         ) || v
             .attributes
             .iter()
-            .any(|a| matches!(a.as_str(), "pointer" | "allocatable" | "optional"))
+            .any(|a| matches!(a.as_str(), "pointer" | "allocatable"))
         {
             return Err(crate::source_diagnostics::at(anyhow::anyhow!("host association for `{name}` currently supports INTEGER(4/8), REAL(4/8), or LOGICAL storage without OPTIONAL, POINTER, or ALLOCATABLE"), declared));
         }
@@ -877,6 +888,7 @@ fn procedure(
             axes: (1..=v.rank)
                 .map(|d| (format!("{stem}_lower_{d}"), format!("{stem}_extent_{d}")))
                 .collect(),
+            present: v.attributes.contains("optional").then(|| format!("{stem}_present")),
         };
         prefix.push(Stmt::VarDecl {
             kind: TypeSpec::Integer(Some(8)),
@@ -899,6 +911,20 @@ fn procedure(
                 extent,
                 call("size", vec![id(name), int(axis as i64 + 1)]),
             ));
+        }
+        // An absent OPTIONAL dummy has no storage to bind: the internal
+        // procedure may only ask whether it is PRESENT.
+        if let Some(present) = &c.present {
+            binding.push(set(present, int(1)));
+            let mut absent = vec![set(&c.data, int(0)), set(&c.flags, int(0)), set(&c.label, int(0)), set(present, int(0))];
+            for (lower, extent) in &c.axes {
+                absent.extend([set(lower, int(1)), set(extent, int(0))]);
+            }
+            binding = vec![Stmt::If {
+                cond: call("present", vec![id(name)]),
+                then_body: binding,
+                else_body: Some(absent),
+            }];
         }
         bindings.insert(name.clone(), binding);
         captures.insert(name.clone(), c);
@@ -1055,6 +1081,124 @@ fn names_in(body: &[Stmt], out: &mut HashSet<String>) {
         for e in crate::procedure_arguments::expressions(s) { expr(e, out); }
         for child in crate::procedure_arguments::children(s) { names_in(child, out); }
     }
+}
+
+/// Inline the simplest internal subroutines of procedures: those without
+/// dummy arguments, local entities, RETURN, statement labels or ENTRY,
+/// under IMPLICIT NONE, so that every name they use is a host entity. Such
+/// a subroutine runs as if its statements were in the host, so each CALL
+/// of it in the host is replaced by its statements, and it is removed when
+/// nothing else refers to it. Lifting would otherwise have to capture the
+/// host entities it uses, and not all can be captured (an absent OPTIONAL
+/// dummy, a whole array with run-time extents in an expression).
+pub(crate) fn inline_simple(mut p: Program) -> Program {
+    fn simple(body: &[Stmt], top: bool) -> bool {
+        body.iter().all(|s| match s {
+            Stmt::SourceLocation(_) | Stmt::Print { .. } | Stmt::Read { .. } | Stmt::Assign { .. }
+            | Stmt::AssignIndex { .. } | Stmt::Exit | Stmt::Cycle => true,
+            Stmt::Implicit(crate::ast::Implicit::None) => top,
+            Stmt::CallSub { name, .. } => !["goto", "label", "entry", "return"].iter().any(|k| name.contains(k)),
+            Stmt::If { then_body, else_body, .. } => simple(then_body, false) && else_body.as_ref().is_none_or(|b| simple(b, false)),
+            Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => simple(body, false),
+            Stmt::SelectCase { cases, default, .. } => cases.iter().all(|c| simple(&c.body, false)) && default.as_ref().is_none_or(|b| simple(b, false)),
+            // A BLOCK keeps its own entities in its own scope.
+            Stmt::Block { body } => body.iter().all(|s| matches!(s, Stmt::VarDecl { .. } | Stmt::ArrayDecl { .. } | Stmt::InitializedDecl { .. } | Stmt::DerivedDecl { .. } | Stmt::DummyIntent { .. })
+                || simple(std::slice::from_ref(s), false)),
+            _ => false,
+        })
+    }
+    /// Replace CALLs of the candidates, outside nested procedures.
+    fn replace(body: &mut Vec<Stmt>, candidates: &HashMap<String, Vec<Stmt>>) -> bool {
+        let mut changed = false;
+        for s in body.iter_mut() {
+            match s {
+                Stmt::CallSub { name, args } if args.is_empty() && candidates.contains_key(name.as_str()) => {
+                    *s = Stmt::Block { body: candidates[name.as_str()].clone() };
+                    changed = true;
+                }
+                Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. } => {}
+                _ => {
+                    for child in crate::procedure_arguments::children(s) {
+                        changed |= replace(child, candidates);
+                    }
+                }
+            }
+        }
+        changed
+    }
+    /// The internal subroutines of a procedure's body.
+    fn host(body: &mut Vec<Stmt>, implicit_none: bool) {
+        let none = implicit_none || body.iter().any(|s| matches!(s, Stmt::Implicit(crate::ast::Implicit::None)));
+        if !none {
+            return;
+        }
+        let candidates: HashMap<String, Vec<Stmt>> = body.iter().filter_map(|s| match s {
+            Stmt::Subroutine { name, params, body: own, .. } if params.is_empty() && simple(own, true) => {
+                let mut used = HashSet::new();
+                names_in(own, &mut used);
+                (!used.contains(&name.to_ascii_lowercase()))
+                    .then(|| (name.clone(), own.iter().filter(|s| !matches!(s, Stmt::Implicit(_))).cloned().collect()))
+            }
+            _ => None,
+        }).collect();
+        if candidates.is_empty() {
+            return;
+        }
+        let mut executable: Vec<Stmt> = body.iter().filter(|s| !matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. })).cloned().collect();
+        // Candidates that call each other are inlined in turn; a cycle
+        // stops at the bound.
+        for _ in 0..8 {
+            if !replace(&mut executable, &candidates) { break; }
+        }
+        // The procedures still referenced: by the host's statements, or by
+        // a procedure that is itself kept.
+        let mut base = HashSet::new();
+        names_in(&executable, &mut base);
+        let mut kept: HashSet<String> = body.iter().filter_map(|s| match s {
+            Stmt::Function { name, .. } => Some(name.to_ascii_lowercase()),
+            Stmt::Subroutine { name, .. } if !candidates.contains_key(name.as_str()) => Some(name.to_ascii_lowercase()),
+            _ => None,
+        }).collect();
+        kept.extend(candidates.keys().map(|n| n.to_ascii_lowercase()).filter(|n| base.contains(n)));
+        loop {
+            let mut used = HashSet::new();
+            for s in body.iter() {
+                if let Stmt::Function { name, body, .. } | Stmt::Subroutine { name, body, .. } = s {
+                    if kept.contains(&name.to_ascii_lowercase()) { names_in(body, &mut used); }
+                }
+            }
+            let more: Vec<String> = candidates.keys().map(|n| n.to_ascii_lowercase()).filter(|n| used.contains(n) && !kept.contains(n)).collect();
+            if more.is_empty() { break; }
+            kept.extend(more);
+        }
+        let mut rest = executable.into_iter();
+        let mut out = vec![];
+        for s in std::mem::take(body) {
+            match &s {
+                Stmt::Subroutine { name, .. } if candidates.contains_key(name.as_str()) && !kept.contains(&name.to_ascii_lowercase()) => {}
+                Stmt::Function { .. } | Stmt::Subroutine { .. } => out.push(s),
+                _ => out.extend(rest.next()),
+            }
+        }
+        *body = out;
+    }
+    fn units(body: &mut [Stmt], implicit_none: bool) {
+        for s in body {
+            match s {
+                Stmt::Module { body, .. } => {
+                    let none = implicit_none || body.iter().any(|s| matches!(s, Stmt::Implicit(crate::ast::Implicit::None)));
+                    units(body, none);
+                }
+                Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => {
+                    // Internal procedures have no internal procedures of their own.
+                    host(body, implicit_none);
+                }
+                _ => {}
+            }
+        }
+    }
+    units(&mut p.body, false);
+    p
 }
 
 /// The suffix, before a serial number, of an internal procedure renamed by

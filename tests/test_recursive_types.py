@@ -272,6 +272,49 @@ program p
 end program
 """, "10 0 6 F\n")
 
+    def test_recursive_output_arguments_through_a_generic(self):
+        # A call through the generic name found no matching specific: the
+        # recursive specific's scalar INTENT(OUT) dummy had already become
+        # a one-element array.
+        self.check("""module m
+implicit none
+interface solve
+   module procedure one, two
+end interface
+contains
+recursive subroutine one(x, n, ierr)
+real, intent(in) :: x(:)
+integer, intent(in) :: n
+integer, intent(out) :: ierr
+if (n > 0) then
+   call one(x, n - 1, ierr)
+   ierr = ierr + 1
+else
+   ierr = int(sum(x))
+end if
+end subroutine
+subroutine two(x, n, ierr)
+real, intent(in) :: x(:,:)
+integer, intent(in) :: n
+integer, intent(out) :: ierr
+ierr = n
+end subroutine
+subroutine caller(x, k)
+real, intent(in) :: x(:)
+integer, intent(out) :: k
+call solve(x, 3, k)
+end subroutine
+end module
+program p
+use m
+implicit none
+integer :: k, j
+call solve([1.0, 2.0], 2, k)
+call caller([5.0], j)
+print *, k, j
+end program
+""", "5 8\n")
+
     def test_rejections(self):
         self.reject("""program p
   type node

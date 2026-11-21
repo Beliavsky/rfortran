@@ -693,6 +693,23 @@ impl Resolver {
         *types = actual_types;
         Ok(true)
     }
+    /// The type of a component path, such as `option%strike`, of a type.
+    fn component_path(&self, ty: &str, path: &str) -> Ty {
+        let mut current = Ty::Derived(ty.to_owned());
+        for field in path.split('%') {
+            let Ty::Derived(ty) = &current else { return Ty::Unknown };
+            current = self.components.get(ty).and_then(|c| c.get(field)).cloned().unwrap_or(Ty::Unknown);
+        }
+        current
+    }
+    /// The type of a component path of an array of derived type: an array
+    /// of the component, which may not itself be an array.
+    fn array_component_path(&self, ty: &str, path: &str, rank: usize) -> Ty {
+        match self.component_path(ty, path) {
+            Ty::Array(..) | Ty::Unknown => Ty::Unknown,
+            t => Ty::Array(Box::new(t), rank),
+        }
+    }
     fn name_type(&self, name: &str, vars: &Vars) -> Ty {
         if let Some((object, component)) = name.split_once('%') {
             fn part(t:&Ty)->Ty {match t {Ty::Array(t,r)=>Ty::Array(Box::new(part(t)),*r),Ty::Scalar(TypeSpec::Complex(k))=>scalar(&if k=="8"{TypeSpec::DoublePrecision}else{TypeSpec::Real}),_=>Ty::Unknown}}
@@ -700,16 +717,11 @@ impl Resolver {
 
             if let Some(Ty::Array(inner,rank))=vars.get(object) {
                 if let Ty::Derived(ty)=inner.as_ref() {
-                    return self.components.get(ty).and_then(|c|c.get(component)).cloned().map(|t|Ty::Array(Box::new(t),*rank)).unwrap_or(Ty::Unknown);
+                    return self.array_component_path(ty, component, *rank);
                 }
             }
             if let Some(Ty::Derived(ty)) = vars.get(object) {
-                return self
-                    .components
-                    .get(ty)
-                    .and_then(|c| c.get(component))
-                    .cloned()
-                    .unwrap_or(Ty::Unknown);
+                return self.component_path(ty, component);
             }
         }
         vars.get(name).or_else(|| self.module_objects.get(name)).cloned().unwrap_or(Ty::Unknown)
@@ -798,11 +810,17 @@ impl Resolver {
                 }
             }
             if name.starts_with("@record_component:") && args.len()==1 {
-                let field=&name[18..];
+                // The field may be a path through nested components, as in
+                // `xx(2:4)%option%strike`.
+                let path=&name[18..];
                 let value=self.expression(&mut args[0],vars,visible)?;
                 return Ok(match value {
-                    Ty::Derived(ty)=>self.components.get(&ty).and_then(|c|c.get(field)).cloned().unwrap_or(Ty::Unknown),
-                    Ty::Array(inner,rank)=>if let Ty::Derived(ty)=inner.as_ref(){self.components.get(ty).and_then(|c|c.get(field)).cloned().map(|t|Ty::Array(Box::new(t),rank)).unwrap_or(Ty::Unknown)}else{Ty::Unknown},_=>Ty::Unknown,
+                    Ty::Derived(ty)=>self.component_path(&ty,path),
+                    Ty::Array(inner,rank)=>match inner.as_ref() {
+                        Ty::Derived(ty)=>self.array_component_path(ty,path,rank),
+                        _=>Ty::Unknown,
+                    },
+                    _=>Ty::Unknown,
                 });
             }
 
