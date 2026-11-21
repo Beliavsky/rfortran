@@ -4425,6 +4425,12 @@ checks with gfortran comparisons. The same output list may also contain whole
 arrays and sections of assumed-shape dummies and ALLOCATABLE arrays of any rank,
 as in `print *, (w(i), i = 1, 2), x, y(2:)`.
 
+An output item may be a scalar derived-type value that is not a variable: a
+function result, a structure constructor or MERGE of records, as in
+`write (*, fmt) "range", minval(dates), maxval(dates)` with MINVAL extended
+to the type by a generic interface. Its components are written in order, as
+for a variable of the type.
+
 List-directed LOGICAL output uses `T` and `F` for scalar values, array elements,
 expressions and procedure results. CHARACTER strings containing `.TRUE.` or
 `.FALSE.` retain their spelling. Run `python tests/test_logical_list_output.py`

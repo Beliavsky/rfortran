@@ -99,6 +99,9 @@ struct Lowerer {
     globals: Objects,
     /// The parent of each extended type.
     parents: HashMap<String, String>,
+    /// Copies of derived values that output statements write, with their
+    /// types: names local to the statement that produced them.
+    output_values: Objects,
 }
 
 fn references(body: &[Stmt], names: &mut HashSet<String>) {
@@ -534,6 +537,7 @@ impl Lowerer {
         if let Some((object, field)) = name.rsplit_once('%') {
             let ty = objects
                 .get(object)
+                .or_else(|| self.output_values.get(object))
                 .with_context(|| format!("`{object}` is not a declared derived object"))?;
             if !self.types[ty].components.iter().any(|c| c.name == field) {
                 bail!("type `{ty}` has no component `{field}`");
@@ -1223,6 +1227,23 @@ impl Lowerer {
                     args.extend(values);
                     out.push(Expr::Call(marker.into(), args));
                 }
+                // A derived value that is not a variable, such as a function
+                // result, a constructor or MERGE of records: output a copy.
+                Expr::Call(ref n, _) if !input && !objects.arrays.contains(n) && self.value_type(&e, objects).is_some() => {
+                    let ty = self.value_type(&e, objects).unwrap().to_owned();
+                    self.serial += 1;
+                    let temp = format!("@derived_output_value_{}", self.serial);
+                    self.declare(&temp, &ty, &[], false, prefix)?;
+                    self.assign(&temp, &ty, e, objects, prefix)?;
+                    let mut temps = objects.clone();
+                    self.register(&mut temps, &temp, &ty);
+                    for (name, ty) in temps.iter().filter(|(n, _)| n.starts_with(&temp)) {
+                        self.output_values.insert(name.clone(), ty.clone());
+                    }
+                    let mut items = vec![Expr::Ident(temp)];
+                    self.transfer_items(&mut items, &temps, prefix, false)?;
+                    out.extend(items);
+                }
                 Expr::Ident(n) if objects.contains_key(&n) => {
                     let ty = objects[&n].clone();
                     if self.has_dynamic_component(&ty) {
@@ -1693,6 +1714,7 @@ fn resolve_types(mut program: Program) -> Result<Program> {
         in_procedure: false,
         globals: Objects::new(),
         parents: HashMap::new(),
+        output_values: Objects::default(),
     };
     lower.collect_types(&program.body)?;
     lower.collect_procedures(&program.body)?;

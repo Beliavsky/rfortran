@@ -285,5 +285,132 @@ end
         self.reject(MODULE + program, 'no matching operator(>)')
 
 
+    def test_derived_comparisons_and_derived_results_in_output(self):
+        # Defined comparison operators on a derived type, for scalars and
+        # arrays, with generic MINVAL and MAXVAL extended to the type. Their
+        # results, and MERGE of records, in output lists were rejected:
+        # "derived-valued expression `minval_date` requires a derived
+        # assignment or argument".
+        self.check("""module dates
+implicit none
+type date
+   integer :: month = 0, day = 0, year = 0
+end type
+interface operator (>)
+   module procedure date_gt
+end interface
+interface operator (<)
+   module procedure date_lt
+end interface
+interface operator (>=)
+   module procedure date_ge
+end interface
+interface operator (<=)
+   module procedure date_le
+end interface
+interface operator (==)
+   module procedure date_eq
+end interface
+interface operator (/=)
+   module procedure date_ne
+end interface
+interface minval
+   module procedure minval_date
+end interface
+interface maxval
+   module procedure maxval_date
+end interface
+contains
+elemental integer function key(d)
+type(date), intent(in) :: d
+key = d%year*10000 + d%month*100 + d%day
+end function
+elemental logical function date_gt(a, b)
+type(date), intent(in) :: a, b
+date_gt = key(a) > key(b)
+end function
+elemental logical function date_lt(a, b)
+type(date), intent(in) :: a, b
+date_lt = b > a
+end function
+elemental logical function date_ge(a, b)
+type(date), intent(in) :: a, b
+date_ge = .not. (a < b)
+end function
+elemental logical function date_le(a, b)
+type(date), intent(in) :: a, b
+date_le = .not. (a > b)
+end function
+elemental logical function date_eq(a, b)
+type(date), intent(in) :: a, b
+date_eq = key(a) == key(b)
+end function
+elemental logical function date_ne(a, b)
+type(date), intent(in) :: a, b
+date_ne = .not. (a == b)
+end function
+elemental function min_date(a, b) result(m)
+type(date), intent(in) :: a, b
+type(date) :: m
+m = merge(a, b, b > a)
+end function
+pure function minval_date(x) result(y)
+type(date), intent(in) :: x(:)
+type(date) :: y
+integer :: i
+if (size(x) < 1) return
+y = x(1)
+do i = 2, size(x)
+   y = min_date(y, x(i))
+end do
+end function
+pure function maxval_date(x) result(y)
+type(date), intent(in) :: x(:)
+type(date) :: y
+integer :: i
+if (size(x) < 1) return
+y = x(1)
+do i = 2, size(x)
+   if (x(i) > y) y = x(i)
+end do
+end function
+end module dates
+
+program main
+use dates
+implicit none
+character(len=*), parameter :: fmt_cdate = "(a20,':',2(1x,2(i2.2,'/'),i4.4))"
+type(date), allocatable :: d(:)
+type(date) :: lo, hi, t
+integer :: i, j
+d = [date(3, 15, 2021), date(1, 2, 2020), date(12, 31, 2021), date(1, 2, 2020)]
+write (*, fmt_cdate) "first, last dates", minval(d), maxval(d)
+print *, minval(d), maxval(d(2:3))
+lo = minval(d)
+hi = maxval(d)
+print *, lo < hi, lo > hi, lo <= hi, lo >= hi, lo == hi, lo /= hi
+print *, d(2) == d(4), d(1) /= d(3)
+print *, d < d(1)
+print *, d >= date(1, 1, 2021)
+print *, count(d < hi), any(d == lo), all(d <= hi)
+if (d(1) > d(2) .and. .not. (d(3) < d(1))) print *, 'ordered'
+! insertion sort with the defined operators
+do i = 2, size(d)
+   t = d(i)
+   j = i - 1
+   do while (j >= 1)
+      if (.not. (d(j) > t)) exit
+      d(j+1) = d(j)
+      j = j - 1
+   end do
+   d(j+1) = t
+end do
+print *, d
+print *, merge(lo, hi, lo > hi)
+print *, key(minval(d)), key(min_date(d(4), d(1)))
+end program
+""", "   first, last dates: 01/02/2020 12/31/2021\n 1 2 2020 12 31 2021\n T F T F F T\n T T\n F T F T\n T F T F\n 3 T T\n ordered\n 1 2 2020 1 2 2020 3 15 2021 12 31 2021\n 12 31 2021\n 20200102 20200102\n")
+
+
 if __name__ == '__main__':
     unittest.main()
