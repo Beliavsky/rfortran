@@ -2533,7 +2533,13 @@ scalar TARGET objects, pointer-to-pointer association, write-through updates,
 NULLIFY, ASSOCIATED (including keywords), and local subroutine POINTER dummies
 are covered by `tests/test_derived_array_pointers.py`. CHARACTER, array-valued
 and owned ALLOCATABLE components in the pointed-to element type remain outside
-this subset.
+this subset, except for a local rank-one pointer that is associated only with
+one TARGET array of its scope or rank-one sections of it, as in
+`yy => xx(i1:i2)`. Such a pointer is that section: its first element, stride
+and extent are recorded at each association, and its elements, components,
+sections and uses as an actual argument refer to the target directly. Used
+with ASSOCIATED, NULLIFY, ALLOCATE or another target, it keeps the
+diagnostic.
 
 A derived pointer array can also borrow a whole derived-array allocation owned
 by a scalar element of a TARGET record array, as in `p => v(i)%xx`. Its

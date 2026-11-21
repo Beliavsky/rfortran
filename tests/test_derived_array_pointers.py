@@ -193,6 +193,69 @@ end
         self.reject(program.replace('character(len=2)::x','integer,allocatable::x(:)'),
                     'derived pointer arrays currently require scalar numeric or LOGICAL components')
 
+    def test_character_components_through_sections_of_a_target(self):
+        # A pointer to sections of a TARGET array of a type with CHARACTER
+        # components was rejected; it is now that section.
+        self.check("""module m
+implicit none
+type contract
+   character(len=4) :: stock
+   real :: strike
+end type
+type quote
+   integer :: day
+   type(contract) :: option
+end type
+contains
+subroutine reverse(x)
+type(quote), intent(in out) :: x(:)
+x = x(size(x):1:-1)
+end subroutine
+subroutine groups(xx, i1, i2)
+type(quote), intent(in out), target :: xx(:)
+integer, intent(in) :: i1(:), i2(:)
+type(quote), pointer :: yy(:)
+integer :: j, k
+do j = 1, size(i1)
+   yy => xx(i1(j):i2(j))
+   call reverse(yy)
+   k = size(yy)
+   print *, j, k, yy(k)%option%stock, yy(1)%day, sum(yy%option%strike)
+end do
+yy => xx(1:size(xx):2)
+yy%option%strike = -yy%option%strike
+yy(2)%option%stock = 'zz'
+print *, size(yy), yy%day, yy(2:)%option%stock
+yy => xx
+print *, yy%option%stock
+end subroutine
+end module
+program main
+use m
+implicit none
+type(quote) :: q(5)
+integer :: i
+do i = 1, 5
+   q(i) = quote(i, contract(achar(96+i)//'s', 1.5*i))
+end do
+call groups(q, [1, 4], [3, 5])
+print *, q%day
+print *, q%option%strike
+end program
+""", "1 3 as 3 9.0\n2 2 ds 5 13.5\n3 3 1 4 zz ds\ncs bs zz es ds\n3 2 1 5 4\n-4.5 3.0 -1.5 7.5 -6.0\n")
+        # Other uses keep the diagnostic.
+        self.reject("""program test
+implicit none
+type::row
+character(len=2)::x
+end type
+type(row),target::a(3)
+type(row),pointer::p(:)
+p=>a(1:2)
+print *,associated(p)
+end
+""", 'derived pointer arrays currently require scalar numeric or LOGICAL components')
+
     def test_uninitialized_component_is_not_read_at_association(self):
         self.check("""program test
 implicit none

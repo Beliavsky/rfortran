@@ -9,6 +9,7 @@ mod cli;
 mod errors;
 mod source_diagnostics;
 mod private_entities;
+mod pointer_section_aliases;
 mod source_includes;
 mod submodules;
 mod standards;

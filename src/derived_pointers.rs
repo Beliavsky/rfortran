@@ -13,7 +13,9 @@ impl Lower {
             || !matches!(f.kind, TypeSpec::Integer(_) | TypeSpec::IntegerKind(_)
                 | TypeSpec::Real | TypeSpec::RealKind(_) | TypeSpec::DoublePrecision
                 | TypeSpec::Logical | TypeSpec::LogicalKind(_))) {
-            bail!("derived pointer arrays currently require scalar numeric or LOGICAL components (including nested scalar records)");
+            // Local pointers associated only with sections of one TARGET
+            // array were already lowered by crate::pointer_section_aliases.
+            bail!("derived pointer arrays currently require scalar numeric or LOGICAL components (including nested scalar records), unless the pointer is a local array associated only with one TARGET array of its scope or sections of it");
         }
         Ok(fields)
     }
