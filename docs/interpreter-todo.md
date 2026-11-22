@@ -27,6 +27,7 @@ goes through CHARACTER temporaries, so programs using them are the most affected
 | `test_deferred_character_components.py` `test_component` | Deferred-length CHARACTER components (`tests/programs/xdeferred_character_component.f90`); about 2.6 s alone, over 15 s under load |
 | `test_large_initialization_scope.py` `test_large_scope_valid_and_path_dependent_reads`, the valid run | A program of 6000 lines; about 3.3 s alone, over 15 s under load. The run that reads an uninitialized variable still uses the interpreter, which reports the read |
 | `test_pointer_descriptors.py` `test_no_element_count_limit` | POINTER arrays of 10000 elements; about 3.7 s alone, over 15 s under load |
+| `test_recursive_character_dummies.py` (both tests) | Recursive procedures with CHARACTER dummies pass them through a module of strings (see `src/recursive_characters.rs`); every statement copies the frame, including that module's storage, so a few dozen recursive calls take 5 to 20 s, while the compiled program takes 0.3 s |
 
 Output differences, not speed:
 

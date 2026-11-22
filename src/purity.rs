@@ -105,6 +105,9 @@ fn validate_only(program: &Program, only: Option<*const Stmt>) -> Result<()> {
             if intent=="@module_host" {locals.insert(name.clone());}
         }}
         let writable = |name: &str| -> Result<()> {
+            // The stack of strings passed to recursive procedures is the
+            // compiler's own (see crate::recursive_characters).
+            if crate::recursive_characters::is_top(name) { return Ok(()); }
             if readonly.contains(name) { bail!("PURE procedure cannot modify dummy argument `{name}`"); }
             if !writable_locals.contains(name) { bail!("PURE procedure cannot modify nonlocal variable `{name}`; declare local variables explicitly"); }
             Ok(())
@@ -226,6 +229,9 @@ fn validate_only(program: &Program, only: Option<*const Stmt>) -> Result<()> {
                         let Some(Expr::Ident(handle))=args.get(1) else {bail!("invalid owned allocation handle")};
                         writable(handle)?;
                     } else if let Some(value)=args.get(1) {expression(value,&locals,known)?;}
+                }
+                Stmt::CallSub { name, args } if crate::recursive_characters::is_push(name) => {
+                    for arg in args { expression(arg, &locals, known)?; }
                 }
                 Stmt::CallSub { name, args } => {
                     let Some(Procedure { pure: true, intents: Some(intents), optional }) = known.get(name) else {

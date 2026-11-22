@@ -441,6 +441,23 @@ fn elemental_array_call(name: &str, args: &[Expr], routine: &Routine, shapes: &S
     Ok(Some(Stmt::Block {body:prefix}))
 }
 
+/// Whether a scalar CHARACTER actual's length is known only at run time:
+/// a substring with bounds that are not constant, TRIM, ADJUSTL, ADJUSTR
+/// or REPEAT of such a value or of a variable, or a concatenation with such
+/// an operand. `scalar_actual_kind` gives these a nominal length.
+pub(crate) fn runtime_character_length(e: &Expr, shapes: &Shapes) -> bool {
+    let constant = |e: &Option<Box<Expr>>| e.as_deref().is_none_or(|e| crate::parameters::integer_constant(e).is_ok());
+    match e {
+        Expr::Section { name, lower, upper, stride: None } if matches!(shapes.get(name), Some((TypeSpec::Character(_), dims)) if dims.is_empty()) =>
+            !(constant(lower) && constant(upper)),
+        Expr::Call(n, args) if matches!(n.as_str(), "trim" | "adjustl" | "adjustr") && !shapes.contains_key(n) && args.len() == 1 =>
+            n == "trim" && !matches!(args[0], Expr::Str(_)) || runtime_character_length(&args[0], shapes),
+        Expr::Call(n, args) if n == "repeat" && !shapes.contains_key(n) && args.len() == 2 =>
+            crate::parameters::integer_constant(&args[1]).is_err() || runtime_character_length(&args[0], shapes),
+        Expr::Bin(crate::ast::BinOp::Concat, a, b) => runtime_character_length(a, shapes) || runtime_character_length(b, shapes),
+        _ => false,
+    }
+}
 pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> {
     use crate::ast::BinOp;
     match e {
@@ -1973,7 +1990,13 @@ fn expand(
                     }
                     let assumed_character=dims.is_empty() && matches!(kind,TypeSpec::CharacterAssumed);
                     if r.elemental || (dims.is_empty() && matches!(kind,TypeSpec::Character(_) | TypeSpec::CharacterAssumed)) {
-                        let actual_kind = scalar_actual_kind(actual, &shapes)?;
+                        let mut actual_kind = scalar_actual_kind(actual, &shapes)?;
+                        // A length known only at run time: a nominal length
+                        // truncated the dummy, as to one character.
+                        if matches!(kind, TypeSpec::CharacterAssumed) && matches!(actual_kind, TypeSpec::Character(_))
+                            && runtime_character_length(actual, &shapes) {
+                            actual_kind = crate::ast::character_length(Expr::Ident("@deferred_character".into()));
+                        }
                         if let TypeSpec::Character(length) = actual_kind {
                             match kind {
                                 TypeSpec::CharacterAssumed => kind = TypeSpec::Character(length),

@@ -228,5 +228,81 @@ end subroutine
 end program
 """, 'uninitialized')
 
+    def test_actuals_whose_length_is_known_at_run_time(self):
+        # A substring with run-time bounds, and REPEAT, ADJUSTR or a
+        # concatenation of run-time length, was passed as one character.
+        self.check('''module m
+implicit none
+contains
+subroutine show(s)
+character(len=*), intent(in) :: s
+print *, len(s), '[', s, ']'
+end subroutine
+end module
+program main
+use m
+implicit none
+character(len=10) :: buf
+integer :: n
+buf = 'abcdef'
+n = 3
+call show(buf(1:n))
+call show(buf(2:n))
+call show(buf(1:3))
+end program
+''', "3 [abc]\n2 [bc]\n3 [abc]\n")
+        self.check('''module m
+implicit none
+contains
+subroutine show(s)
+character(len=*), intent(in) :: s
+print *, len(s), '[', s, ']'
+end subroutine
+end module
+program main
+use m
+implicit none
+character(len=10) :: buf
+integer :: n
+buf = 'abc'
+n = 2
+call show(trim(buf))
+call show(repeat('xy', n))
+call show(adjustr(buf(1:n+1)))
+call show(trim(buf) // '>')
+end program
+''', "3 [abc]\n4 [xyxy]\n3 [abc]\n4 [abc>]\n")
+
+    def test_scalar_elemental_calls_with_run_time_lengths(self):
+        # ELEMENTAL functions rejected deferred-length and run-time
+        # substring actuals in scalar calls.
+        self.check('''module m
+implicit none
+contains
+elemental function payoff(flag, s) result(v)
+character(len=*), intent(in) :: flag
+real, intent(in) :: s
+real :: v
+if (flag == 'c') then
+   v = s
+else
+   v = -s
+end if
+end function
+end module
+program main
+use m
+implicit none
+character(len=:), allocatable :: d
+character(len=10) :: buf
+integer :: n
+d = 'c'
+buf = 'p'
+n = 1
+print *, payoff(d, 2.0)
+print *, payoff(buf(1:n), 2.0)
+end program
+''', "2.0\n-2.0\n")
+
 if __name__ == '__main__':
     unittest.main()

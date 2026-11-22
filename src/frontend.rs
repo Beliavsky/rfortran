@@ -87,6 +87,7 @@ pub(crate) fn lower_program_body(
         let program = internal_procedures::disambiguate(program);
         let program = internal_procedures::inline_simple(program);
         let program = crate::pointer_section_aliases::resolve(program);
+        let program = crate::recursive_characters::resolve(program);
         let program = saved_storage::resolve(program)?;
         let program = host_storage::resolve(program)?;
         let program = protected::resolve(program)?;

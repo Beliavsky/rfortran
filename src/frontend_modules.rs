@@ -10,6 +10,7 @@ mod errors;
 mod source_diagnostics;
 mod private_entities;
 mod pointer_section_aliases;
+mod recursive_characters;
 mod source_includes;
 mod submodules;
 mod standards;

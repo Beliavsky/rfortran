@@ -136,8 +136,11 @@ fn walk(
                 // compiled separately share one copy (on COFF, common symbols:
                 // see Shared).
                 // So is the storage of the pools of recursive types (see
-                // crate::recursive_types), which no module file describes.
-                let common = crate::common::is_block_module(module) || module == crate::recursive_types::MODULE;
+                // crate::recursive_types) and of the strings passed to
+                // recursive procedures (see crate::recursive_characters),
+                // which no module file describes.
+                let common = crate::common::is_block_module(module) || module == crate::recursive_types::MODULE
+                    || module == crate::recursive_characters::MODULE;
                 let owned = private_saved || common || owners.contains(saved_owner.unwrap_or(module));
                 let id = obj.declare_data(
                     &symbol,

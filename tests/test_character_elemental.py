@@ -179,8 +179,8 @@ end function width
 end program main"""
         self.reject("program main\ninteger::x(2)\ncharacter(len=1)::text(2)\nx=1\ntext=['a','b']\nwhere(x>0)x=width(text)\n"+routine,
                     "inside WHERE")
-        self.reject("program main\ncharacter(len=2)::text\ntext='a'\nprint *,width(trim(text))\n"+routine,
-                    "runtime TRIM actuals")
+        # A scalar call with a runtime TRIM actual is an ordinary call.
+        self.check("program main\ncharacter(len=2)::text\ntext='a'\nprint *,width(trim(text))\n"+routine, "1\n")
         self.reject("""module data
 integer::host(1)
 contains

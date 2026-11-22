@@ -548,7 +548,26 @@ impl Lower {
             Self::specialize_kind(&routine.kind,&types,&HashMap::new(),&HashMap::new()).ok()
         } else {Some(routine.kind.clone())};
         let parallel_workspace=routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent==crate::concurrent_reduce::parallel::WORKSPACE));
-        if let Some(helper) = routine.descriptor_call.as_ref().filter(|_|descriptor_kind.is_some() && (!array_result||runtime_result||allocatable_result||parallel_workspace)) {
+        // A scalar call of an ELEMENTAL function is an ordinary call; the
+        // helper's argument association binds CHARACTER actuals of run-time
+        // length, which the elemental expansion cannot.
+        fn array(e: &Expr, symbols: &Symbols) -> bool {
+            match e {
+                Expr::Ident(n) | Expr::Section { name: n, .. } => symbols.get(n).is_some_and(|(_, d)| !d.is_empty()),
+                Expr::Call(n, args) | Expr::Index(n, args) if symbols.get(n).is_some_and(|(_, d)| !d.is_empty()) =>
+                    args.iter().any(|a| matches!(a, Expr::Section { .. }) || matches!(a, Expr::Call(t, _) if t == "@section_subscript" || t == "@vector_subscript") || array(a, symbols)),
+                Expr::Call(_, args) => args.iter().any(|a| array(a, symbols)),
+                Expr::Bin(_, a, b) => array(a, symbols) || array(b, symbols),
+                Expr::Un(_, a) => array(a, symbols),
+                _ => false,
+            }
+        }
+        let scalar_helper = routine.elemental && !args.iter().any(|a| array(a, symbols))
+            && args.iter().any(|a| crate::array_calls::runtime_character_length(a, symbols)
+                || matches!(a, Expr::Ident(n) if symbols.get(n).is_some_and(|(k, _)| crate::substrings::deferred(k))));
+        if routine.elemental && !scalar_helper {
+            // Array calls and fixed-length scalar calls keep the elemental expansion.
+        } else if let Some(helper) = routine.descriptor_call.as_ref().filter(|_|descriptor_kind.is_some() && (!array_result||runtime_result||allocatable_result||parallel_workspace)) {
             self.serial += 1;
             let result = format!("@array_function_result_{}", self.serial);
             let result_rank=routine.body.iter().find_map(|s|match s {
@@ -1735,7 +1754,9 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                             && !body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==&result));
                         let character_array_result = body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==&result))
                             && matches!(kind,TypeSpec::Character(_));
-                        let descriptor = !*elemental && (numeric(&kind) || character_array_result
+                        // An ELEMENTAL function's helper serves its scalar calls with
+                        // CHARACTER actuals of run-time length (see `scalar_helper`).
+                        let descriptor = (!*elemental || numeric(&kind)) && (numeric(&kind) || character_array_result
                             || character_array_input && matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterLength(_)))
                             && params.iter().all(|param| {
                                 body.iter().any(|s| matches!(s, Stmt::VarDecl {kind,names} if names.contains(param) && input(kind))

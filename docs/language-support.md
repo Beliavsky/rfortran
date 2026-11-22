@@ -1086,8 +1086,10 @@ end module
 ```
 
 A deferred-length scalar, or an expression of runtime length such as
-`buf // '!'`, can be the actual argument of an assumed-length
-(`character(len=*)`) scalar dummy, which then has its runtime length.
+`buf // '!'`, a substring with runtime bounds such as `buf(1:n)`, or
+`trim(buf)`, `repeat(s, n)` and `adjustl`/`adjustr` of such values, can be
+the actual argument of an assumed-length (`character(len=*)`) scalar dummy,
+which then has its runtime length. (These were passed as a single character.)
 Comparisons of runtime-length values, such as `buf(i:i) == ';'`, compare
 over the longer of the two runtime lengths.
 
@@ -4083,8 +4085,19 @@ case; `tests/188_recursive_optional_array.f90` is its numbered regression.
 Run `python tests/test_recursive_arrays.py` for interpreter/native O0/O2 and
 gfortran comparisons.
 
-Recursive CHARACTER, ALLOCATABLE and POINTER dummy interfaces and forwarding a
-new section on a recursive edge retain their existing limitations. Recursive
+INTENT(IN) CHARACTER scalar dummies of recursive procedures, of fixed or
+assumed length, are supported for direct and mutual recursion, including
+procedures that are specifics of a generic interface and PURE ones: the
+procedure keeps its interface and calls a clone that receives each string
+through a stack of strings in a generated module. A string longer than 256
+characters, or more than 1024 strings or 8192 characters pending at once,
+stops the program with an error. Run
+`python tests/test_recursive_character_dummies.py`.
+
+Other recursive CHARACTER dummies (INTENT(OUT) or INOUT, OPTIONAL, arrays,
+deferred or expression lengths), ALLOCATABLE and POINTER dummy interfaces and
+forwarding a new section on a recursive edge retain their existing
+limitations. Recursive
 functions with array dummies or array-valued results remain outside this subset.
 Bounded ALLOCATABLE output recursion can still terminate during specialization, as in `tests/programs/xpure_recursive.f90`,
 whose recursive call omits the optional bounds and selects the copy branch.
