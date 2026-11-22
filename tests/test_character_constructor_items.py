@@ -121,5 +121,20 @@ end program
 ''', '2 ab    cd\n1 xxx\n2 ab    abcd\n')
 
 
+    def test_section_items_in_comparisons(self):
+        self.check('''program p
+implicit none
+character(len=6), parameter :: names(4) = ['value ','delta ','vega  ','parity']
+character(len=6) :: g
+character(len=20) :: buf
+integer :: n
+g = 'delta'
+buf = 'parity'
+n = 6
+print *, any([names(:2), names(4)] == g), count([names(3:), names(1)] == g)
+print *, any([names(:2), names(4)] == buf(1:n)), all([names(4:4), names(4)] == buf(1:n))
+end program p
+''', "T 0\nT T\n")
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

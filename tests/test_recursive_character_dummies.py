@@ -135,5 +135,55 @@ print *, twice([1, 2, 3])
 end program
 ''', "0 1 2\n", interpreter=False)
 
+    def test_dummy_passed_on_to_character_functions(self):
+        # Inside the recursive procedure the dummy has a run-time length, so
+        # LOWER's result and the constructor comparison are sized at run time.
+        self.check('''module m
+implicit none
+character(len=6), parameter :: names(4) = ['value ','delta ','vega  ','parity']
+contains
+recursive function greek(flag, name, depth) result(v)
+character(len=*), intent(in) :: flag, name
+integer, intent(in) :: depth
+real :: v
+if (depth > 0) then
+   v = greek(flag, name, depth-1)
+else if (any([names(:2), names(4)] == name)) then
+   v = payoff(flag, 10.0, 8.0)
+else
+   v = -1.0
+end if
+end function
+elemental function payoff(flag, s, x) result(p)
+character(len=*), intent(in) :: flag
+real, intent(in) :: s, x
+real :: p
+select case (lower(flag))
+case ('c')
+   p = max(0.0, s-x)
+case ('p')
+   p = max(0.0, x-s)
+case default
+   p = 0.0
+end select
+end function
+elemental function lower(a) result(b)
+character(*), intent(in) :: a
+character(len(a)) :: b
+integer :: i, n
+b = a
+do i = 1, len(b)
+   n = index('ABCDEFGHIJKLMNOPQRSTUVWXYZ', b(i:i))
+   if (n /= 0) b(i:i) = 'abcdefghijklmnopqrstuvwxyz'(n:n)
+end do
+end function
+end module
+program main
+use m
+implicit none
+print '(4f5.1)', greek('C', 'delta', 2), greek('p', 'parity', 1), greek('P', 'vega', 0), greek('x', 'value', 3)
+end program
+''', "  2.0  0.0 -1.0  0.0\n", interpreter=False)
+
 if __name__ == "__main__":
     unittest.main()

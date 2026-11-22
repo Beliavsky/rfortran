@@ -304,5 +304,82 @@ print *, payoff(buf(1:n), 2.0)
 end program
 ''', "2.0\n-2.0\n")
 
+    def test_character_results_sized_by_run_time_length_actuals(self):
+        self.check('''module m
+implicit none
+contains
+pure function lower(a) result(b)
+character(*), intent(in) :: a
+character(len(a)) :: b
+integer :: i, k
+b = a
+do i = 1, len(b)
+   k = index('ABCDEFGHIJKLMNOPQRSTUVWXYZ', b(i:i))
+   if (k /= 0) b(i:i) = 'abcdefghijklmnopqrstuvwxyz'(k:k)
+end do
+end function
+elemental function first(a) result(b)
+character(*), intent(in) :: a
+character(len(a)+1) :: b
+b = '!'
+if (len(a) == 0) return
+b = a(1:1) // '?'
+end function
+function pair(a, n)
+character(*), intent(in) :: a
+integer, intent(in) :: n
+character(len=len(a)*n) :: pair
+pair = repeat(a, n)
+end function
+end module
+program main
+use m
+implicit none
+character(len=20) :: buf
+character(len=:), allocatable :: d
+integer :: n
+buf = 'HeLLo'
+n = len_trim(buf)
+print '(3a,i0)', '[', lower(buf(1:n)), ']', len(lower(buf(1:n)))
+select case (lower(buf(1:n)))
+case ('hello')
+   print '(a)', 'matched'
+case default
+   print '(a)', 'no'
+end select
+print '(3a)', '[', lower(trim(buf)) // lower(buf(2:n-1)), ']'
+print '(3a)', '[', first(buf(1:n)), ']'
+print '(3a)', '[', first(buf(1:n-5)), ']'
+print '(3a)', '[', pair(buf(1:n-3), 3), ']'
+d = 'ABC'
+print '(3a)', '[', lower(d), ']'
+end program
+''', "[hello]5\nmatched\n[helloell]\n[H?    ]\n[!]\n[HeHeHe]\n[abc]\n")
+
+    def test_output_dummies_associated_with_run_time_length_variables(self):
+        self.check('''program main
+implicit none
+character(len=10) :: buf
+character(len=:), allocatable :: t
+integer :: n
+buf = 'HeLLo'
+n = len_trim(buf)
+t = repeat(' ', n)
+call copy(buf(1:n), t)
+print '(3a,i0)', '[', t, ']', len(t)
+block
+character(len=n-1) :: u
+call copy(buf(2:n), u)
+print '(3a,i0)', '[', u, ']', len(u)
+end block
+contains
+pure subroutine copy(a, b)
+character(*), intent(in) :: a
+character(*), intent(out) :: b
+b = a
+end subroutine
+end program
+''', "[HeLLo]5\n[eLLo]4\n")
+
 if __name__ == '__main__':
     unittest.main()

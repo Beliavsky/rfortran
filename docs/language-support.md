@@ -1090,7 +1090,14 @@ A deferred-length scalar, or an expression of runtime length such as
 `trim(buf)`, `repeat(s, n)` and `adjustl`/`adjustr` of such values, can be
 the actual argument of an assumed-length (`character(len=*)`) scalar dummy,
 which then has its runtime length. (These were passed as a single character.)
-Comparisons of runtime-length values, such as `buf(i:i) == ';'`, compare
+Such an actual can also be associated with an INTENT(OUT) assumed-length
+dummy when it is a whole deferred-length or automatic-length variable.
+A scalar CHARACTER function whose result length its dummies specify, as
+`character(len(a)) :: b`, accepts these actuals too, in SELECT CASE,
+comparisons, concatenations and output: the result goes to a buffer bounded
+by the actuals' declared lengths, or to a deferred-length temporary when no
+bound is known, and its length is computed when the function is called.
+The function may be ELEMENTAL when it is called with scalars. Comparisons of runtime-length values, such as `buf(i:i) == ';'`, compare
 over the longer of the two runtime lengths.
 
 Deferred-length CHARACTER arrays (`character(len=:), allocatable :: w(:)`)
@@ -1213,7 +1220,9 @@ concatenations, CHARACTER intrinsic results such as `repeat('x', n)` or
 `adjustr(s)`, and other CHARACTER arrays, whose elements they take in order,
 as in `c = [s, adjustr(s)]` or `tags = [tags, repeat('x', n)]`, which appends
 to an ALLOCATABLE array; a typed constructor of such items allocates an
-ALLOCATABLE target. Run `python tests/test_character_arrays.py` and
+ALLOCATABLE target. Sections of fixed CHARACTER arrays are items in
+expressions too, as in `any([names(:2), names(4)] == name)`.
+Run `python tests/test_character_arrays.py` and
 `python tests/test_character_constructor_items.py`.
 
 ### CHARACTER array parameters

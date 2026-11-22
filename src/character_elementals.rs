@@ -19,6 +19,7 @@ struct Routine {
     result: String,
     kind: TypeSpec,
     descriptor_call: Option<String>,
+    character_call: Option<String>,
 }
 #[derive(Clone)]
 struct Value {
@@ -44,6 +45,85 @@ fn length(kind: &TypeSpec) -> Result<usize> {
     } else {
         bail!("CHARACTER actual argument requires a fixed length")
     }
+}
+/// The largest length a CHARACTER actual can have at run time, when known.
+fn character_capacity(e: &Expr, symbols: &Symbols) -> Option<usize> {
+    match e {
+        Expr::Str(s) => Some(s.len()),
+        Expr::Ident(n) | Expr::Section { name: n, .. } => match symbols.get(n) {
+            Some((TypeSpec::Character(n), _)) => Some(n.unwrap_or(1)),
+            _ => None,
+        },
+        // An element of a CHARACTER array.
+        Expr::Call(n, _) | Expr::Index(n, _) if symbols.get(n).is_some_and(|(_, d)| !d.is_empty()) =>
+            match symbols.get(n) {Some((TypeSpec::Character(n), _)) => Some(n.unwrap_or(1)), _ => None},
+        Expr::Call(n, args) if matches!(n.as_str(), "trim" | "adjustl" | "adjustr") && args.len() == 1 => character_capacity(&args[0], symbols),
+        Expr::Call(n, args) if n == "repeat" && args.len() == 2 => {
+            let count = usize::try_from(crate::parameters::integer_constant(&args[1]).ok()?.max(0)).ok()?;
+            character_capacity(&args[0], symbols)?.checked_mul(count)
+        }
+        Expr::Bin(BinOp::Concat, a, b) => character_capacity(a, symbols)?.checked_add(character_capacity(b, symbols)?),
+        _ => None,
+    }
+}
+/// Replace dummy `param` in a result length specification by its actual:
+/// `len(param)` becomes `capacity` when given, else `len(actual)`.
+fn substitute_length(e: &mut Expr, param: &str, actual: &Expr, capacity: Option<&Expr>) {
+    match e {
+        Expr::Call(n, args) if n == "len" && matches!(args.as_slice(), [Expr::Ident(p)] if p == param) => {
+            *e = capacity.cloned().unwrap_or_else(|| Expr::Call("len".into(), vec![actual.clone()]));
+        }
+        Expr::Ident(n) if n == param => *e = actual.clone(),
+        Expr::Call(_, args) | Expr::Index(_, args) => for a in args { substitute_length(a, param, actual, capacity) },
+        Expr::Bin(_, a, b) => { substitute_length(a, param, actual, capacity); substitute_length(b, param, actual, capacity); }
+        Expr::Un(_, a) => substitute_length(a, param, actual, capacity),
+        _ => {}
+    }
+}
+/// The subroutine form of a scalar CHARACTER function whose result length
+/// is specified by its dummies: two trailing dummies receive the result's
+/// length and a buffer at least that long.
+fn character_helper(name: &str, params: &[String], result: &str, body: &[Stmt], pure: bool) -> Stmt {
+    const LENGTH: &str = "rfort_cf_length";
+    const BUFFER: &str = "rfort_cf_result";
+    let mut body = body.to_vec();
+    if matches!(body.last(), Some(Stmt::Return(Some(Expr::Ident(n)))) if n == result) { body.pop(); }
+    for s in &mut body {
+        if let Stmt::VarDecl { names, .. } = s { names.retain(|n| n != result); }
+    }
+    body.retain(|s| !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
+    fn returns(body: &mut Vec<Stmt>, result: &str) {
+        let copy = || Stmt::Assign { name: BUFFER.into(), value: Expr::Ident(result.into()) };
+        let mut out = vec![];
+        for mut s in std::mem::take(body) {
+            match &mut s {
+                Stmt::Return(_) => { out.push(copy()); s = Stmt::Return(None); }
+                Stmt::If { then_body, else_body, .. } => { returns(then_body, result); if let Some(b) = else_body { returns(b, result); } }
+                Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => returns(body, result),
+                Stmt::SelectCase { cases, default, .. } => { for c in cases { returns(&mut c.body, result); } if let Some(b) = default { returns(b, result); } }
+                _ => {}
+            }
+            out.push(s);
+        }
+        *body = out;
+    }
+    returns(&mut body, result);
+    let mut prologue = vec![
+        Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![LENGTH.into()] },
+        Stmt::DummyIntent { name: LENGTH.into(), intent: "intent(in)".into() },
+        Stmt::VarDecl { kind: TypeSpec::CharacterAssumed, names: vec![BUFFER.into()] },
+        Stmt::DummyIntent { name: BUFFER.into(), intent: "intent(out)".into() },
+        Stmt::VarDecl { kind: TypeSpec::CharacterLength(Box::new(Expr::Ident(LENGTH.into()))), names: vec![result.into()] },
+    ];
+    let at = body.iter().position(|s| !matches!(s, Stmt::SourceLocation(_) | Stmt::Use { .. } | Stmt::Implicit(_))).unwrap_or(body.len());
+    let mut rest = body.split_off(at);
+    body.append(&mut prologue);
+    body.append(&mut rest);
+    body.push(Stmt::Assign { name: BUFFER.into(), value: Expr::Ident(result.into()) });
+    let mut helper_params = params.to_vec();
+    helper_params.push(LENGTH.into());
+    helper_params.push(BUFFER.into());
+    Stmt::Subroutine { name: format!("@character_function${name}"), params: helper_params, body, pure, elemental: false }
 }
 fn same(a: &TypeSpec, b: &TypeSpec) -> bool {
     matches!((a,b),(TypeSpec::Integer(a),TypeSpec::Integer(b)) if a.unwrap_or(4)==b.unwrap_or(4))
@@ -675,6 +755,50 @@ impl Lower {
             && routine.params.iter().zip(args.iter()).any(|(param,arg)|
                 routine.body.iter().any(|s|matches!(s,Stmt::VarDecl{kind:TypeSpec::Integer(_),names} if names.contains(param)))
                 && crate::parameters::integer_constant(arg).is_err()) {
+            return Ok(());
+        }
+        if let Some(helper)=routine.character_call.as_ref().filter(|_|!args.iter().any(|a|array(a,symbols))
+            && args.iter().any(|a|crate::array_calls::runtime_character_length(a,symbols)
+                || matches!(a,Expr::Ident(n) if symbols.get(n).is_some_and(|(k,_)|crate::substrings::deferred(k))))) {
+            // A scalar CHARACTER result whose length depends on an actual of
+            // run-time length: the helper defines a buffer bounded by the
+            // actuals' capacities, and the call's value is its active part.
+            let TypeSpec::CharacterLength(spec)=&routine.kind else {unreachable!()};
+            let mut length=(**spec).clone();
+            let mut bound=(**spec).clone();
+            for (param,actual) in routine.params.iter().zip(args.iter()) {
+                let capacity=character_capacity(actual,symbols);
+                substitute_length(&mut length,param,actual,None);
+                substitute_length(&mut bound,param,actual,capacity.map(|n|int(n as i64)).as_ref());
+            }
+            let capacity=crate::parameters::integer_constant(&bound).ok().filter(|n|*n>=0);
+            self.serial+=1;
+            let buffer=format!("@character_function_result_{}",self.serial);
+            let active=format!("@character_function_length_{}",self.serial);
+            prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![active.clone()]});
+            prefix.push(Stmt::Assign{name:active.clone(),value:Expr::Call("max".into(),vec![int(0),length])});
+            symbols.insert(active.clone(),(TypeSpec::Integer(None),vec![]));
+            let value=if let Some(capacity)=capacity {
+                prefix.push(Stmt::If{cond:Expr::Bin(BinOp::Gt,Box::new(Expr::Ident(active.clone())),Box::new(int(capacity))),
+                    then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str(format!("length of the CHARACTER result of `{name}` exceeds {capacity}"))]}],else_body:None});
+                let kind=TypeSpec::Character(Some(capacity.max(1) as usize));
+                prefix.push(Stmt::VarDecl{kind:kind.clone(),names:vec![buffer.clone()]});
+                symbols.insert(buffer.clone(),(kind,vec![]));
+                Expr::Section{name:buffer.clone(),lower:Some(Box::new(int(1))),upper:Some(Box::new(Expr::Ident(active.clone()))),stride:None}
+            } else {
+                // Without a bound the buffer is a deferred-length allocation.
+                let kind=TypeSpec::CharacterLength(Box::new(Expr::Ident("@deferred_character".into())));
+                prefix.push(Stmt::VarDecl{kind:kind.clone(),names:vec![buffer.clone()]});
+                prefix.push(Stmt::DummyIntent{name:buffer.clone(),intent:"allocatable".into()});
+                prefix.push(Stmt::Assign{name:buffer.clone(),value:Expr::Call("repeat".into(),vec![Expr::Str(" ".into()),Expr::Ident(active.clone())])});
+                symbols.insert(buffer.clone(),(kind,vec![]));
+                Expr::Ident(buffer.clone())
+            };
+            let mut actuals=args.clone();
+            actuals.push(Expr::Ident(active.clone()));
+            actuals.push(Expr::Ident(buffer.clone()));
+            prefix.push(Stmt::CallSub{name:helper.clone(),args:actuals});
+            *e=value;
             return Ok(());
         }
         for arg in args.iter_mut() {crate::constructors::fixed_expression(arg,symbols)?;}
@@ -1828,6 +1952,16 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                             let mut helper_params = params.clone(); helper_params.push(result.clone());
                             out.push(Stmt::Subroutine {name:helper.clone(),params:helper_params,body:helper_body,pure:*pure,elemental:false});
                         }
+                        // A scalar CHARACTER result whose length its dummies specify
+                        // also has a subroutine form for actuals of run-time length.
+                        let character_call=(descriptor_call.is_none() && matches!(kind,TypeSpec::CharacterLength(_))
+                            && !body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==&result || params.contains(name)))
+                            && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==&result
+                                || params.contains(name) && matches!(intent.as_str(),"optional"|"pointer"|"allocatable"|"target"))))
+                            .then(|| {
+                                out.push(character_helper(name,params,&result,body,*pure));
+                                format!("@character_function${name}")
+                            });
                         lower.routines.insert(
                             name.clone(),
                             Routine {
@@ -1837,6 +1971,7 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                                 result,
                                 kind,
                                 descriptor_call,
+                                character_call,
                             },
                         );
                         if body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent==crate::concurrent_reduce::parallel::WORKSPACE))

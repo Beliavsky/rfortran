@@ -230,7 +230,14 @@ fn expression(e: Expr, arrays: &Arrays) -> Result<Value> {
                 .into_iter()
                 .map(|e| expression(e, arrays))
                 .collect::<Result<Vec<_>>>()?;
-            if matches!(
+            if n == "@array_constructor" && values.iter().any(|v| matches!(v, Value::Array(_))) {
+                // Array items of a constructor contribute their elements in
+                // array element order, as `[names(:2), names(4)]`.
+                Value::Array(values.into_iter().flat_map(|v| match v {
+                    Value::Array(items) => items,
+                    Value::Scalar(e) => vec![e],
+                }).collect())
+            } else if matches!(
                 n.as_str(),
                 "all" | "any" | "@all_reduction" | "@any_reduction"
             ) && values.len() == 1

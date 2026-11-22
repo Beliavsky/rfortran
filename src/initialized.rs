@@ -657,6 +657,14 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     write(dest, None, env, &mut after, serial);
                 }
             }
+            // An INTENT(OUT) CHARACTER dummy associated with a run-time
+            // substring of a variable: the procedure defines that substring,
+            // so the variable's definition status is left as it was.
+            Stmt::CallSub{name,args} if name=="@undefine" && matches!(args.first(),Some(Expr::Call(n,_)) if n=="@dynamic_substring") => {
+                let Some(Expr::Call(_,parts))=args.first() else {unreachable!()};
+                for part in &parts[1..] {read(part,env,&mut before,serial)?;}
+                stmt=Stmt::Block{body:vec![]};
+            }
             Stmt::CallSub{name,args} if name=="@undefine" && matches!(args.first(),Some(Expr::Index(_,_)|Expr::Call(_,_))) => {
                 let Some((name,Some(index)))=args.first().and_then(key) else {bail!("invalid uninitialized READ destination");};
                 read(index,env,&mut before,serial)?;
