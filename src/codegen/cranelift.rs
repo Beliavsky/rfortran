@@ -119,26 +119,68 @@ fn unborrow_storage(storage:Storage)->Result<Storage> {
         (BorrowedOriginal::Static(s),true)=>Storage::HeapStatic(s),
     })
 }
-fn array_storage(b: &mut FunctionBuilder, module: &mut ObjectModule, len: usize, main: bool) -> Result<Storage> {
+fn array_storage(b: &mut FunctionBuilder, module: &mut ObjectModule, len: usize, main: Option<&mut u32>) -> Result<Storage> {
     let size = len.checked_mul(8).ok_or_else(|| anyhow::anyhow!("array size overflow"))?;
     fixed_storage(b, module, size, main)
 }
 
-fn fixed_storage(b: &mut FunctionBuilder, module: &mut ObjectModule, size: usize, main: bool) -> Result<Storage> {
-    if main && size > 8192 {
-        // Main-program storage has program lifetime, including locals of
-        // inlined procedures. Large CHARACTER buffers need the same treatment
-        // as numeric arrays, otherwise CSV routines can exhaust the stack.
-        let name = format!(".f90c.array.{}", GLOBAL_STR_ID.fetch_add(1, Ordering::Relaxed));
-        let id = module.declare_data(&name, Linkage::Local, true, false)?;
-        let mut data = DataDescription::new();
-        data.define_zeroinit(size);
-        data.set_align(8);
-        module.define_data(id, &data)?;
-        Ok(Storage::Static(module.declare_data_in_func(id, b.func)))
-    } else {
-        let size = u32::try_from(size).map_err(|_| anyhow::anyhow!("array is too large for stack storage"))?;
-        Ok(b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot, size, 0)).into())
+/// Main-program storage of this many bytes or more is allocated on the heap
+/// when its declaration is first reached. Programs that expand many calls with
+/// large local arrays otherwise produce images Windows refuses to load.
+const HEAP_STORAGE_BYTES: usize = 1 << 20;
+
+/// Storage for a fixed-size local. `main` holds the data counter of the main
+/// program, whose storage has program lifetime, including locals of inlined
+/// procedures.
+fn fixed_storage(b: &mut FunctionBuilder, module: &mut ObjectModule, size: usize, main: Option<&mut u32>) -> Result<Storage> {
+    match main {
+        Some(dc) if size >= HEAP_STORAGE_BYTES => {
+            // A static cell holds the address of a zeroed heap block; the
+            // storage is a global value that loads it, so uses are unchanged.
+            let ptr = module.isa().pointer_type();
+            let name = format!(".f90c.array.{}", GLOBAL_STR_ID.fetch_add(1, Ordering::Relaxed));
+            let id = module.declare_data(&name, Linkage::Local, true, false)?;
+            let mut data = DataDescription::new();
+            data.define_zeroinit(ptr.bytes() as usize);
+            data.set_align(8);
+            module.define_data(id, &data)?;
+            let cell = module.declare_data_in_func(id, b.func);
+            let address = b.create_global_value(ir::GlobalValueData::Load {
+                base: cell, offset: 0.into(), global_type: ptr, flags: ir::MemFlags::new(),
+            });
+            let cell_address = b.ins().global_value(ptr, cell);
+            let current = b.ins().load(ptr, ir::MemFlags::new(), cell_address, 0);
+            let allocate = b.create_block();
+            let done = b.create_block();
+            b.ins().brif(current, done, &[], allocate, &[]);
+            b.switch_to_block(allocate);
+            b.seal_block(allocate);
+            let count = b.ins().iconst(ptr, size as i64);
+            let one = b.ins().iconst(ptr, 1);
+            let block = file_io::call(module, b, "calloc", &[count, one], ptr)?;
+            let okay = b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual, block, 0);
+            file_io::require(module, b, ptr, dc, okay, "array allocation failed")?;
+            b.ins().store(ir::MemFlags::new(), block, cell_address, 0);
+            b.ins().jump(done, &[]);
+            b.switch_to_block(done);
+            b.seal_block(done);
+            Ok(Storage::Static(address))
+        }
+        Some(_) if size > 8192 => {
+            // Large CHARACTER buffers need the same treatment as numeric
+            // arrays, otherwise CSV routines can exhaust the stack.
+            let name = format!(".f90c.array.{}", GLOBAL_STR_ID.fetch_add(1, Ordering::Relaxed));
+            let id = module.declare_data(&name, Linkage::Local, true, false)?;
+            let mut data = DataDescription::new();
+            data.define_zeroinit(size);
+            data.set_align(8);
+            module.define_data(id, &data)?;
+            Ok(Storage::Static(module.declare_data_in_func(id, b.func)))
+        }
+        _ => {
+            let size = u32::try_from(size).map_err(|_| anyhow::anyhow!("array is too large for stack storage"))?;
+            Ok(b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot, size, 0)).into())
+        }
     }
 }
 
@@ -1206,7 +1248,7 @@ fn eval_expr(
                         b.ins().brif(outside, failure, &[], success, &[]);
                         b.switch_to_block(failure); b.seal_block(failure);
                         let limit = b.ins().iconst(ir::types::I64, extent);
-                        b.ins().call(meta.fref, &[index, limit]);
+                        let fref = meta.fref.get(b.func); b.ins().call(fref, &[index, limit]);
                         b.ins().jump(success, &[]);
                         b.switch_to_block(success); b.seal_block(success);
                         return CgVal::I64(index);
@@ -1244,7 +1286,7 @@ fn eval_expr(
                         b.set_cold_block(failure);
                         b.ins().brif(outside.unwrap(), failure, &[], success, &[]);
                         b.switch_to_block(failure); b.seal_block(failure);
-                        b.ins().call(meta.fref, &values);
+                        let fref = meta.fref.get(b.func); b.ins().call(fref, &values);
                         b.ins().jump(success, &[]);
                         b.switch_to_block(success); b.seal_block(success);
                         let mut offset = b.ins().iconst(ir::types::I64, 1);
@@ -1266,7 +1308,7 @@ fn eval_expr(
                                 ParamKind::F64 => argv.push(to_f64(b, v)),
                             }
                         }
-                        let inst = b.ins().call(meta.fref, &argv);
+                        let fref = meta.fref.get(b.func); let inst = b.ins().call(fref, &argv);
                         let res = b.inst_results(inst);
                         match meta.ret {
                             RetKind::Bool => {let value=res[0];CgVal::Bool(b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,value,0))},
@@ -2035,7 +2077,7 @@ fn print_expr(
                         ParamKind::F64 => argv.push(to_f64(b, v)),
                     }
                 }
-                let inst = b.ins().call(meta.fref, &argv);
+                let fref = meta.fref.get(b.func); let inst = b.ins().call(fref, &argv);
                 let res = b.inst_results(inst);
                 match meta.ret {
                     RetKind::Bool => {let value=res[0];let yes=b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,value,0);let text=b.ins().select(yes,ex.p_true,ex.p_false);ex.call_printf(b,&[ex.fmt_s,text]);}
@@ -2193,7 +2235,7 @@ fn gen_stmts(
                                 if let Ok(len128) = i128::from_str_radix(s, 10) {
                                     let len = usize::try_from(len128).unwrap_or(0);
                                     if len > 0 {
-                                        let ss = array_storage(b, module, len, current_fn.is_none())?;
+                                        let ss = array_storage(b, module, len, current_fn.is_none().then_some(&mut *dc))?;
                                         ints.insert(name.clone(), ss.into());
                                         arrays.insert(name.clone(), len);
                                         continue;
@@ -2214,7 +2256,7 @@ fn gen_stmts(
                                 if let Ok(len128) = i128::from_str_radix(s, 10) {
                                     let len = usize::try_from(len128).unwrap_or(0);
                                     if len > 0 {
-                                        let ss = array_storage(b, module, len, current_fn.is_none())?;
+                                        let ss = array_storage(b, module, len, current_fn.is_none().then_some(&mut *dc))?;
                                         reals.insert(name.clone(), ss.into());
                                         real_kind.insert(name.clone(), false);
                                         REAL_KINDS.with(|k| k.borrow_mut().insert(name.clone(), false));
@@ -2239,7 +2281,7 @@ fn gen_stmts(
                                 if let Ok(len128) = i128::from_str_radix(s, 10) {
                                     let len = usize::try_from(len128).unwrap_or(0);
                                     if len > 0 {
-                                        let ss = array_storage(b, module, len, current_fn.is_none())?;
+                                        let ss = array_storage(b, module, len, current_fn.is_none().then_some(&mut *dc))?;
                                         reals.insert(name.clone(), ss.into());
                                         real_kind.insert(name.clone(), true);
                                         REAL_KINDS.with(|k| k.borrow_mut().insert(name.clone(), true));
@@ -2261,7 +2303,7 @@ fn gen_stmts(
                     crate::ast::TypeSpec::Character(len_opt) => {
                         let len = len_opt.unwrap_or(1);
                         let size = len.checked_add(1).context("CHARACTER storage size overflow")?;
-                        let storage = fixed_storage(b, module, size, current_fn.is_none())?;
+                        let storage = fixed_storage(b, module, size, current_fn.is_none().then_some(&mut *dc))?;
                         chars.insert(name.clone(), (storage, len));
                         let address=storage_addr(b,ptr_ty,storage);
                         let pointer=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,8,0));
@@ -2272,7 +2314,7 @@ fn gen_stmts(
                     crate::ast::TypeSpec::Logical => {
                         if let [IExpr::IntLit(length)] = dims.as_slice() {
                             let len: usize = length.parse()?;
-                            let ss = array_storage(b, module, len.max(1), current_fn.is_none())?;
+                            let ss = array_storage(b, module, len.max(1), current_fn.is_none().then_some(&mut *dc))?;
                             bools.insert(name.clone(), ss.into());
                             arrays.insert(name.clone(), len);
                             continue;
@@ -3813,7 +3855,7 @@ fn gen_stmts(
                             ParamKind::F64 => argv.push(to_f64(b, v)),
                         }
                     }
-                    b.ins().call(meta.fref, &argv);
+                    let fref = meta.fref.get(b.func); b.ins().call(fref, &argv);
                 }
             }
             IStmt::Read(args) => {
@@ -4188,8 +4230,45 @@ fn gen_stmts(
     Ok(false)
 }
 
+/// A procedure of the module, imported into the function being built when it
+/// is first called there. Importing every procedure into every function was
+/// quadratic in the number of procedures.
+struct LazyFuncRef {
+    /// The function generation that imported the procedure, and its reference.
+    imported: std::cell::Cell<(u32, ir::FuncRef)>,
+    signature: ir::Signature,
+    id: u32,
+    colocated: bool,
+}
+thread_local! {
+    static FUNCTION_GENERATION: std::cell::Cell<u32> = const { std::cell::Cell::new(1) };
+}
+/// Start building another function: references imported before are stale.
+fn next_function_generation() { FUNCTION_GENERATION.with(|g| g.set(g.get() + 1)); }
+impl LazyFuncRef {
+    fn new(obj: &ObjectModule, id: cranelift_module::FuncId) -> Self {
+        let decl = obj.declarations().get_function_decl(id);
+        Self { imported: std::cell::Cell::new((0, ir::FuncRef::from_u32(0))), signature: decl.signature.clone(),
+            id: id.as_u32(), colocated: decl.linkage.is_final() }
+    }
+    /// A reference already imported into a function, valid while it is built.
+    fn imported(fref: ir::FuncRef) -> Self {
+        Self { imported: std::cell::Cell::new((u32::MAX, fref)), signature: ir::Signature::new(isa::CallConv::SystemV), id: 0, colocated: false }
+    }
+    fn get(&self, func: &mut ir::Function) -> ir::FuncRef {
+        let generation = FUNCTION_GENERATION.with(|g| g.get());
+        let (imported, fref) = self.imported.get();
+        if imported == generation || imported == u32::MAX { return fref; }
+        let signature = func.import_signature(self.signature.clone());
+        let name = func.declare_imported_user_function(ir::UserExternalName { namespace: 0, index: self.id });
+        let fref = func.import_function(ir::ExtFuncData { name: ir::ExternalName::user(name), signature, colocated: self.colocated });
+        self.imported.set((generation, fref));
+        fref
+    }
+}
+
 struct FuncMeta {
-    fref: ir::FuncRef,
+    fref: LazyFuncRef,
     ret: RetKind,
     param_kinds: Vec<ParamKind>,
     /// A REAL result is DOUBLE PRECISION (for list-directed output).
@@ -4592,6 +4671,12 @@ impl CraneliftBackend {
                 },
             );
         }
+        let all_func_meta: HashMap<String, FuncMeta> = func_ids.iter().map(|(name, fid)| (name.clone(), FuncMeta {
+            fref: LazyFuncRef::new(&obj, *fid),
+            ret: *ret_kinds.get(name).unwrap_or(&RetKind::Void),
+            param_kinds: param_kinds_map.get(name).cloned().unwrap_or_default(),
+            double: matches!(eff_ret.get(name), Some(crate::ast::TypeSpec::DoublePrecision)),
+        })).collect();
         for (idx, f) in module.funcs.iter().enumerate() {
             if idx == 0 && is_real_main {
                 continue;
@@ -4639,21 +4724,8 @@ impl CraneliftBackend {
                 let mut i128_last = HashMap::new();
                 let mut dc = 0u32;
                 let _arrays: HashMap<String, usize> = HashMap::new();
-                let mut func_meta: HashMap<String, FuncMeta> = HashMap::new();
-                for (name, fid) in &func_ids {
-                    let fr = obj.declare_func_in_func(*fid, b.func);
-                    let rk = *ret_kinds.get(name).unwrap_or(&RetKind::Void);
-                    let pkv = param_kinds_map.get(name).cloned().unwrap_or_default();
-                    func_meta.insert(
-                        name.clone(),
-                        FuncMeta {
-                            fref: fr,
-                            ret: rk,
-                            param_kinds: pkv,
-                            double: matches!(eff_ret.get(name), Some(crate::ast::TypeSpec::DoublePrecision)),
-                        },
-                    );
-                }
+                next_function_generation();
+                let func_meta = &all_func_meta;
                 for (idx, pname) in f.params.iter().enumerate() {
                     if let Some(length)=f.body.iter().find_map(|s|match s {
                         IStmt::DeclVar(TypeSpec::Character(length),name,_) if name==pname => Some(length.unwrap_or(1)),
@@ -4853,21 +4925,8 @@ impl CraneliftBackend {
                 let mut i128_vars = HashSet::new();
                 let mut i128_last = HashMap::new();
                 let mut dc = 0u32;
-                let mut func_meta: HashMap<String, FuncMeta> = HashMap::new();
-                for (name, fid) in &func_ids {
-                    let fr = obj.declare_func_in_func(*fid, b.func);
-                    let rk = *ret_kinds.get(name).unwrap_or(&RetKind::Void);
-                    let pkv = param_kinds_map.get(name).cloned().unwrap_or_default();
-                    func_meta.insert(
-                        name.clone(),
-                        FuncMeta {
-                            fref: fr,
-                            ret: rk,
-                            param_kinds: pkv,
-                            double: matches!(eff_ret.get(name), Some(crate::ast::TypeSpec::DoublePrecision)),
-                        },
-                    );
-                }
+                next_function_generation();
+                let func_meta = &all_func_meta;
                 let mut arrays: HashMap<String, usize> = HashMap::new();
                 let terminated = gen_stmts(
                     &mut b,

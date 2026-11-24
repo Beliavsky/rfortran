@@ -969,9 +969,12 @@ diagnostics. Bounded deferred-length scalar assignment is described below.
 
 Large fixed CHARACTER storage in the main program, including generated
 concatenation, REPEAT, adjustment, and output buffers, uses static storage
-rather than enlarging the native stack frame. Native procedure buffers remain
-per invocation. `python tests/test_large_character_storage.py` checks large
-strings, multiple buffers, and recursive local storage.
+rather than enlarging the native stack frame. Main-program storage of 1 MiB or
+more, of any type, is allocated on the heap when its declaration is first
+reached and kept for the rest of the run, so that it does not enlarge the
+executable. Native procedure buffers remain per invocation.
+`python tests/test_large_character_storage.py` checks large strings, multiple
+buffers, large arrays, and recursive local storage.
 
 CHARACTER declarations accept per-entity lengths, for example
 `character(2) :: a*3, b, c*(n+1)`. An entity length overrides the shared length

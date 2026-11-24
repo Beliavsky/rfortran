@@ -258,8 +258,8 @@ pub(crate) fn resolve(
     source: &str,
     origins: &[crate::source_diagnostics::SourceOrigin],
 ) -> Result<Program> {
-    fn functions(body: &[Stmt], out: &mut Types) {
-        for mut s in body.to_vec() {
+    fn functions(body: &mut [Stmt], out: &mut Types) {
+        for s in body {
             if let Stmt::Function {
                 name,
                 return_type: Some(k),
@@ -268,9 +268,22 @@ pub(crate) fn resolve(
             {
                 out.insert(name.clone(), (k.clone(), 0));
             }
-            for b in crate::procedure_arguments::children(&mut s) {
+            for b in crate::procedure_arguments::children(s) {
                 functions(b, out);
             }
+        }
+    }
+    /// Line numbers of source positions, from the newline offsets of each
+    /// text, computed once per text.
+    #[derive(Default)]
+    struct Lines(HashMap<(usize, usize), Vec<usize>>);
+    impl Lines {
+        fn line(&mut self, text: &str, p: usize) -> usize {
+            let newlines = self.0.entry((text.as_ptr() as usize, text.len())).or_insert_with(|| {
+                text.bytes().enumerate().filter(|(_, b)| *b == b'\n').map(|(i, _)| i).collect()
+            });
+            // One more than the number of newlines before position p.
+            newlines.partition_point(|&i| i < p.min(text.len())) + 1
         }
     }
     fn walk(
@@ -280,21 +293,30 @@ pub(crate) fn resolve(
         source: &str,
         origins: &[crate::source_diagnostics::SourceOrigin],
         inherited: Option<usize>,
+        lines: &mut Lines,
     ) -> Result<()> {
-        let mut types = parent.clone();
-        for s in body.iter() {
-            match s {
-                Stmt::VarDecl { kind, names } => {
-                    for n in names {
-                        types.insert(n.clone(), (kind.clone(), 0));
+        // Only a body with declarations extends its host's table; copying it
+        // for every IF and DO body made this pass quadratic.
+        let mut owned;
+        let types = if body.iter().any(|s| matches!(s, Stmt::VarDecl { .. } | Stmt::ArrayDecl { .. })) {
+            owned = parent.clone();
+            for s in body.iter() {
+                match s {
+                    Stmt::VarDecl { kind, names } => {
+                        for n in names {
+                            owned.insert(n.clone(), (kind.clone(), 0));
+                        }
                     }
+                    Stmt::ArrayDecl { kind, name, dims } => {
+                        owned.insert(name.clone(), (kind.clone(), dims.len()));
+                    }
+                    _ => {}
                 }
-                Stmt::ArrayDecl { kind, name, dims } => {
-                    types.insert(name.clone(), (kind.clone(), dims.len()));
-                }
-                _ => {}
             }
-        }
+            &owned
+        } else {
+            parent
+        };
         let mut offset = inherited;
         for s in body {
             if let Stmt::SourceLocation(p) = s {
@@ -306,11 +328,7 @@ pub(crate) fn resolve(
                     .iter()
                     .find(|o| o.range.contains(&p))
                     .map_or((source, p), |o| (o.source(source), o.position(p)));
-                text.as_bytes()[..p.min(text.len())]
-                    .iter()
-                    .filter(|b| **b == b'\n')
-                    .count()
-                    + 1
+                lines.line(text, p)
             });
             (|| -> Result<()> {
                 // Dimensions and metadata are compiler bookkeeping, not user
@@ -359,7 +377,7 @@ pub(crate) fn resolve(
                     }
                 }
                 for b in crate::procedure_arguments::children(s) {
-                    walk(b, &types, checks, source, origins, offset)?;
+                    walk(b, &types, checks, source, origins, offset, lines)?;
                 }
                 Ok(())
             })()
@@ -368,7 +386,7 @@ pub(crate) fn resolve(
         Ok(())
     }
     let mut types = Types::new();
-    functions(&program.body, &mut types);
-    walk(&mut program.body, &types, checks, source, origins, None)?;
+    functions(&mut program.body, &mut types);
+    walk(&mut program.body, &types, checks, source, origins, None, &mut Lines::default())?;
     Ok(program)
 }

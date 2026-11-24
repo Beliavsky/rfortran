@@ -670,8 +670,29 @@ fn scalarize(e: &Expr, index: &Expr, symbols: &Symbols) -> Option<(Expr, Option<
 pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crate::ast::Program> {
     fn ready(e:&Expr,symbols:&Symbols)->bool {
         let storage=|n:&String|symbols.get(n).is_none_or(|(_,d)|d.is_empty()||d.iter().all(|d|crate::parameters::integer_constant(d).is_ok())||symbols.contains_key(&format!("@axes:{n}")));
+        // A subscript that is an INTEGER expression of scalars, not an array.
+        fn scalar(e:&Expr,symbols:&Symbols)->bool {
+            match e {
+                Expr::IntLit(_)=>true,
+                Expr::Ident(n)=>symbols.get(n).is_some_and(|(k,d)|d.is_empty()&&matches!(k,TypeSpec::Integer(_))),
+                Expr::Bin(op,a,b)=>matches!(op,BinOp::Add|BinOp::Sub|BinOp::Mul|BinOp::Div)&&scalar(a,symbols)&&scalar(b,symbols),
+                Expr::Un(_,a)=>scalar(a,symbols),
+                Expr::Call(n,a) if matches!(n.as_str(),"size"|"lbound"|"ubound"|"len")
+                    && a.iter().all(|e|matches!(e,Expr::Ident(_)|Expr::IntLit(_)))=>true,
+                _=>false,
+            }
+        }
         match e {
             Expr::Ident(n)=>storage(n),
+            // An element of an array of any extent, as `x(i)` with `x(:)`, is
+            // a scalar: its loop needs no storage layout. Waiting for one
+            // would leave calls in later items, as `str(i)`, to be expanded
+            // before the whole statement, outside their implied-DO.
+            Expr::Call(n,a)|Expr::Index(n,a) if symbols.get(n).is_some_and(|(_,d)|!d.is_empty()&&d.len()==a.len())
+                && a.iter().all(|e|scalar(e,symbols)) => true,
+            // Inquiries, as the bound `size(x)`, read only the descriptor.
+            Expr::Call(n,a) if matches!(n.as_str(),"size"|"lbound"|"ubound"|"len")
+                && a.iter().all(|e|matches!(e,Expr::Ident(_)|Expr::IntLit(_))) => true,
             Expr::Call(n,a)|Expr::Index(n,a)=>storage(n)&&a.iter().all(|e|ready(e,symbols)),
             Expr::Section{name,lower,upper,stride}=>storage(name)&&[lower,upper,stride].into_iter().flatten().all(|e|ready(e,symbols)),
             Expr::Bin(_,a,b)=>ready(a,symbols)&&ready(b,symbols),Expr::Un(_,a)=>ready(a,symbols),_=>true,

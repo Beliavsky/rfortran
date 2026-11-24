@@ -164,3 +164,50 @@ The standalone driver `tests/programs/xmomentum_compile_stats.f90` isolates a
 `kind_mod` and `statistics_mod` module interfaces; it is not a self-contained test.
 Use `tests/run_fve_compile_probes.py` with `--modules` and, for a gfortran
 comparison, `--reference-modules` pointing to the appropriate compiled interfaces.
+
+## Statistics-module programs
+
+Programs that call `print_stats` and its relatives from the Fortran 2015
+`statistics.f90` module specialize thousands of procedures into one main
+program. For `xarcsine.f90` (three source files), the main program reached
+about 900,000 Cranelift instructions with some 6,700 generated helper
+functions, and compilation took more than five minutes. Four costs were
+quadratic or nearly so:
+
+- The overflow-check pass (`integer_arithmetic` in the pass timings) found the
+  line number of each statement by counting newlines from the start of the
+  source, deep-copied the program at each nesting level while collecting
+  function types, and copied its type table for every IF and DO body. It now
+  indexes newline offsets once per source text and copies the table only for
+  bodies with declarations.
+- The definite-initialization pass (`initialized`) copied and merged the state
+  of every variable in scope at each branch, loop and BLOCK. Snapshots now share
+  a base map and record the names they change, so a merge or the return of a
+  BLOCK's state to its host costs the number of changed variables. After each
+  assignment to an array element with a constant subscript, it also scanned
+  every element to see whether the whole array was now defined, which made
+  element-by-element definition quadratic; it now scans only once enough
+  elements are defined.
+- Native code generation imported every procedure of the module into every
+  function it built. Procedures are now imported on their first call.
+- Cranelift's optimizer took over two minutes on the main program. Procedures of
+  250,000 or more instructions are compiled without optimization (they already
+  use the single-pass register allocator from 100,000 instructions).
+
+The compilation now takes about a minute. The remaining time is spread over
+source-level lowering, IR construction and code generation.
+
+The expanded calls also gave the main program hundreds of local arrays of a
+million elements, each in its own zero-initialized data block, and the image
+reached 2.2 GB, which Windows refuses to load. Main-program storage of 1 MiB or
+more is now allocated on the heap when its declaration is first reached, and
+keeps its value for the rest of the run, as the static block did; the
+executable is 12 MB.
+
+Larger programs of the same kind remain out of reach, because each call of a
+procedure with array or CHARACTER dummies is expanded in its caller. The main
+program of `xarch_1_sim.f90` (with `arch_sim.f90`) reaches about 28 million
+Cranelift instructions, beyond the 16,777,215 a Cranelift function can hold;
+the compiler reports this as a procedure too large to compile. Others exceed
+Cranelift's limit on the machine code of one function ("Code for function is
+too large").

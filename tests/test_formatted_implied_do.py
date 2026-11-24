@@ -23,6 +23,31 @@ class FormattedImpliedDo(unittest.TestCase):
             with self.subTest(variant=name):
                 self.check(program,'min max min max\n')
 
+    def test_function_call_after_assumed_shape_elements(self):
+        # Waiting for the dummy's storage left str(i) to be expanded before
+        # the statement, where its implied-DO variable is undefined.
+        program="""module m
+implicit none
+contains
+function str(i) result(s)
+integer,intent(in)::i
+character(len=20)::s
+write(s,"(i0)") i
+end function
+subroutine show(names,n)
+character(len=*),intent(in)::names(:)
+integer,intent(in)::n
+integer::i
+write(*,"(*(1x,a))") "var",(trim(names(i)),i=1,size(names)),("acf_"//trim(str(i)),i=1,n)
+write(*,"(*(1x,a))") (names(size(names)+1-i),i=1,size(names)),(str(2*i),i=1,n)
+end subroutine
+end module
+use m
+call show(["mean","sd  "],2)
+end
+"""
+        self.check(program,' var mean sd acf_1 acf_2\n sd   mean 2                    4\n')
+
     def test_heap_array_bounds_negative_stride_and_empty(self):
         source=(ROOT/'tests/programs/xacv_output_implied_do_bound.f90').read_text()
         self.check(source.replace('allocate(local(n))','allocate(local(-1:n-2))')

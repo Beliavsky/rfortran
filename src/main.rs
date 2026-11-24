@@ -358,7 +358,7 @@ fn compile_to_object(
             return Err(anyhow::anyhow!("compile failed"));
         }
     }
-    let program = integer_arithmetic::resolve(program,!args.nocheck,&src,&prepared.origins)
+    let program = compile_profile::run("integer_arithmetic", || integer_arithmetic::resolve(program,!args.nocheck,&src,&prepared.origins))
         .map_err(|e|source_diagnostics::report(e,&src,&tokens,input.to_str().unwrap_or("<unknown>"),Some(&prepared.origins)))?;
     let program = compile_profile::run("initialized", || initialized::instrument_with_origins(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"), &prepared.origins))?;
     let program = if args.nocheck { nocheck::strip(program) } else { program };

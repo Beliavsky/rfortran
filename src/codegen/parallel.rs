@@ -506,7 +506,7 @@ pub(super) fn emit(
                 wm.insert(
                     name.clone(),
                     FuncMeta {
-                        fref: module.declare_func_in_func(id, w.func),
+                        fref: LazyFuncRef::imported(module.declare_func_in_func(id, w.func)),
                         ret: meta.ret,
                         param_kinds: meta.param_kinds.clone(),
                         double: meta.double,
@@ -546,7 +546,7 @@ pub(super) fn emit(
         // would either fail or accidentally share a worker's reference slot.
         for (n,kind) in &worker_fields {
             let count=arrays.get(n).copied().unwrap_or(1);
-            let storage=fixed_storage(&mut w,module,count.checked_mul(8).context("record field size overflow")?,false)?;
+            let storage=fixed_storage(&mut w,module,count.checked_mul(8).context("record field size overflow")?,None)?;
             if arrays.contains_key(n) {wa.insert(n.clone(),count);}
             match kind {1=>{wr.insert(n.clone(),storage);},2=>{wb.insert(n.clone(),storage);},_=>{wi.insert(n.clone(),storage);}}
         }
