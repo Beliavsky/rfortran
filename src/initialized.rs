@@ -37,7 +37,69 @@ impl std::ops::Deref for SharedVariable {
 impl std::ops::DerefMut for SharedVariable {
     fn deref_mut(&mut self) -> &mut Variable { std::rc::Rc::make_mut(&mut self.0) }
 }
-type Env = BTreeMap<String, SharedVariable>;
+/// The variables in scope. Snapshots for branches and loops (`fork`) share a
+/// base map and keep their own updates in `delta`, which is folded into a new
+/// base when it grows. Each environment also records the names it changed
+/// since it was forked, so merging two snapshots and returning a BLOCK's
+/// changes to its host cost the number of changed variables, not the number
+/// in scope.
+#[derive(Clone, Default)]
+struct Env {
+    base: std::rc::Rc<BTreeMap<String, SharedVariable>>,
+    delta: BTreeMap<String, SharedVariable>,
+    changed: std::collections::BTreeSet<String>,
+    /// Names of heap-backed and of run-time-sized variables, which branches
+    /// and loops with run-time bounds treat specially.
+    heap: std::rc::Rc<Vec<String>>,
+    runtime_sized: std::rc::Rc<Vec<String>>,
+}
+impl Env {
+    fn new() -> Self { Self::default() }
+    fn get(&self, name: &str) -> Option<&SharedVariable> { self.delta.get(name).or_else(|| self.base.get(name)) }
+    fn contains_key(&self, name: &str) -> bool { self.delta.contains_key(name) || self.base.contains_key(name) }
+    fn get_mut(&mut self, name: &str) -> Option<&mut SharedVariable> {
+        if !self.delta.contains_key(name) {
+            let v = self.base.get(name)?.clone();
+            self.delta.insert(name.to_string(), v);
+        }
+        if !self.changed.contains(name) { self.changed.insert(name.to_string()); }
+        self.delta.get_mut(name)
+    }
+    fn insert(&mut self, name: String, v: SharedVariable) {
+        if v.heap_length.is_some() { std::rc::Rc::make_mut(&mut self.heap).push(name.clone()); }
+        if v.runtime_sized { std::rc::Rc::make_mut(&mut self.runtime_sized).push(name.clone()); }
+        self.changed.insert(name.clone());
+        self.delta.insert(name, v);
+    }
+    /// All variables in name order.
+    fn iter(&self) -> impl Iterator<Item = (&String, &SharedVariable)> {
+        self.delta.iter().chain(self.base.iter().filter(|(n, _)| !self.delta.contains_key(*n)))
+            .collect::<BTreeMap<_, _>>().into_iter()
+    }
+    /// A snapshot of the current state that records its own changes.
+    fn fork(&mut self) -> Env {
+        if self.delta.len() > 64 {
+            let mut base = (*self.base).clone();
+            base.extend(std::mem::take(&mut self.delta));
+            self.base = std::rc::Rc::new(base);
+        }
+        Env { base: self.base.clone(), delta: self.delta.clone(), changed: Default::default(),
+            heap: self.heap.clone(), runtime_sized: self.runtime_sized.clone() }
+    }
+    /// Continue from `next`, a snapshot forked from this environment.
+    fn adopt(&mut self, mut next: Env) {
+        // Insert the snapshot's few names into the longer history (`append`
+        // would rebuild the whole set).
+        let mut changed = std::mem::take(&mut self.changed);
+        for name in std::mem::take(&mut next.changed) { changed.insert(name); }
+        next.changed = changed;
+        *self = next;
+    }
+}
+impl<Q: AsRef<str> + ?Sized> std::ops::Index<&Q> for Env {
+    type Output = SharedVariable;
+    fn index(&self, name: &Q) -> &SharedVariable { self.get(name.as_ref()).expect("variable in scope") }
+}
 fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
 fn key(e: &Expr) -> Option<(&str, Option<&Expr>)> {
     match e {
@@ -175,7 +237,10 @@ fn write(name: &str, index: Option<&Expr>, env: &mut Env, out: &mut Vec<Stmt>, s
         if let Some(index) = index {
             if let Some(i) = constant(index) {
                 v.elements.insert(i, State::Yes);
-                if v.heap_length.is_none() && (1..=n).all(|i| v.elements.get(&i) == Some(&State::Yes)) { v.state = State::Yes; v.elements.clear(); }
+                // Scan for a complete definition only once there are enough
+                // elements: element-by-element definition was quadratic.
+                if v.heap_length.is_none() && v.elements.len() as i64 >= n
+                    && (1..=n).all(|i| v.elements.get(&i) == Some(&State::Yes)) { v.state = State::Yes; v.elements.clear(); }
             } else if v.state != State::Yes { v.state = State::Maybe; }
             let index = repeated_offset(index).unwrap_or_else(|| index.clone());
             out.push(Stmt::AssignIndex { name: v.flag.clone(), indices: vec![index], value: int(1) });
@@ -191,18 +256,23 @@ fn write(name: &str, index: Option<&Expr>, env: &mut Env, out: &mut Vec<Stmt>, s
         out.push(Stmt::Assign { name: v.flag.clone(), value: int(1) });
     }
 }
+/// The variables of `a`, each joined with its state in `b` when `b` has it.
+/// Both are snapshots forked from one state: a variable neither changed is
+/// the same in both.
 fn merge(a: &Env, b: &Env) -> Env {
     let mut result = a.clone();
-    for (name, v) in &mut result {
-        if let Some(other) = b.get(name) {
-            if std::rc::Rc::ptr_eq(&v.0, &other.0)
-                || (v.state == other.state && v.elements == other.elements) { continue; }
-            for i in v.elements.keys().chain(other.elements.keys()).copied().collect::<Vec<_>>() {
-                v.elements.insert(i, join(*a[name].elements.get(&i).unwrap_or(&a[name].state), *other.elements.get(&i).unwrap_or(&other.state)));
-            }
-            v.state = join(v.state, other.state);
+    let names: std::collections::BTreeSet<String> = a.changed.union(&b.changed).cloned().collect();
+    for name in &names {
+        let (Some(v), Some(other)) = (a.get(name), b.get(name)) else { continue };
+        if std::rc::Rc::ptr_eq(&v.0, &other.0)
+            || (v.state == other.state && v.elements == other.elements) { continue; }
+        let v = result.get_mut(name).unwrap();
+        for i in v.elements.keys().chain(other.elements.keys()).copied().collect::<Vec<_>>() {
+            v.elements.insert(i, join(*a[name].elements.get(&i).unwrap_or(&a[name].state), *other.elements.get(&i).unwrap_or(&other.state)));
         }
+        v.state = join(v.state, other.state);
     }
+    result.changed = names;
     result
 }
 fn possible_writes(body: &[Stmt], env: &mut Env) {
@@ -724,18 +794,20 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
             },
             Stmt::If { cond, then_body, else_body } => {
                 read(cond, env, &mut before, serial)?;
-                let mut a = env.clone(); let mut b = env.clone();
+                let mut a = env.fork(); let mut b = env.fork();
                 // Reads of heap storage under a runtime condition may never
                 // execute (for example IF (ALLOCATED(x)) PRINT *, x). Preserve
                 // the initialization mask and check only on the path taken.
                 if !matches!(cond, Expr::Logical(_)) {
+                    let unset: Vec<String> = env.heap.iter().filter(|n| env.get(n).is_some_and(|v| v.heap_length.is_some()
+                        && (v.state == State::No || v.elements.values().any(|state| *state == State::No))))
+                        .cloned().collect();
                     for branch in [&mut a, &mut b] {
-                        for v in branch.values_mut().filter(|v| v.heap_length.is_some()) {
+                        for name in &unset {
+                            let v = branch.get_mut(name).unwrap();
                             if v.state == State::No { v.state = State::Maybe; }
-                            if v.elements.values().any(|state| *state == State::No) {
-                                for state in v.elements.values_mut() {
-                                    if *state == State::No { *state = State::Maybe; }
-                                }
+                            for state in v.elements.values_mut() {
+                                if *state == State::No { *state = State::Maybe; }
                             }
                         }
                     }
@@ -751,7 +823,7 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 })();
                 if runtime { CONDITIONAL.with(|c| c.set(c.get() - 1)); }
                 branches?;
-                *env = match cond { Expr::Logical(true) => a, Expr::Logical(false) => b, _ => merge(&a, &b) };
+                env.adopt(match cond { Expr::Logical(true) => a, Expr::Logical(false) => b, _ => merge(&a, &b) });
             }
             Stmt::Do { var, start, end, body } => {
                 read(start, env, &mut before, serial)?; read(end, env, &mut before, serial)?;
@@ -762,13 +834,14 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     body.clear();
                 } else {
                     let covered = full_cover(var, start, end, body, env);
-                    let mut inner = env.clone(); possible_writes(body, &mut inner);
+                    let start_state = env.fork();
+                    let mut inner = env.fork(); possible_writes(body, &mut inner);
                     // A reduction over runtime-sized storage can execute zero
                     // iterations. Check its uninitialized elements only if read.
                     if constant(end).is_none() {
-                        for v in inner.values_mut() {
-                            if v.runtime_sized && v.state==State::No {v.state=State::Maybe;}
-                        }
+                        let unset: Vec<String> = inner.runtime_sized.iter().filter(|n| inner.get(n).is_some_and(|v| v.runtime_sized && v.state == State::No))
+                            .cloned().collect();
+                        for name in unset { inner.get_mut(&name).unwrap().state = State::Maybe; }
                     }
                     // A generated loop with runtime bounds, such as the copy
                     // of a zero-sized section, may run no iterations, like a
@@ -779,14 +852,15 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     let flowed = flow(body, &mut inner, result, serial);
                     if runtime { CONDITIONAL.with(|c| c.set(c.get() - 1)); }
                     flowed?;
-                    *env = merge(env, &inner);
+                    env.adopt(merge(&start_state, &inner));
                     for name in covered {
                         if let Some(v) = env.get_mut(&name) { v.state = State::Yes; v.elements.clear(); }
                     }
                 }
             }
             Stmt::DoWhile { cond, body } => {
-                let mut inner = env.clone(); possible_writes(body, &mut inner);
+                let start_state = env.fork();
+                let mut inner = env.fork(); possible_writes(body, &mut inner);
                 read(cond, &inner, &mut before, serial)?;
                 flow(body, &mut inner, result, serial)?;
                 // Check at the loop header so CYCLE cannot bypass a guard.
@@ -796,21 +870,21 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     before.append(body);
                     *body = std::mem::take(&mut before);
                 }
-                *env = merge(env, &inner);
+                env.adopt(merge(&start_state, &inner));
             }
             Stmt::SelectCase { expr, cases, default } => {
                 read(expr, env, &mut before, serial)?;
-                let original = env.clone();
-                let mut merged = if default.is_none() { Some(original.clone()) } else { None };
+                let mut original = env.fork();
+                let mut merged = if default.is_none() { Some(original.fork()) } else { None };
                 for case in cases {
-                    let mut branch = original.clone(); flow(&mut case.body, &mut branch, result, serial)?;
+                    let mut branch = original.fork(); flow(&mut case.body, &mut branch, result, serial)?;
                     merged = Some(merged.map_or(branch.clone(), |a| merge(&a, &branch)));
                 }
                 if let Some(body) = default {
-                    let mut branch = original; flow(body, &mut branch, result, serial)?;
+                    let mut branch = original.fork(); flow(body, &mut branch, result, serial)?;
                     merged = Some(merged.map_or(branch.clone(), |a| merge(&a, &branch)));
                 }
-                if let Some(merged) = merged { *env = merged; }
+                if let Some(merged) = merged { env.adopt(merged); }
             }
             Stmt::Block { body } => { scope(body, env, &[], None, serial, None)?; }
             Stmt::Function { name, params, body, .. } => { scope(body, &mut Env::new(), params, Some(name), serial, None)?; }
@@ -981,7 +1055,7 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
     }
     if let Some(name) = result { names.entry(name.into()).or_insert(None); }
     let mut heap_shapes=crate::allocatables::Shapes::new();scope_metadata(body,&mut heap_shapes);
-    let mut env = inherited.clone();
+    let mut env = inherited.fork();
     let mut prefix = Vec::new();
     let mut unstable = std::collections::BTreeSet::new();
     undefining(body, &mut unstable);
@@ -1019,7 +1093,12 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
         if elsewhere { CONDITIONAL.with(|c| c.set(c.get() - 1)); }
         checked?;
     } }
-    for (name, value) in inherited { if !declared.contains(name) { if let Some(v) = env.get(name) { *value = v.clone(); } } }
+    // Return the changes to host variables.
+    let changed: Vec<String> = env.changed.iter().cloned().collect();
+    for name in changed {
+        if declared.contains(&name) || !inherited.contains_key(&name) { continue; }
+        if let Some(v) = env.get(&name).cloned() { inherited.insert(name, v); }
+    }
     if let Some(capture) = capture { capture.extend(env.iter().map(|(name,v)|(name.clone(),v.flag.clone()))); }
     prefix.append(body); *body = prefix;
     Ok(())
@@ -1143,6 +1222,36 @@ pub(crate) fn instrument_with_origins(program: Program, source: &str, filename: 
 
 #[cfg(test)]
 mod tests {
+    use super::{merge, Env, SharedVariable, State, Variable};
+    fn variable(state: State) -> SharedVariable {
+        SharedVariable(std::rc::Rc::new(Variable { zero_sized: false, flag: "@f".into(), extent: None, state,
+            elements: Default::default(), runtime_sized: false, heap_length: None, heap_allocated: None,
+            element_width: 1, character_length: None, stable: true }))
+    }
+    #[test]
+    fn snapshots_share_a_base_and_merge_their_changes() {
+        let mut host = Env::new();
+        for name in ["a", "b", "c"] { host.insert(name.into(), variable(State::No)); }
+        // Branches of one base: only their changed variables are joined.
+        let (mut then, mut other) = (host.fork(), host.fork());
+        then.get_mut("a").unwrap().state = State::Yes;
+        then.get_mut("b").unwrap().state = State::Yes;
+        other.get_mut("b").unwrap().state = State::Yes;
+        other.insert("local".into(), variable(State::Yes));
+        let joined = merge(&then, &other);
+        let state = |env: &Env, name: &str| env.get(name).map(|v| v.state);
+        assert!(state(&joined, "a") == Some(State::Maybe) && state(&joined, "b") == Some(State::Yes));
+        assert!(state(&joined, "c") == Some(State::No) && state(&joined, "local").is_none());
+        assert_eq!(joined.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["a", "b", "c"]);
+        // The host continues from the merge and keeps its earlier changes.
+        host.adopt(joined);
+        assert!(host.changed.iter().map(String::as_str).eq(["a", "b", "c", "local"]));
+        // Folding a large delta into the base keeps the variables.
+        for i in 0..100 { host.insert(format!("v{i:03}"), variable(State::Yes)); }
+        let snapshot = host.fork();
+        assert!(snapshot.delta.is_empty() && snapshot.changed.is_empty() && snapshot.get("v099").is_some());
+        assert!(state(&snapshot, "a") == Some(State::Maybe));
+    }
     #[test]
     fn runtime_guards_keep_original_statement_lines() {
         let source = "! comment\nimplicit none\ninteger :: n,i,a(3),x\nread(*,*) n\ndo i=1,n\na(i)=7\nend do\nif(n>0) then\nx=7\nend if\nprint *, sum(a)\nprint *, a\nprint *, x\nblock\nprint *, sum(a)\nend block\nend";
