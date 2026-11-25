@@ -45,7 +45,7 @@ class MergeWarnings(unittest.TestCase):
         self.assertEqual(code, 0, stderr)
         self.assertEqual(stderr.count('[merge-guard]'), 2, stderr)
         self.assertNotIn('[merge-evaluation]', stderr)
-        self.assertIn('the TSOURCE argument of MERGE uses `i`, which the mask tests, in a subscript or divisor', stderr)
+        self.assertIn('the TSOURCE argument of MERGE uses `i`, which the mask tests, in a subscript, a divisor or the argument of an intrinsic such as SQRT', stderr)
         self.assertIn('the TSOURCE argument of MERGE uses `x`', stderr)
         self.assertIn('example.f90:8:', stderr)
         self.assertIn('example.f90:9:', stderr)

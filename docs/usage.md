@@ -738,8 +738,10 @@ The standard allows MERGE to evaluate both TSOURCE and FSOURCE, whatever
 MASK is, and gfortran does. [`-Wmerge-guard`](../warnings/merge-guard.f90), in `-Wall`, warns about an
 argument that may be invalid when the mask does not select it, because the
 mask tests what the argument depends on: `merge(a(i), 0, i > 0)` (a
-subscript), `merge(1/n, 0, n /= 0)` (a divisor), and `merge(x, 0.0,
-present(x))` (PRESENT, ASSOCIATED or ALLOCATED). A name used in a subscript
+subscript), `merge(1/n, 0, n /= 0)` (a divisor, including the P argument of
+MOD and MODULO), `merge(sqrt(x), 0.0, x > 0)` (the argument of SQRT, LOG,
+LOG10, ASIN, ACOS, ACOSH or ATANH), and `merge(x, 0.0, present(x))`
+(PRESENT, ASSOCIATED or ALLOCATED). A name used in a subscript
 of the mask itself, as `i` in `merge(a(i), 0, a(i) > 0)`, does not count.
 [`-Wmerge-evaluation`](../warnings/merge-evaluation.f90), opt-in, warns about an argument that computes
 something, such as `x + 1`, `-x` or `f(x)`, which is computed even when it is

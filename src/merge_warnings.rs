@@ -11,7 +11,8 @@
 //! `merge(1/n, 0, n /= 0)`. MASK tests a name with PRESENT, ASSOCIATED or
 //! ALLOCATED, or compares it; an argument that references a name tested
 //! with PRESENT, ASSOCIATED or ALLOCATED, or that uses a compared name in a
-//! subscript or a divisor, is reported.
+//! subscript, a divisor, or the argument of an intrinsic with a restricted
+//! domain, as in `merge(sqrt(x), 0.0, x > 0)`, is reported.
 //!
 //! `-Wmerge-evaluation`, opt-in: an argument that computes something, which
 //! is computed even when MASK does not select it. Constants, variables,
@@ -201,7 +202,8 @@ impl Context<'_> {
     /// The name in `e` that `mask` tests, if `e` depends on it in a way that
     /// is invalid when the test fails: a name tested with PRESENT,
     /// ASSOCIATED or ALLOCATED, or a compared name in a subscript of an
-    /// array or a divisor.
+    /// array, a divisor, or the argument of an intrinsic with a restricted
+    /// domain.
     fn guarded(&self, e: &Expr, mask: &Expr, scope: &Scope) -> Option<(String, &'static str)> {
         let mut inquired = vec![];
         let mut compared = vec![];
@@ -218,14 +220,34 @@ impl Context<'_> {
         compared.into_iter().find(|c| sensitive.contains(c)).map(|c| (c, "compares"))
     }
 
-    /// The names used in subscripts of arrays and in divisors.
+    /// The names used in subscripts of arrays, in divisors, and in the
+    /// arguments of intrinsics invalid for some values, as SQRT and LOG.
     fn sensitive(&self, e: &Expr, scope: &Scope, out: &mut Vec<String>) {
         match e {
             Expr::Call(n, args) | Expr::Index(n, args) => {
                 let element = !n.starts_with('@') && self.array(n, scope) == Some(true);
-                for a in args {
-                    if element {
-                        names(a, out);
+                // The restricted argument: the first, or the divisor P of MOD
+                // and MODULO. A procedure of the file may reuse the name.
+                let restricted = if self.procedures.contains(n.as_str()) || scope.arrays.contains(n.as_str()) { None } else {
+                    match n.as_str() {
+                        "sqrt" | "log" | "log10" | "asin" | "acos" | "acosh" | "atanh" => Some(0),
+                        "mod" | "modulo" => Some(1),
+                        _ => None,
+                    }
+                };
+                for (i, a) in args.iter().enumerate() {
+                    let (keyword, value) = match a {
+                        Expr::Call(k, v) if k.starts_with("@keyword:") && v.len() == 1 => (Some(&k["@keyword:".len()..]), &v[0]),
+                        a => (None, a),
+                    };
+                    let position = match keyword {
+                        Some("x" | "a") => Some(0),
+                        Some("p") => Some(1),
+                        Some(_) => None,
+                        None => Some(i),
+                    };
+                    if element || (restricted.is_some() && position == restricted) {
+                        names(value, out);
                     }
                     self.sensitive(a, scope, out);
                 }
@@ -423,7 +445,7 @@ pub(crate) fn check(
         let (file, at) = locate(crate::leak_warnings::span(src, &tokens, r.offset, Some("merge")));
         let (message, label) = match &r.tested {
             Some((name, "compares")) => (
-                format!("the {} argument of MERGE uses `{name}`, which the mask tests, in a subscript or divisor; the standard allows the argument to be evaluated even when the mask does not select it [{GUARD}]", r.argument),
+                format!("the {} argument of MERGE uses `{name}`, which the mask tests, in a subscript, a divisor or the argument of an intrinsic such as SQRT; the standard allows the argument to be evaluated even when the mask does not select it [{GUARD}]", r.argument),
                 "may be evaluated when invalid",
             ),
             Some((name, how)) => (
@@ -472,6 +494,17 @@ mod tests {
 end
 ")).is_empty());
         assert_eq!(found("subroutine s(a, i)\ninteger :: a(:), i\nprint *, merge(a(i), -1, i >= 1 .and. i <= size(a))\nend subroutine\n"), [("merge-guard", "TSOURCE")]);
+        // Arguments of intrinsics with restricted domains.
+        assert_eq!(found(&format!("{decl}print *, merge(sqrt(x), 0.0, x > 0)\nend\n")), [("merge-guard", "TSOURCE")]);
+        assert_eq!(found(&format!("{decl}print *, merge(fsource=log(x), tsource=0.0, mask=x <= 0)\nend\n")), [("merge-guard", "FSOURCE")]);
+        assert_eq!(found(&format!("{decl}print *, merge(mod(i, n), 0, n /= 0)\nend\n")), [("merge-guard", "TSOURCE")]);
+        assert_eq!(found(&format!("{decl}print *, merge(asin(x=x), 0.0, abs(x) <= 1)\nend\n")), [("merge-guard", "TSOURCE")]);
+        // Only the divisor of MOD, and only a compared name.
+        assert_eq!(found(&format!("{decl}print *, merge(mod(n, 2), 0, n > 0)\nend\n")), [("merge-evaluation", "TSOURCE")]);
+        assert_eq!(found(&format!("{decl}print *, merge(sqrt(x), 0.0, i > 0)\nend\n")), [("merge-evaluation", "TSOURCE")]);
+        // A procedure of the file with an intrinsic's name.
+        assert_eq!(found("print *, merge(sqrt(i), 0, i > 0)\ncontains\ninteger function sqrt(k)\ninteger :: k\nsqrt = k\nend function\nend\n"),
+                   [("merge-evaluation", "TSOURCE")]);
     }
 
     #[test]
@@ -482,7 +515,7 @@ end
             assert!(found(&format!("{decl}print *, {simple}\nend\n")).is_empty(), "{simple}");
         }
         assert_eq!(found(&format!("{decl}print *, merge(x+1, x, i > 1)\nend\n")), [("merge-evaluation", "TSOURCE")]);
-        assert_eq!(found(&format!("{decl}print *, merge(fsource=sqrt(x), tsource=0.0, mask=x < 0)\nend\n")), [("merge-evaluation", "FSOURCE")]);
+        assert_eq!(found(&format!("{decl}print *, merge(fsource=sqrt(x), tsource=0.0, mask=i < 0)\nend\n")), [("merge-evaluation", "FSOURCE")]);
         assert_eq!(found(&format!("{decl}print *, merge(a(i+1), 0, x > 0)\nend\n")), [("merge-evaluation", "TSOURCE")]);
     }
 }
