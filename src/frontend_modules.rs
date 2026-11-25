@@ -144,6 +144,7 @@ mod section_bounds_warnings;
 mod io_warnings;
 mod allocatable_warnings;
 mod target_warnings;
+mod associate_warnings;
 mod saved_storage;
 mod suffix_warnings;
 mod leak_warnings;

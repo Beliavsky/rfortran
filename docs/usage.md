@@ -700,6 +700,23 @@ is not in the file). Uses in internal procedures count. Disable with
 `-Wno-unneeded-target`, promote with `-Werror=unneeded-target`, or use
 `!#allow(unneeded-target)` / `!#deny(unneeded-target)`.
 
+[`-Wcould-be-associate`](../warnings/could-be-associate.f90) is opt-in and enabled by `-Wextra`. It
+reports a POINTER that is associated once, with a variable or a part of one,
+and then only used for that variable, as in `p => a(i)`: it could be the name
+of an ASSOCIATE construct, `associate (p => a(i))`, which cannot be associated
+again or left dangling, and whose selector does not need TARGET. The check
+covers local variables of the main program and of procedures, other than dummy
+arguments, function results and saved or initialized pointers. The scope must
+associate the pointer in exactly one statement, at its top level rather than
+in a loop or IF, with a variable, element, section or component, and must not
+use the pointer before it. Nullifying, allocating or deallocating the pointer,
+ASSOCIATED, using it as a target, passing it to a procedure whose dummy may be
+POINTER or TARGET (any procedure whose interface is not in the file), COMMON,
+a use in an internal procedure and GO TO in the scope prevent the warning.
+ASSOCIATE is Fortran 2003, so `-std=f95` turns the warning off. Disable with
+`-Wno-could-be-associate`, promote with `-Werror=could-be-associate`, or use
+`!#allow(could-be-associate)` / `!#deny(could-be-associate)`.
+
 [`-Wrecursive-io`](../warnings/recursive-io.f90) is **on by default**. It warns about an input/output
 statement in a procedure that a function referenced by another input/output
 statement can reach, directly or through the procedures it calls, when both

@@ -69,11 +69,11 @@ pub(crate) fn names(e: &Expr, p: &str) -> bool {
     found
 }
 
-fn whole(e: &Expr, p: &str) -> bool {
+pub(crate) fn whole(e: &Expr, p: &str) -> bool {
     matches!(e, Expr::Ident(n) if n == p)
 }
 
-fn is_null(e: &Expr) -> bool {
+pub(crate) fn is_null(e: &Expr) -> bool {
     matches!(e, Expr::Call(n, args) if n.eq_ignore_ascii_case("null") && args.is_empty())
 }
 
@@ -89,9 +89,9 @@ pub(crate) struct Context<'a> {
 /// How a candidate is used.
 #[derive(Default)]
 pub(crate) struct Uses {
-    allocated: bool,
-    associated: bool,
-    nullified: bool,
+    pub(crate) allocated: bool,
+    pub(crate) associated: bool,
+    pub(crate) nullified: bool,
     /// A use that needs a POINTER, or that may associate a pointer with
     /// the variable.
     pub(crate) pointer: bool,
@@ -256,7 +256,7 @@ fn candidates(body: &[Stmt], scope: Scope, params: &[String]) -> Vec<(String, us
 }
 
 /// Whether the declaration of `p` at `at` initializes it with `=>`.
-fn initialized(src: &str, tokens: &[Token], at: usize, p: &str) -> bool {
+pub(crate) fn initialized(src: &str, tokens: &[Token], at: usize, p: &str) -> bool {
     let ts = crate::declaration_warnings::statement_tokens(tokens, at, usize::MAX, src);
     let Some(i) = ts.iter().position(|t| matches!(&t.kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case(p))) else { return false };
     let mut depth = 0;
