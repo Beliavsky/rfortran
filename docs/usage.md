@@ -684,6 +684,22 @@ initialization, to declare it `allocatable, save`. Disable with
 `-Wno-could-be-allocatable`, promote with `-Werror=could-be-allocatable`, or
 use `!#allow(could-be-allocatable)` / `!#deny(could-be-allocatable)`.
 
+[`-Wunneeded-target`](../warnings/unneeded-target.f90) is opt-in and enabled by `-Wextra`. It
+reports a TARGET variable that no pointer is associated with. TARGET tells the
+compiler that a pointer may alias the variable, which can prevent
+optimization, and tells a reader to look for that pointer. The check covers
+local variables of the main program and of procedures and PRIVATE module
+variables, other than dummy arguments (whose TARGET attribute is part of the
+interface) and function results. A use that may associate a pointer with the
+variable or a part of it prevents the warning: the target of `=>` (including a
+pointer initializer and an ASSOCIATE selector), ASSOCIATED with two
+arguments, C_LOC, C_FUNLOC and LOC, COMMON and EQUIVALENCE, and the variable
+or a part of it as an actual argument of a structure constructor or of a
+procedure whose dummy may be POINTER or TARGET (any procedure whose interface
+is not in the file). Uses in internal procedures count. Disable with
+`-Wno-unneeded-target`, promote with `-Werror=unneeded-target`, or use
+`!#allow(unneeded-target)` / `!#deny(unneeded-target)`.
+
 [`-Wrecursive-io`](../warnings/recursive-io.f90) is **on by default**. It warns about an input/output
 statement in a procedure that a function referenced by another input/output
 statement can reach, directly or through the procedures it calls, when both

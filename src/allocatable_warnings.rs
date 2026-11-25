@@ -29,9 +29,9 @@ const CATEGORY: &str = "could-be-allocatable";
 
 /// For each procedure name, its dummy arguments and those that are POINTER
 /// or TARGET; None when several procedures have the name.
-type Signatures = HashMap<String, Option<(Vec<String>, HashSet<String>)>>;
+pub(crate) type Signatures = HashMap<String, Option<(Vec<String>, HashSet<String>)>>;
 
-fn signatures(body: &[Stmt], out: &mut Signatures, generics: &mut HashMap<String, Vec<String>>) {
+pub(crate) fn signatures(body: &[Stmt], out: &mut Signatures, generics: &mut HashMap<String, Vec<String>>) {
     for s in body {
         match s {
             Stmt::Function { name, params, body, .. } | Stmt::Subroutine { name, params, body, .. } => {
@@ -56,14 +56,14 @@ fn signatures(body: &[Stmt], out: &mut Signatures, generics: &mut HashMap<String
     }
 }
 
-fn root(e: &Expr) -> Option<&str> {
+pub(crate) fn root(e: &Expr) -> Option<&str> {
     match e {
         Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) | Expr::Section { name: n, .. } => Some(n.split('%').next().unwrap_or(n)),
         _ => None,
     }
 }
 
-fn names(e: &Expr, p: &str) -> bool {
+pub(crate) fn names(e: &Expr, p: &str) -> bool {
     let mut found = false;
     crate::procedure_arguments::visit_expr(&mut e.clone(), &mut |e| found |= root(e) == Some(p));
     found
@@ -77,20 +77,24 @@ fn is_null(e: &Expr) -> bool {
     matches!(e, Expr::Call(n, args) if n.eq_ignore_ascii_case("null") && args.is_empty())
 }
 
-struct Context<'a> {
-    signatures: &'a Signatures,
-    generics: &'a HashMap<String, Vec<String>>,
-    arrays: &'a HashSet<String>,
+pub(crate) struct Context<'a> {
+    pub(crate) signatures: &'a Signatures,
+    pub(crate) generics: &'a HashMap<String, Vec<String>>,
+    pub(crate) arrays: &'a HashSet<String>,
+    /// Whether an element, section or component of the variable, not only
+    /// the whole variable, can be associated with a dummy: true for TARGET.
+    pub(crate) parts: bool,
 }
 
 /// How a candidate is used.
 #[derive(Default)]
-struct Uses {
+pub(crate) struct Uses {
     allocated: bool,
     associated: bool,
     nullified: bool,
-    /// A use that needs a POINTER.
-    pointer: bool,
+    /// A use that needs a POINTER, or that may associate a pointer with
+    /// the variable.
+    pub(crate) pointer: bool,
 }
 
 impl Context<'_> {
@@ -115,7 +119,7 @@ impl Context<'_> {
                 Some((k, v)) => (Some(k), v),
                 None => (None, a),
             };
-            if !whole(value, p) { continue; }
+            if !(whole(value, p) || self.parts && root(value) == Some(p)) { continue; }
             if procedure == "associated" {
                 if args.len() == 1 { uses.associated = true } else { uses.pointer = true }
             } else if !(crate::leak_warnings::INTRINSICS.contains(&procedure) || self.arrays.contains(procedure) && !self.signatures.contains_key(procedure)
@@ -125,7 +129,7 @@ impl Context<'_> {
         }
     }
 
-    fn scan(&self, body: &[Stmt], p: &str, uses: &mut Uses) {
+    pub(crate) fn scan(&self, body: &[Stmt], p: &str, uses: &mut Uses) {
         for s in body {
             match s {
                 Stmt::CallSub { name, args } if name == "@pointer_associate" => {
@@ -153,6 +157,18 @@ impl Context<'_> {
             for b in crate::procedure_arguments::children(&mut copy) {
                 self.scan(b, p, uses);
             }
+        }
+    }
+}
+
+/// The names of the arrays declared anywhere in a body.
+pub(crate) fn arrays(body: &[Stmt], out: &mut HashSet<String>) {
+    for s in body {
+        match s {
+            Stmt::ArrayDecl { name, .. } => { out.insert(name.clone()); }
+            Stmt::DerivedDecl { names, dims, .. } if !dims.is_empty() => out.extend(names.iter().cloned()),
+            Stmt::Module { body, .. } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => arrays(body, out),
+            _ => {}
         }
     }
 }
@@ -287,19 +303,9 @@ fn analyze(program: &Program) -> Vec<Report> {
     let mut signatures_ = Signatures::new();
     let mut generics = HashMap::new();
     signatures(&program.body, &mut signatures_, &mut generics);
-    fn arrays(body: &[Stmt], out: &mut HashSet<String>) {
-        for s in body {
-            match s {
-                Stmt::ArrayDecl { name, .. } => { out.insert(name.clone()); }
-                Stmt::DerivedDecl { names, dims, .. } if !dims.is_empty() => out.extend(names.iter().cloned()),
-                Stmt::Module { body, .. } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => arrays(body, out),
-                _ => {}
-            }
-        }
-    }
     let mut array_names = HashSet::new();
     arrays(&program.body, &mut array_names);
-    let ctx = Context { signatures: &signatures_, generics: &generics, arrays: &array_names };
+    let ctx = Context { signatures: &signatures_, generics: &generics, arrays: &array_names, parts: false };
     let mut out = vec![];
     let external = |s: &Stmt| matches!(s, Stmt::Function { name, .. } | Stmt::Subroutine { name, .. } if !program.contains.contains(name));
     let main: Vec<Stmt> = program.body.iter().filter(|s| !matches!(s, Stmt::Module { .. }) && !external(s)).cloned().collect();
