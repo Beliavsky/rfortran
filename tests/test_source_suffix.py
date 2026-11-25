@@ -47,6 +47,11 @@ class SourceSuffix(unittest.TestCase):
                 self.assertFalse(warned("p.f08", *options), options)
             result = self.rfort(d, "-Werror=source-suffix", "check", "p.f08")
             self.assertNotEqual(result.returncode, 0)
+            # -Weverything implies -Wall; repeated switches are accepted.
+            for options in (["--Wall", "--Wextra", "--Weverything"], ["-Wall", "-Wall", "--Werror", "-Werror"]):
+                result = self.rfort(d, *options, "check", "s.f90")
+                self.assertEqual(result.returncode, 0, (options, result.stderr))
+            self.assertIn("rename the file to `p.f90`", self.rfort(d, "--Wall", "-Weverything", "check", "p.f08").stderr)
 
 
 if __name__ == "__main__":

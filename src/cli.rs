@@ -270,6 +270,10 @@ impl Cli {
                 _ => args.push(arg),
             }
         }
+        // As in gfortran, repeating a switch has no further effect; clap
+        // rejects repeats, including the -Wall that -Weverything implies.
+        let mut seen = std::collections::HashSet::new();
+        args.retain(|a| !matches!(a.to_str(), Some("--Wall" | "--Werror" | "--nocheck")) || seen.insert(a.clone()));
         args
     }
 
