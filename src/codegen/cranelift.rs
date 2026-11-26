@@ -3672,7 +3672,8 @@ fn gen_stmts(
                     let id = module.declare_data(".f90c.random_state", Linkage::Local, true, false)?;
                     let global = module.declare_data_in_func(id, b.func);
                     let address = b.ins().global_value(ptr_ty, global);
-                    let seed = b.ins().iconst(types::I64, 1);
+                    // A fresh seed for each run, as in gfortran.
+                    let seed = file_io::call(module, b, "rfort_random_seed", &[], types::I64)?;
                     b.ins().store(MemFlags::new(), seed, address, 0);
                     continue;
                 }

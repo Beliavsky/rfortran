@@ -10,6 +10,26 @@ class IntrinsicKeywords(unittest.TestCase):
     def test_random_seed_reproducer(self):
         self.check((ROOT/'tests/programs/xrandom_seed.f90').read_text(encoding='utf-8'),'T T T\n')
 
+    def test_random_seed_without_arguments_differs_between_runs(self):
+        # As in gfortran, RANDOM_SEED() picks a fresh seed; without any
+        # RANDOM_SEED call the stream repeats.
+        import subprocess, tempfile
+        from test_record_read import COMPILER
+        fresh = "integer :: i(4)\nreal :: x(4)\ncall random_seed()\ncall random_number(x)\ni = int(1e6*x)\nprint *, i\nend\n"
+        fixed = "integer :: i(4)\nreal :: x(4)\ncall random_number(x)\ni = int(1e6*x)\nprint *, i\nend\n"
+        with tempfile.TemporaryDirectory(prefix='random-seed-') as tmp:
+            for name, source, repeats in [('fresh', fresh, False), ('fixed', fixed, True)]:
+                path = f"{tmp}/{name}.f90"
+                with open(path, 'w') as f:
+                    f.write(source)
+                exe = f"{tmp}/{name}.exe"
+                subprocess.run([COMPILER, '--quiet', path, '-o', exe], check=True, timeout=120)
+                for command in ([exe], [COMPILER, 'run', path]):
+                    runs = [subprocess.run(command, capture_output=True, text=True, timeout=60).stdout for _ in range(2)]
+                    with self.subTest(program=name, command=command[0]):
+                        self.assertTrue(runs[0].strip())
+                        self.assertEqual(runs[0] == runs[1], repeats, runs)
+
     def test_seed_array_expression(self):
         self.check((ROOT/'tests/programs/xrandom_seed_expression.f90').read_text(encoding='utf-8'),'T\n')
 

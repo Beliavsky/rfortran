@@ -2399,7 +2399,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         }
                         idx+=1;continue;
                     }
-                    if name.eq_ignore_ascii_case("random_seed") && !funcs.contains_key(name) { RANDOM_STATE.with(|s| s.set(1)); idx += 1; continue; }
+                    if name.eq_ignore_ascii_case("random_seed") && !funcs.contains_key(name) { RANDOM_STATE.with(|s| s.set(crate::timing::rfort_random_seed() as u64)); idx += 1; continue; }
                     if name == "@date_snapshot" {
                         let values = crate::calendar::snapshot();
                         let Expr::Index(array, _) = &args[0] else {panic!("invalid calendar snapshot buffer")};

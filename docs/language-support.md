@@ -5126,7 +5126,8 @@ including arithmetic, constructors, sections and PACK; GET requires writable
 storage. Expressions use the same array materialization as other procedure
 inputs. `tests/programs/xrandom_seed_expression.f90` compares expression and variable inputs.
 GET can save the current stream for restoration with PUT.
-The no-argument form retains its deterministic reset. `tests/programs/xrandom_seed.f90` checks
+The no-argument form chooses a different seed on each run, as gfortran does;
+PUT gives a repeatable stream. `tests/programs/xrandom_seed.f90` checks
 stream restoration and output range; `tests/test_intrinsic_keywords.py` checks
 keyword association and seed argument/intent diagnostics.
 
