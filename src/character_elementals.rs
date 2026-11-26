@@ -189,7 +189,7 @@ impl Lower {
                     format!("cannot specialize array argument `{n}`: its extent must be known at this function call")
                 })?;
                 let active=crate::allocatables::length(n,symbols).filter(|e|crate::parameters::integer_constant(e).is_err());
-                if active.is_some() && symbols.contains_key(&format!("@heap:{n}")) {bail!("content-dependent CHARACTER results currently require a bounded input array");}
+                if active.is_some() && symbols.contains_key(&format!("@heap:{n}")) {bail!("content-dependent CHARACTER results currently require a bounded input array, not the allocatable `{}`",crate::source_diagnostics::user_names(n));}
                 Ok(Value { active:if count==0 {None}else{active},
                     kind: kind.clone(),
                     items: Some(
@@ -800,6 +800,18 @@ impl Lower {
             prefix.push(Stmt::CallSub{name:helper.clone(),args:actuals});
             *e=value;
             return Ok(());
+        }
+        // An ELEMENTAL call with array actuals of run-time extent, as
+        // `same(w(2:), w(:n-1))` with an ALLOCATABLE `w`: a loop over the
+        // elements, since their values cannot be enumerated here.
+        if routine.elemental && args.iter().any(|a|array(a,symbols) && runtime(a,symbols)) {
+            for (n,(elemental,kind)) in &self.returns {
+                symbols.insert(format!("@function:{n}"),(kind.clone(),vec![]));
+                if *elemental {symbols.insert(format!("@elemental_function:{n}"),(kind.clone(),vec![]));}
+            }
+            let mut call=Expr::Call(name.clone(),args.clone());
+            if crate::vector_subscripts::elemental_function(&mut call,symbols,prefix,&mut self.serial,
+                (&routine.params,&routine.body,&routine.result,&routine.kind))? {*e=call;return Ok(());}
         }
         for arg in args.iter_mut() {crate::constructors::fixed_expression(arg,symbols)?;}
         let views = args
@@ -1887,11 +1899,12 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                                     || matches!(s, Stmt::ArrayDecl {kind,name,..} if name == param && input(kind)))
                                 && body.iter().any(|s| matches!(s, Stmt::DummyIntent {name,intent} if name == param && matches!(intent.as_str(),"intent(in)"|"intent(out)"|"intent(inout)"|"value")))
                                 && !body.iter().any(|s| matches!(s, Stmt::DummyIntent {name,intent} if name == param && matches!(intent.as_str(), "optional" | "pointer")))
-                                // Numeric ALLOCATABLE dummies use the same
-                                // descriptor association as subroutine calls,
-                                // including unallocated actuals and their bounds.
+                                // Numeric and fixed-length CHARACTER ALLOCATABLE
+                                // array dummies use the same descriptor
+                                // association as subroutine calls, including
+                                // unallocated actuals and their bounds.
                                 && (!body.iter().any(|s| matches!(s,Stmt::DummyIntent{name,intent} if name==param && intent=="allocatable"))
-                                    || body.iter().any(|s| matches!(s,Stmt::ArrayDecl{name,kind,..} if name==param && numeric(kind))))
+                                    || body.iter().any(|s| matches!(s,Stmt::ArrayDecl{name,kind,..} if name==param && (numeric(kind) || matches!(kind,TypeSpec::Character(Some(_)))))))
                             });
                         let descriptor_call = descriptor.then(|| format!("@array_function${name}"));
                         if let Some(helper) = &descriptor_call {

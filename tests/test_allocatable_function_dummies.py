@@ -1,4 +1,4 @@
-"""Function argument association retains numeric allocation descriptors."""
+"""Function argument association retains numeric and CHARACTER allocation descriptors."""
 import unittest
 import test_deallocate
 from test_record_read import ROOT
@@ -203,6 +203,59 @@ n=fill(x,0)
 print *,n,allocated(x),size(x)
 end
 ''', '3 5 5 5\n0 T 0\n')
+
+    def test_character_arrays_and_records_with_character_components(self):
+        # ALLOCATABLE CHARACTER array dummies, directly and as the component
+        # of a record, keep their allocation state and values.
+        self.check('''module m
+implicit none
+type :: contract
+character(len=10) :: stock
+real :: strike
+end type
+type :: portfolio
+type(contract), allocatable :: opt(:)
+end type
+contains
+integer function count_words(s) result(n)
+character(len=10), allocatable, intent(in) :: s(:)
+n = -1
+if (allocated(s)) n = size(s)
+end function
+function first_word(s) result(w)
+character(len=10), allocatable, intent(in) :: s(:)
+character(len=10) :: w
+w = "none"
+if (allocated(s)) then
+   if (size(s) > 0) w = s(1)
+end if
+end function
+integer function num_opt(xx) result(nopt)
+type(portfolio), intent(in) :: xx
+if (allocated(xx%opt)) then
+   nopt = size(xx%opt)
+else
+   nopt = -1
+end if
+end function
+subroutine report(xx)
+type(portfolio), intent(in) :: xx
+print *, num_opt(xx)
+end subroutine
+end module
+use m
+character(len=10), allocatable :: w(:), v(:)
+type(portfolio) :: yy, zz
+allocate (w(3))
+w = ["alpha", "beta ", "gamma"]
+print *, count_words(w), count_words(v)
+print *, trim(first_word(w)), " ", trim(first_word(v))
+allocate (yy%opt(2))
+yy%opt%stock = ["ab", "cd"]
+call report(yy)
+call report(zz)
+end
+''', ' 3 -1\n alpha none\n 2\n -1\n')
 
     def test_reject_expression_as_allocatable_actual(self):
         self.reject('''module m

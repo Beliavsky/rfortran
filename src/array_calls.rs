@@ -1283,6 +1283,7 @@ fn specialize(
                 else_body,
             } => {
                 rewrite(cond, shapes, constants, absent)?;
+                fold_logical(cond);
                 if let Expr::Logical(value) = cond {
                     let mut chosen = if *value {
                         std::mem::take(then_body)
@@ -2722,6 +2723,30 @@ fn expand(
     })();
     result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
 }
+/// Fold `.and.` and `.or.` with a constant operand, as `debug .and. x < 0`
+/// with `debug` a `.false.` PARAMETER, so that specialization drops a branch
+/// that cannot run. The standard lets the other operand go unevaluated.
+fn fold_logical(e: &mut Expr) {
+    match e {
+        Expr::Un(crate::ast::UnOp::Not, a) => {
+            fold_logical(a);
+            if let Expr::Logical(v) = **a { *e = Expr::Logical(!v); }
+        }
+        Expr::Bin(op @ (BinOp::And | BinOp::Or), a, b) => {
+            fold_logical(a);
+            fold_logical(b);
+            let and = matches!(op, BinOp::And);
+            let folded = match (&**a, &**b) {
+                (Expr::Logical(v), _) | (_, Expr::Logical(v)) if *v != and => Some(Expr::Logical(*v)),
+                (Expr::Logical(_), other) | (other, Expr::Logical(_)) => Some(other.clone()),
+                _ => None,
+            };
+            if let Some(f) = folded { *e = f; }
+        }
+        _ => {}
+    }
+}
+
 pub fn resolve(mut p: Program) -> Result<Program> {
     p = crate::compile_profile::run("crate::allocatables::hoist_array_results", || crate::allocatables::hoist_array_results(p))?;
     p = crate::compile_profile::run("crate::input_items::prepare", || crate::input_items::prepare(p))?;

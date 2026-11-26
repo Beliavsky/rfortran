@@ -1925,7 +1925,10 @@ caller's storage. This also supports scalar ELEMENTAL calls on records with
 allocatable components of derived type: their flattened scalar interface carries
 the component descriptors, so inquiries do not read uninitialized element data.
 Array-valued ELEMENTAL calls with these records retain their existing limits.
-Optional, pointer and CHARACTER function dummies retain their existing
+Fixed-length CHARACTER ALLOCATABLE array dummies of functions retain their
+descriptors in the same way, including the CHARACTER components of a derived
+argument whose ALLOCATABLE component the function tests with ALLOCATED.
+Optional, pointer and other CHARACTER function dummies retain their existing
 specialization restrictions. Run `python tests/test_allocatable_dummies.py` and
 `python tests/test_allocatable_function_dummies.py`.
 
@@ -3896,6 +3899,14 @@ Scalar actual expressions are evaluated once per array call; IMPURE element
 calls run in array element order. LOGICAL results also work with the existing
 numeric array expansion. Purity, INTENT(IN), shape compatibility, argument
 kinds, and uninitialized reads remain checked.
+
+An array call whose actuals have extents known only at run time, such as an
+ALLOCATABLE CHARACTER array, its sections, or the CHARACTER components of an
+array of records, runs as a loop over the elements. The function body is
+expanded once inside the loop, and an assumed-length dummy takes the length of
+its actual. This covers ELEMENTAL functions with CHARACTER dummies whatever
+their result type, including defined operators, as in
+`c(2:) == c(:n-1)` for records with CHARACTER components.
 
 CHARACTER lengths must be constant after specialization, and locals must be
 explicitly declared. Runtime-length actuals

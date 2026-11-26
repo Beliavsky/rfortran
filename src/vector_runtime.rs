@@ -1907,9 +1907,12 @@ fn elemental_function_inner(
                 _ => None,
             })
             .context("elemental scalar dummy requires a declared type")?;
-        if !crate::pointers::same_kind(expected, actual_kind) {
+        // An assumed-length CHARACTER dummy takes the length of its actual.
+        let assumed = matches!(expected, TypeSpec::CharacterAssumed) && matches!(actual_kind, TypeSpec::Character(Some(_)));
+        if !assumed && !crate::pointers::same_kind(expected, actual_kind) {
             bail!("type mismatch for elemental function dummy `{param}`");
         }
+        let expected = if assumed { actual_kind } else { expected };
         if writable && actual_dims.is_empty() {
             bail!("ELEMENTAL writable dummy `{param}` requires an array actual when any argument is an array");
         }

@@ -156,6 +156,50 @@ end program main"""
         self.reject("program main\nprint *,join(['a','b'],['x','y','z'])\n"+routine,"nonconforming")
         self.reject("program main\nprint *,join(1,'a')\n"+routine,"CHARACTER actual")
 
+    def test_runtime_sized_character_actuals(self):
+        # Array calls whose CHARACTER actuals have run-time extents loop over
+        # the elements: ALLOCATABLE arrays and their sections, assumed-length
+        # dummies, and records with CHARACTER components compared by a
+        # defined operator.
+        self.check("""module m
+implicit none
+type :: contract
+character(len=4) :: stock
+real :: strike
+end type
+interface operator (==)
+module procedure eq
+end interface
+contains
+elemental logical function same(a, b)
+character(len=*), intent(in) :: a, b
+same = a == b
+end function
+elemental integer function width(a)
+character(len=*), intent(in) :: a
+width = len_trim(a)
+end function
+elemental logical function eq(x, y)
+type(contract), intent(in) :: x, y
+eq = x%stock == y%stock .and. x%strike == y%strike
+end function
+end module
+use m
+character(len=4), allocatable :: w(:)
+type(contract), allocatable :: c(:)
+integer :: n
+n = 3
+allocate (w(n), c(n))
+w = ["ab  ", "ab  ", "cde "]
+print *, same(w(2:), w(:n-1)), same(w, w)
+print *, width(w), sum(width(w(2:n)))
+c%stock = w
+c%strike = [1.0, 1.0, 2.0]
+print *, c(2:) == c(:n-1)
+print *, count(c == c(1))
+end
+""", " T F T T T\n 2 2 3 5\n T F\n 2\n")
+
     def test_named_arguments_and_formatted_write(self):
         self.check("""program main
 write(*,'(a)',advance='no')copy(a='ab')

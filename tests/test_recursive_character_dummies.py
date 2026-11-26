@@ -44,6 +44,37 @@ print *, value_of('both', 4.0), value_of('both', 4.0, 1.0), value_of('call', 3.0
 end program
 ''', "2.0 3.0 3.0\n", interpreter=False)
 
+    def test_call_cycle_only_in_a_disabled_debug_branch(self):
+        # `debug .and. ...` with a .false. PARAMETER cannot run, so the call
+        # back to the caller in that branch is not a recursion.
+        self.check('''module m
+implicit none
+interface display
+   module procedure display_values
+end interface
+contains
+function total(x) result(v)
+real, intent(in) :: x(:)
+real :: v
+logical, parameter :: debug = .false.
+v = sum(x)
+if (debug .and. v < 0) call display(x)
+if (v < 0 .and. .not. (.not. debug)) then
+   call display(x)
+end if
+end function
+subroutine display_values(x)
+real, intent(in) :: x(:)
+print *, total(x)
+end subroutine
+end module
+program main
+use m
+implicit none
+call display([1.0, 2.0])
+end program
+''', "3.0\n")
+
     def test_procedures_passing_their_dummies_on(self):
         self.check('''module m
 implicit none
