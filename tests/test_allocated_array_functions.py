@@ -314,5 +314,45 @@ print *,copy(x)
 end program main
 ''',error='uninitialized')
 
+    def test_extent_of_component_dummy_in_constructor_actual(self):
+        # SIZE of a dummy associated with a component of an ALLOCATABLE
+        # record array, inside an array constructor passed to a function.
+        # gfortran -fcheck=all warns of the component actuals' temporaries,
+        # so its output, the same, is not compared.
+        self.check('''module m
+implicit none
+type s
+  integer :: date
+  real :: price
+end type
+contains
+pure function first_false(tf) result(i1)
+logical, intent(in) :: tf(:)
+integer :: i1, i
+i1 = 0
+do i = 1, size(tf)
+   if (.not. tf(i)) then
+      i1 = i
+      return
+   end if
+end do
+end function
+subroutine look(iy, yy, n)
+integer, intent(in) :: iy(:), n
+real, intent(out) :: yy(:)
+print *, first_false((/size(iy)==3, size(yy)==n/)), sum([size(yy), 1])
+yy = 1
+end subroutine
+end module
+use m
+type(s), allocatable :: a(:)
+allocate(a(3))
+a%date = [1, 2, 3]
+call look(a%date, a%price, 3)
+call look(a%date, a%price, 4)
+print *, a%price
+end
+''', " 0 4\n 2 4\n 1.0 1.0 1.0\n", reference=False)
+
 if __name__=='__main__':
     unittest.main()

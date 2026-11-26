@@ -127,6 +127,39 @@ end program main
             with self.subTest(step=step):
                 self.reject(f"program main\ninteger::i,n,a(3)\nread(*,*)n\na=[(i,i=1,n,{step})]\nend program main\n",message)
 
+    def test_vector_subscript_from_a_constructor_actual(self):
+        # The constructor actual [2,4] and the constructor in the expanded
+        # subroutine are distinct temporaries: the vector subscript reads the
+        # caller's, not the one being filled.
+        self.check("""module m
+implicit none
+type quote
+  real :: price
+end type
+contains
+subroutine run(xx, i1, i2)
+type(quote), intent(in) :: xx(:)
+integer, intent(in) :: i1(:), i2(:)
+real, allocatable :: v(:), w(:)
+allocate(v(size(i1)))
+v = 7
+w = [xx(i2)%price, 3.0]
+print *, w
+w = [v, xx(i2)%price]
+print *, w
+w = [xx(i2)%price, xx(i1)%price]
+print *, w
+end subroutine
+end module
+program p
+use m
+implicit none
+type(quote) :: q(4)
+q%price = [5, 1, 7, 8]
+call run(q, [1, 3], [2, 4])
+end program p
+""", " 1.0 8.0 3.0\n 7.0 7.0 1.0 8.0\n 1.0 8.0 5.0 7.0\n")
+
 
 if __name__ == '__main__':
     unittest.main()

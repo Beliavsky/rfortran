@@ -136,5 +136,35 @@ print *, any([names(:2), names(4)] == buf(1:n)), all([names(4:4), names(4)] == b
 end program p
 ''', "T 0\nT T\n")
 
+    def test_section_and_array_items_in_subroutine_actuals(self):
+        # Sections and whole arrays among the items of a constructor passed to
+        # an assumed-shape CHARACTER dummy, here an OPTIONAL keyword actual.
+        self.check('''module m
+implicit none
+character(len=11), parameter :: labels(3) = ["strike     ", "#days      ", "first_stock"]
+contains
+subroutine show(outu, extra)
+integer, intent(in) :: outu
+character(len=*), intent(in), optional :: extra(:)
+integer :: i
+if (present(extra)) then
+   write (outu, "(*(a,'|'))") (trim(extra(i)), i = 1, size(extra))
+else
+   write (outu, "(a)") "none"
+end if
+end subroutine
+end module
+program p
+use m
+implicit none
+character(len=11) :: v(2)
+v = ["v1         ", "v2         "]
+call show(6, extra=["first_date ", "last_date  ", labels(2:)])
+call show(6, extra=[v, labels(3:1:-2), v(2:2)])
+call show(6, [labels, labels(:1)])
+call show(6)
+end program p
+''', "first_date|last_date|#days|first_stock|\nv1|v2|first_stock|strike|v2|\nstrike|#days|first_stock|strike|\nnone\n")
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -354,6 +354,64 @@ print *, shift(a, d, 1.0)
 end program
 """, "1.25 12.0 3.5 14.0 5.75 16.0\n5.5 6.25 3.5 4.25 1.5 2.25\n1.25 3.0 3.5 5.0 5.75 7.0\n")
 
+    def test_array_valued_function_actuals(self):
+        # The array function's result is evaluated once, into a temporary of
+        # its run-time extent, including a result of fixed extent and a
+        # function of a record array through an ELEMENTAL generic.
+        self.check("""module m
+implicit none
+type date_mdy
+   integer :: month, day, year
+end type
+interface int
+   module procedure yyyymmdd
+end interface
+contains
+elemental function int_to_mdy(idate) result(xmdy)
+integer, intent(in) :: idate
+type(date_mdy) :: xmdy
+xmdy%year  = idate/10000
+xmdy%month = modulo(idate/100,100)
+xmdy%day   = modulo(idate,100)
+end function
+elemental function yyyymmdd(x) result(idate)
+type(date_mdy), intent(in) :: x
+integer :: idate
+idate = x%year*10000 + x%month*100 + x%day
+end function
+function sorted(xx) result(yy)
+integer, intent(in) :: xx(:)
+integer :: yy(size(xx))
+integer :: i, t
+yy = xx
+do i = 1, size(yy) - 1
+   if (yy(i) > yy(i+1)) then
+      t = yy(i); yy(i) = yy(i+1); yy(i+1) = t
+   end if
+end do
+end function
+function pair() result(k)
+integer :: k(2)
+k = [20200315, 19991231]
+end function
+subroutine show(dates)
+type(date_mdy), allocatable, intent(in out) :: dates(:)
+dates = int_to_mdy(sorted(int(dates)))
+print *, dates
+end subroutine
+end module
+use m
+implicit none
+type(date_mdy), allocatable :: d(:)
+type(date_mdy) :: e(2)
+d = [date_mdy(1, 1, 2013), date_mdy(4, 26, 2012)]
+call show(d)
+e = int_to_mdy(pair())
+print *, e
+print *, size(int_to_mdy(sorted([1, 2, 3])))
+end
+""", "4 26 2012 1 1 2013\n3 15 2020 12 31 1999\n3\n")
+
     def test_run_time_extents_that_do_not_conform(self):
         self.check("""module m
 implicit none

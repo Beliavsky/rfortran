@@ -229,6 +229,21 @@ impl Lower {
         });
         for arg in args.iter_mut() {
             self.expression(arg, objects, prefix)?;
+            // An array-valued function's result has no shape here: evaluate it
+            // once into an ALLOCATABLE temporary, of the result's run-time extent.
+            if let Expr::Call(n, _) = &*arg {
+                if let Some((kind, rank)) = self.array_functions.get(n).cloned() {
+                    if !objects.contains_key(n) && !self.array_shapes.contains_key(n) {
+                        self.serial += 1;
+                        let actual = format!("@elemental_function_actual_{}", self.serial);
+                        let deferred = vec![Expr::Ident("@deferred_extent".into()); rank];
+                        prefix.push(Stmt::ArrayDecl { kind, name: actual.clone(), dims: deferred.clone() });
+                        prefix.push(Stmt::DummyIntent { name: actual.clone(), intent: "allocatable".into() });
+                        prefix.push(Stmt::Assign { name: actual.clone(), value: std::mem::replace(arg, Expr::Ident(actual.clone())) });
+                        self.array_shapes.insert(actual, deferred);
+                    }
+                }
+            }
         }
         let mut dims = vec![];
         let mut shaped = None;

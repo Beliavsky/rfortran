@@ -1357,10 +1357,16 @@ element order are supported. Bounds and items are evaluated once at their
 respective evaluation sites; constructor indices retain local scope. Fixed-length
 CHARACTER scalar items also support runtime construction and assignment.
 The bounded numeric assignment path remains an optimization for existing cases.
-Some array-valued expressions and sections inside runtime constructors, and
+Items of runtime constructors, including SOURCE of a RESHAPE with runtime
+extents, may be MERGE and elemental intrinsics such as SQRT and ABS of
+arrays, and components of record arrays selected by vector subscripts, as in
+`reshape([xx(i1)%price, merge(1.0, 0.0, xx(i2)%price > v)], [n, 2])`.
+Some other array-valued expressions and sections inside runtime constructors, and
 CHARACTER function results requiring later specialization, remain unsupported.
-PARAMETER and declaration initializers still require constant expressions. CHARACTER scalar-element constructors can be passed to
-read-only CHARACTER array dummies, including typed empty constructors. Constant
+PARAMETER and declaration initializers still require constant expressions. CHARACTER constructors can be passed to
+read-only CHARACTER array dummies, including typed empty constructors; their
+items may be scalars, sections of constant bounds and whole arrays of constant
+size, as in `call show(["first", labels(2:)])`. Constant
 formats can print fixed whole numeric/LOGICAL arrays in element order; runtime
 format strings with whole numeric/LOGICAL array lists remain unsupported.
 Run `python tests/test_constructor_expressions.py` and

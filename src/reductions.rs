@@ -265,6 +265,13 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             if name=="dble" {kind=TypeSpec::DoublePrecision;} else if name=="real" {kind=TypeSpec::Real;}
             Ok((Expr::Call(name.clone(),values),shape,kind))
         }
+        // The extent of an ALLOCATABLE, checked to be allocated: a scalar of
+        // its length's kind.
+        Expr::Call(n, args) if n == "@allocated_extent" && args.len() == 3 => {
+            let (_, count, kind) = element(&args[1], index, symbols)?;
+            if count.is_some() { bail!("unsupported expression in numeric array reduction"); }
+            Ok((e.clone(), None, kind))
+        }
         _ => bail!("unsupported expression in numeric array reduction"),
     }
 }

@@ -71,4 +71,50 @@ end
         self.check('integer::n\nn=3\nprint *,reshape([1],[n])\nend\n', error='nonempty PAD')
         self.check('integer::n,e(0)\nn=3\nprint *,reshape([1],[n],pad=e)\nend\n', error='nonempty PAD')
 
+    def test_constructor_of_merge_and_vector_subscripted_components(self):
+        # Constructor items of run-time extent: MERGE with an array mask,
+        # elemental intrinsics, and record components selected by vector
+        # subscripts, in a RESHAPE assigned and passed to a subroutine.
+        self.check('''module m
+implicit none
+type opt
+  real :: strike
+end type
+type quote
+  type(opt) :: option
+  real :: price
+end type
+contains
+subroutine set_alloc(xx, yy)
+real, intent(in) :: xx(:,:)
+real, intent(out), allocatable :: yy(:,:)
+allocate (yy(size(xx,1), size(xx,2)))
+yy = xx
+end subroutine
+subroutine run(xx, i1, i2)
+type(quote), intent(in) :: xx(:)
+integer, intent(in) :: i1(:), i2(:)
+real, allocatable :: x(:,:), v(:)
+integer :: ncon
+ncon = size(i1)
+allocate (v(ncon))
+v = [4.0, 9.0]
+call set_alloc(reshape([xx(i1)%option%strike, i2-i1+1.0, xx(i2)%price, &
+   merge(1.0, 0.0, xx(i2)%price > xx(i1)%option%strike), v], shape=[ncon,5]), x)
+print *, shape(x)
+print *, x
+x = reshape([merge(1.0, 0.0, v > 5), sqrt(v), abs(xx(i2)%price - v)], [ncon,3])
+print *, x
+end subroutine
+end module
+program p
+use m
+implicit none
+type(quote) :: q(4)
+q%option%strike = [1, 2, 3, 4]
+q%price = [5, 1, 7, 8]
+call run(q, [1, 3], [2, 4])
+end program p
+''', " 2 5\n 1.0 3.0 2.0 2.0 1.0 8.0 0.0 1.0 4.0 9.0\n 0.0 1.0 2.0 3.0 3.0 1.0\n")
+
 if __name__=='__main__':unittest.main()

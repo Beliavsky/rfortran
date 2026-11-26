@@ -1691,23 +1691,49 @@ pub(crate) fn character_constructor(actual:&mut Expr, shapes:&Shapes, prefix:&mu
     }
     let empty=crate::empty_constructors::kind(actual)?;
     let mut section_kind=None;
+    // The elements of a rank-one CHARACTER section of constant bounds, or
+    // None for another section.
+    fn section_elements(e:&Expr,shapes:&Shapes)->Result<Option<(TypeSpec,Vec<Expr>)>> {
+        let Expr::Section{name,lower,upper,stride}=e else {return Ok(None)};
+        let (kind,dims)=shapes.get(name).context("undeclared CHARACTER section actual")?;
+        if !matches!(kind,TypeSpec::Character(_)) || dims.len()!=1 {return Ok(None);}
+        let extent=crate::parameters::integer_constant(&dims[0])?;
+        let step=stride.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(1);
+        if step==0 {bail!("CHARACTER section stride must not be zero");}
+        let first=lower.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(1);
+        let last=upper.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(extent);
+        let distance=(i128::from(last)-i128::from(first))*i128::from(step.signum());
+        let count=if distance<0 {0} else {distance/i128::from(step).abs()+1};
+        if count>1024 {bail!("CHARACTER section actuals support at most 1024 elements");}
+        if count>0 && (first<1 || first>extent || last<1 || last>extent) {bail!("CHARACTER section actual is outside the array bounds");}
+        Ok(Some((kind.clone(),(0..count).map(|i|Expr::Index(name.clone(),vec![Expr::IntLit((i128::from(first)+i*i128::from(step)).to_string())])).collect())))
+    }
     let values=match actual {
-        Expr::Section{name,lower,upper,stride}=>{
-            let (kind,dims)=shapes.get(name).context("undeclared CHARACTER section actual")?;
-            if !matches!(kind,TypeSpec::Character(_)) || dims.len()!=1 {return Ok(None);}
-            let extent=crate::parameters::integer_constant(&dims[0])?;
-            let step=stride.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(1);
-            if step==0 {bail!("CHARACTER section stride must not be zero");}
-            let first=lower.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(1);
-            let last=upper.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(extent);
-            let distance=(i128::from(last)-i128::from(first))*i128::from(step.signum());
-            let count=if distance<0 {0} else {distance/i128::from(step).abs()+1};
-            if count>1024 {bail!("CHARACTER section actuals support at most 1024 elements");}
-            if count>0 && (first<1 || first>extent || last<1 || last>extent) {bail!("CHARACTER section actual is outside the array bounds");}
-            section_kind=Some(kind.clone());
-            (0..count).map(|i|Expr::Index(name.clone(),vec![Expr::IntLit((i128::from(first)+i*i128::from(step)).to_string())])).collect()
+        Expr::Section{..}=>{
+            let Some((kind,values))=section_elements(actual,shapes)? else {return Ok(None)};
+            section_kind=Some(kind);
+            values
         },
-        Expr::Call(tag,items) if tag=="@array_constructor"=>items.clone(),
+        // Sections and whole arrays of constant extent among the items
+        // contribute their elements in order.
+        Expr::Call(tag,items) if tag=="@array_constructor"=>{
+            let mut values=vec![];
+            for item in items.iter() {
+                let whole=match item {
+                    Expr::Ident(n)=>match shapes.get(n) {
+                        Some((TypeSpec::Character(_),dims)) if dims.len()==1 && crate::parameters::integer_constant(&dims[0]).is_ok()=>
+                            Some(Expr::Section{name:n.clone(),lower:None,upper:None,stride:None}),
+                        _=>None,
+                    },
+                    _=>None,
+                };
+                match section_elements(whole.as_ref().unwrap_or(item),shapes)? {
+                    Some((_,elements))=>values.extend(elements),
+                    None=>values.push(item.clone()),
+                }
+            }
+            values
+        },
         _ if empty.as_ref().is_some_and(|k|matches!(k,TypeSpec::Character(_)))=>vec![],
         _=>return Ok(None),
     };

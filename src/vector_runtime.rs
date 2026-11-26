@@ -396,6 +396,16 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
             else if n == "real" { kind = if a.get(1).and_then(constant)==Some(8) {TypeSpec::DoublePrecision}else{TypeSpec::Real}; }
             Ok(Some((kind, d)))
         }
+        Expr::Call(n, a) if n == "merge" && a.len() == 3 && !s.contains_key(n) => {
+            let mut result = None;
+            let mut dims = vec![];
+            for (i, arg) in a.iter().enumerate() {
+                let Some((kind, shape)) = shape(arg, s)? else { return Ok(None) };
+                if i == 0 { result = Some(kind); }
+                if dims.is_empty() { dims = shape; }
+            }
+            Ok(result.map(|kind| (kind, dims)))
+        }
         Expr::Call(n,a) if s.contains_key(&format!("@elemental_function:{n}"))=>{
             let mut dims=vec![];
             for arg in a {let Some((_,shape))=shape(arg,s)? else {return Ok(None)};if !shape.is_empty() {dims=shape;break;}}
@@ -407,6 +417,12 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
             .map(|(k, _)| (k.clone(), vec![]))),
         _ => Ok(None),
     }
+}
+/// Elemental intrinsics whose array arguments `shape` and `element` take
+/// element by element.
+fn elemental_intrinsic(n: &str) -> bool {
+    crate::intrinsics::math_arity(n).is_some() || crate::intrinsics::integer_rounding(n) || crate::intrinsics::real_predicate(n)
+        || matches!(n, "abs" | "int" | "mod" | "modulo" | "sign" | "real" | "dble" | "min" | "max" | "merge")
 }
 fn runtime_character(e:&Expr,s:&Shapes)->bool {
     match e {
@@ -695,7 +711,7 @@ impl Lower {
                 self.element(b, index, s, out)?,
             ),
             Expr::Un(op, a) => Expr::Un(op.clone(), Box::new(self.element(a, index, s, out)?)),
-            Expr::Call(n, a) if matches!(n.as_str(), "abs" | "int" | "mod" | "modulo" | "sign") => {
+            Expr::Call(n, a) if !s.contains_key(n) && elemental_intrinsic(n) => {
                 Expr::Call(
                     n.clone(),
                     a.iter()
@@ -719,6 +735,11 @@ impl Lower {
                             ));
                             continue;
                         }
+                    }
+                    // A vector subscript selects its element at this position.
+                    if vector(arg, s) {
+                        selected.push(self.element(arg, index.clone(), s, out)?);
+                        continue;
                     }
                     selected.push(arg.clone());
                 }
@@ -821,10 +842,7 @@ impl Lower {
                 }
             }
             Expr::Call(n, a)
-                if matches!(
-                    n.as_str(),
-                    "@array_constructor" | "abs" | "int" | "mod" | "modulo" | "sign"
-                ) =>
+                if n == "@array_constructor" || !s.contains_key(n) && elemental_intrinsic(n) =>
             {
                 for e in a {
                     self.freeze(e, s, out)?;

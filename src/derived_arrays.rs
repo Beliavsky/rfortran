@@ -209,6 +209,9 @@ struct Lower {
     elemental_records: HashMap<String, elemental_records::Procedure>,
     elemental_results: HashMap<String, elemental_record_results::ResultProcedure>,
     elemental_functions: std::collections::HashSet<String>,
+    /// Non-ELEMENTAL functions with an intrinsic-type array result, with the
+    /// result's type and rank.
+    array_functions: HashMap<String, (TypeSpec, usize)>,
     /// Type-bound procedure names of each type.
     bindings: HashMap<String, HashMap<String, String>>,
     /// The POINTER components of each type, with their target type and rank,
@@ -687,6 +690,17 @@ impl Lower {
                 } => {
                     if matches!(s, Stmt::Function { elemental: true, .. }) {
                         self.elemental_functions.insert(name.clone());
+                    } else if matches!(s, Stmt::Function { .. }) {
+                        let result = match body.last() {
+                            Some(Stmt::Return(Some(Expr::Ident(r)))) => r.as_str(),
+                            _ => name.as_str(),
+                        };
+                        if let Some((kind, rank)) = body.iter().find_map(|s| match s {
+                            Stmt::ArrayDecl { name, kind, dims } if name == result => Some((kind.clone(), dims.len())),
+                            _ => None,
+                        }) {
+                            self.array_functions.insert(name.clone(), (kind, rank));
+                        }
                     }
                     if matches!(s, Stmt::Function { elemental: true, .. } | Stmt::Subroutine { elemental: true, .. }) {
                         self.collect_elemental(name, params, body);
@@ -2704,6 +2718,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         elemental_records: HashMap::new(),
         elemental_results: HashMap::new(),
         elemental_functions: Default::default(),
+        array_functions: HashMap::new(),
         bindings: HashMap::new(),
         pointer_components: HashMap::new(),
         pointer_views: HashMap::new(),

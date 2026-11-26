@@ -2158,9 +2158,11 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
     let mut checks = GeneratedChecks::default();
-    // Function specialization can already have lowered allocation blocks.
-    // Continue its numbering when finishing the enclosing program.
-    let mut serial=crate::subroutines::maximum_serial(&p.body,&["@alloc_","@reduction_","@location_"]);
+    // Function specialization can already have lowered allocation blocks,
+    // and earlier passes have materialized temporaries, such as constructor
+    // actuals, with the names the reductions helpers called here generate.
+    // Continue after every numbered name, so none is shadowed.
+    let mut serial=crate::subroutines::maximum_serial(&p.body,&["@"]);
     let mut elemental_shapes: Shapes = crate::elemental::functions(&p).into_iter()
         .map(|(name, kind)| (format!("@elemental:{name}"), (kind, vec![]))).collect();
     for stmt in &p.body {
