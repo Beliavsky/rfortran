@@ -44,6 +44,8 @@ pub(crate) fn prepare_program(
                            &prepared.origins, settings, &args.warnings)?;
     associate_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
                               &prepared.origins, settings, &args.warnings, args.standard)?;
+    concurrent_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
+                               &prepared.origins, settings, &args.warnings, args.standard)?;
     allocation_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
                                &prepared.origins, settings, &args.warnings)?;
     action_warnings::check(&prepared.program, &prepared.source, src.len(), filename,

@@ -51,6 +51,7 @@ const CATEGORIES: &[&str] = &[
     "could-be-allocatable",
     "unneeded-target",
     "could-be-associate",
+    "could-be-concurrent",
     "character-truncation",
     "memory-leak",
     "allocation-state",
@@ -157,6 +158,7 @@ const EXTRA: &[&str] = &[
     "could-be-allocatable",
     "unneeded-target",
     "could-be-associate",
+    "could-be-concurrent",
 ];
 /// The categories that -Wstyle enables: the style rules of Clerman and
 /// Spector's "Modern Fortran: Style and Usage" that rfort checks.

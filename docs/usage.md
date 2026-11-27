@@ -717,6 +717,32 @@ ASSOCIATE is Fortran 2003, so `-std=f95` turns the warning off. Disable with
 `-Wno-could-be-associate`, promote with `-Werror=could-be-associate`, or use
 `!#allow(could-be-associate)` / `!#deny(could-be-associate)`.
 
+[`-Wcould-be-concurrent`](../warnings/could-be-concurrent.f90) is opt-in and enabled by `-Wextra`. It
+reports a counted DO loop whose iterations are independent, which could be DO
+CONCURRENT, and gives the header to write, as in
+`do concurrent (i = 1:n) local(t)`. DO CONCURRENT is a promise that the
+compiler does not check, so the proof is conservative. The body may contain
+assignments, IF, SELECT CASE, inner counted DO loops, CYCLE, and EXIT of an
+inner loop; I/O, CALL, GO TO, RETURN, STOP and named EXIT or CYCLE prevent the
+warning. Functions must be pure intrinsics or PURE functions of a module or of
+the top level, not internal procedures. Only elements of the scope's own
+arrays, local or dummy and neither POINTER nor TARGET, may be written, and
+every reference to a written array must be an element with the loop index, or
+the index plus or minus a constant, in one subscript position, the same in
+every reference: each iteration then owns a slice. Scalars may be written only
+if they are unsaved locals that each iteration defines before reading them;
+they are listed in the LOCAL clause. The loop index and those scalars must not
+be read after the loop, or in a later iteration of an enclosing loop, before
+they are defined again, since DO CONCURRENT leaves them unchanged. Perfectly
+nested independent loops, as over the rows and columns of a matrix, are
+suggested as one construct. A recurrence such as `a(i) = a(i-1) + 1` or an
+accumulation such as `s = s + a(i)` is not reported, nor is a scope with
+GO TO, COMMON or EQUIVALENCE. LOCAL is Fortran 2018: with `-std=f2008` the
+header omits it, which the same proof makes valid, and before Fortran 2008 the
+warning is off. Disable with `-Wno-could-be-concurrent`, promote with
+`-Werror=could-be-concurrent`, or use `!#allow(could-be-concurrent)` /
+`!#deny(could-be-concurrent)`.
+
 [`-Wrecursive-io`](../warnings/recursive-io.f90) is **on by default**. It warns about an input/output
 statement in a procedure that a function referenced by another input/output
 statement can reach, directly or through the procedures it calls, when both
